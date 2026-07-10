@@ -1,7 +1,16 @@
 *.exe
 *.obj
 *.o
+*.dll
+*.pdb
+*.ilk
 test/out.c
 test/bounds_out.c
 test/bounds_fixed_out.c
 test/refcount_out.c
+test/_t*.c
+test/_t*.exe
+test/_t*.my
+test/_t*.ilk
+test/_t*.pdb
+__pycache__/
