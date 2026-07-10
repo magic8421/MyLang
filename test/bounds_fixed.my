@@ -1,0 +1,13 @@
+struct Point {
+    int x;
+    int y;
+}
+
+int main() {
+    int[3] arr;
+    arr[0] = 1;
+    arr[2] = 3;
+    arr[5] = 0;
+
+    return 0;
+}

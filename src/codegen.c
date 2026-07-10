@@ -3,8 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ══════════════════════════════════════════════════════════════════�?   TYPE HELPERS
-   ══════════════════════════════════════════════════════════════════�?*/
+/* ══════════════════════════════════════════════════════════════════�?   TYPE HELPERS
+   ══════════════════════════════════════════════════════════════════�?*/
 
 static const char* c_base_name(const Type* t) {
     switch (t->kind) {
@@ -25,8 +25,8 @@ static void c_type_str(const Type* t, char* buf, int bufsz) {
     }
 }
 
-/* ══════════════════════════════════════════════════════════════════�?   TYPE RESOLUTION (semantic analysis pass)
-   ══════════════════════════════════════════════════════════════════�?*/
+/* ══════════════════════════════════════════════════════════════════�?   TYPE RESOLUTION (semantic analysis pass)
+   ══════════════════════════════════════════════════════════════════�?*/
 
 static Type resolve_type(AstNode* node);
 
@@ -117,8 +117,8 @@ static Type resolve_type(AstNode* node) {
     return t;
 }
 
-/* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?expressions
-   ══════════════════════════════════════════════════════════════════�?*/
+/* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?expressions
+   ══════════════════════════════════════════════════════════════════�?*/
 
 static void codegen_expr(AstNode* node, FILE* out);
 
@@ -170,7 +170,7 @@ static void codegen_member_access(AstNode* node, FILE* out) {
 static void codegen_new(AstNode* node, FILE* out) {
     Type base = node->resolved_type;
     if (node->child_count > 0) {
-        fprintf(out, "calloc(");
+        fprintf(out, "mylang_new_array(");
         codegen_expr(node->children[0], out);
         fprintf(out, ", sizeof(");
         fprintf(out, "%s", c_base_name(&base));
@@ -237,8 +237,46 @@ static void codegen_expr(AstNode* node, FILE* out) {
     }
 }
 
-/* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?statements
-   ══════════════════════════════════════════════════════════════════�?*/
+/* -- bounds checking ------------------------------------------------- */
+
+static void indent_line(FILE* out, int indent);
+
+static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
+    if (!expr) return;
+
+    if (expr->kind == AST_ARRAY_ACCESS) {
+        AstNode* arr = expr->children[0];
+        AstNode* idx = expr->children[1];
+
+        emit_bounds_checks(arr, out, indent);
+        emit_bounds_checks(idx, out, indent);
+
+        resolve_type(arr);
+        Type at = arr->resolved_type;
+
+        if (at.array_size > 0) {
+            indent_line(out, indent);
+            fprintf(out, "if ((size_t)(");
+            codegen_expr(idx, out);
+            fprintf(out, ") >= %d) __debugbreak();\n", at.array_size);
+        } else if (at.is_pointer && (at.kind == TYPE_INT || at.kind == TYPE_CHAR)) {
+            indent_line(out, indent);
+            fprintf(out, "mylang_bounds(");
+            codegen_expr(arr, out);
+            fprintf(out, ", ");
+            codegen_expr(idx, out);
+            fprintf(out, ");\n");
+        }
+    } else {
+        int i;
+        for (i = 0; i < expr->child_count; i++) {
+            emit_bounds_checks(expr->children[i], out, indent);
+        }
+    }
+    emit_bounds_checks(expr->next, out, indent);
+}
+
+/* --- CODE GENERATION -- statements --- */
 
 static void codegen_stmt(AstNode* node, FILE* out, int indent);
 
@@ -286,6 +324,7 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
 }
 
 static void codegen_if_stmt(AstNode* node, FILE* out, int indent) {
+    emit_bounds_checks(node->children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "if (");
     codegen_expr(node->children[0], out);
@@ -300,6 +339,7 @@ static void codegen_if_stmt(AstNode* node, FILE* out, int indent) {
 }
 
 static void codegen_while_stmt(AstNode* node, FILE* out, int indent) {
+    emit_bounds_checks(node->children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "while (");
     codegen_expr(node->children[0], out);
@@ -308,6 +348,9 @@ static void codegen_while_stmt(AstNode* node, FILE* out, int indent) {
 }
 
 static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
+    if (node->child_count > 0) {
+        emit_bounds_checks(node->children[0], out, indent);
+    }
     indent_line(out, indent);
     fprintf(out, "return");
     if (node->child_count > 0) {
@@ -318,6 +361,7 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
 }
 
 static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
+    emit_bounds_checks(node->children[0], out, indent);
     indent_line(out, indent);
     codegen_expr(node->children[0], out);
     fprintf(out, ";\n");
@@ -352,8 +396,8 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
     }
 }
 
-/* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?top-level declarations
-   ══════════════════════════════════════════════════════════════════�?*/
+/* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?top-level declarations
+   ══════════════════════════════════════════════════════════════════�?*/
 
 static void codegen_struct_decl(AstNode* node, FILE* out) {
     StructInfo* si = symtab_find_struct(node->tok.text);
@@ -429,13 +473,30 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     fprintf(out, "}\n\n");
 }
 
-/* ══════════════════════════════════════════════════════════════════�?   PUBLIC INTERFACE
-   ══════════════════════════════════════════════════════════════════�?*/
+/* ══════════════════════════════════════════════════════════════════�?   PUBLIC INTERFACE
+   ══════════════════════════════════════════════════════════════════�?*/
 
 void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "/* Generated by MyLang compiler */\n");
     fprintf(out, "#include <stdio.h>\n");
-    fprintf(out, "#include <stdlib.h>\n\n");
+    fprintf(out, "#include <stdlib.h>\n");
+    fprintf(out, "#include <stddef.h>\n");
+    fprintf(out, "#ifdef _MSC_VER\n");
+    fprintf(out, "#include <intrin.h>\n");
+    fprintf(out, "#else\n");
+    fprintf(out, "#define __debugbreak() __builtin_trap()\n");
+    fprintf(out, "#endif\n\n");
+
+    fprintf(out, "static void* mylang_new_array(size_t count, size_t elem_size) {\n");
+    fprintf(out, "    size_t* p = calloc(1, sizeof(size_t) + count * elem_size);\n");
+    fprintf(out, "    p[0] = count;\n");
+    fprintf(out, "    return p + 1;\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "#define mylang_bounds(arr, idx) do { \\\n");
+    fprintf(out, "    if ((size_t)(idx) >= *(size_t*)((char*)(arr) - sizeof(size_t))) \\\n");
+    fprintf(out, "        __debugbreak(); \\\n");
+    fprintf(out, "} while(0)\n\n");
 
     AstNode* decl = program->children[0];
     while (decl) {

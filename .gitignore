@@ -2,3 +2,5 @@
 *.obj
 *.o
 test/out.c
+test/bounds_out.c
+test/bounds_fixed_out.c
