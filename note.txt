@@ -1,0 +1,15 @@
+# 编译编译器
+cl /Fe:mylang.exe /std:c11 src/*.c
+
+# 使用
+mylang.exe test/sample.my test/out.c
+cl /Fe:sample.exe test/out.c && sample.exe
+
+给生成的struct 头部都加一个 struct ObjHeader  目前主要用来存放引用计数  ，new 出来的对象引用记数为1 引用计数使用原子递增递减，传入函数 或赋值给另一个引用时递增，引用出作用域时递减，递减为0时销毁自己。
+
+已知问题：
+return r->x; 时 r 不会在函数末尾 release（避免 use-after-free），会泄漏 r 的 refcount
+函数 fall-through（无 return）不自动 cleanup
+class 数组元素不参与引用计数
+
+我有一个问题：为何进入函数要retian？ 我觉得只有当前作用域 new 的引用才需要在出作用域时 release  其他就是赋值时retain就好了？ 函数好像不需要retain？
