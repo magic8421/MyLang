@@ -483,6 +483,7 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
         if (ret->kind == AST_IDENT && ret->resolved_type.kind == TYPE_CLASS) {
             cleanup_remove(ret->tok.text);
             cleanup_emit(out, indent);
+            cleanup_clear();
             indent_line(out, indent);
             fprintf(out, "return ");
             codegen_expr(ret, out);
@@ -495,11 +496,13 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             codegen_expr(ret, out);
             fprintf(out, ";\n");
             cleanup_emit(out, indent);
+            cleanup_clear();
             indent_line(out, indent);
             fprintf(out, "return _mylang_ret;\n");
         }
     } else {
         cleanup_emit(out, indent);
+        cleanup_clear();
         indent_line(out, indent);
         fprintf(out, "return;\n");
     }
@@ -508,7 +511,15 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
 static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
     emit_bounds_checks(node->children[0], out, indent);
     indent_line(out, indent);
-    codegen_expr(node->children[0], out);
+    AstNode* expr = node->children[0];
+    resolve_type(expr);
+    if (expr->kind == AST_CALL && expr->resolved_type.kind == TYPE_CLASS) {
+        fprintf(out, "(void)mylang_release(");
+        codegen_expr(expr, out);
+        fprintf(out, ")");
+    } else {
+        codegen_expr(expr, out);
+    }
     fprintf(out, ";\n");
 }
 
@@ -589,6 +600,7 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
             fprintf(out, "mylang_retain(%s);\n", p->tok.text); } p = p->next; } }
     if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
         while (s) { codegen_stmt(s, out, 1); s = s->next; } }
+    cleanup_emit(out, 1);
     symtab_exit_scope(); fprintf(out, "}\n\n");
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
@@ -663,6 +675,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         }
     }
 
+    cleanup_emit(out, 1);
     symtab_exit_scope();
     fprintf(out, "}\n\n");
 }

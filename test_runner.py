@@ -333,6 +333,55 @@ int main() {
     return p.x + p.y;
 }
 """, 33),
+
+    ("method_void_no_return", """
+class Log {
+    int total;
+    void add(int v) { this.total = this.total + v; }
+}
+int main() {
+    Log l = new Log;
+    l.add(3);
+    l.add(4);
+    return l.total;
+}
+""", 7),
+
+    ("method_return_captured", """
+class Box {
+    int v;
+    Box set(int x) { this.v = x; return this; }
+}
+int main() {
+    Box a = new Box;
+    Box b = a.set(5);
+    Box c = a.set(7);
+    return b.v + c.v;
+}
+""", 14),
+
+    ("method_return_discarded", """
+class Box {
+    int v;
+    int total;
+    Box set(int x) {
+        this.v = x;
+        return this;
+    }
+    Box incTotal() {
+        this.total = this.total + 1;
+        return this;
+    }
+}
+int main() {
+    Box b = new Box;
+    b.set(10);
+    b.set(20);
+    b.incTotal();
+    b.incTotal();
+    return b.v + b.total;
+}
+""", 22),
 ]
 
 # ============================================================
