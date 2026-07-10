@@ -3,8 +3,8 @@
 #include <string.h>
 #include <stdio.h>
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??   TYPE HELPERS
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??*/
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??   TYPE HELPERS
+   ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??*/
 
 static const char* c_base_name(const Type* t) {
     switch (t->kind) {
@@ -16,7 +16,7 @@ static const char* c_base_name(const Type* t) {
 }
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
-    if (t->is_pointer) {
+    if (t->kind == TYPE_CLASS || t->is_pointer) {
         snprintf(buf, bufsz, "%s*", c_base_name(t));
     } else if (t->array_size > 0) {
         snprintf(buf, bufsz, "%s", c_base_name(t));
@@ -25,8 +25,8 @@ static void c_type_str(const Type* t, char* buf, int bufsz) {
     }
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??   TYPE RESOLUTION (semantic analysis pass)
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??*/
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??   TYPE RESOLUTION (semantic analysis pass)
+   ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??*/
 
 static Type resolve_type(AstNode* node);
 
@@ -117,8 +117,8 @@ static Type resolve_type(AstNode* node) {
     return t;
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??   CODE GENERATION ??expressions
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??*/
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??   CODE GENERATION ??expressions
+   ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??*/
 
 static void codegen_expr(AstNode* node, FILE* out);
 
@@ -176,7 +176,11 @@ static void codegen_new(AstNode* node, FILE* out) {
         fprintf(out, "%s", c_base_name(&base));
         fprintf(out, "))");
     } else {
-        fprintf(out, "calloc(1, sizeof(%s))", c_base_name(&base));
+        if (base.kind == TYPE_CLASS) {
+            fprintf(out, "mylang_new_object(sizeof(%s))", c_base_name(&base));
+        } else {
+            fprintf(out, "calloc(1, sizeof(%s))", c_base_name(&base));
+        }
     }
     base.is_pointer = 1;
     node->resolved_type = base;
@@ -214,11 +218,48 @@ static void codegen_expr(AstNode* node, FILE* out) {
         case AST_UNARY:
             codegen_unary(node, out);
             break;
-        case AST_ASSIGN:
-            codegen_expr(node->children[0], out);
-            fprintf(out, " = ");
-            codegen_expr(node->children[1], out);
+        case AST_ASSIGN: {
+            AstNode* lhs = node->children[0];
+            AstNode* rhs = node->children[1];
+            Type lt = lhs->resolved_type;
+
+            if (lhs->kind == AST_IDENT && lt.kind == TYPE_CLASS && lt.is_pointer) {
+                int rhs_simple = (rhs->kind == AST_IDENT || rhs->kind == AST_INT_LIT || rhs->kind == AST_CHAR_LIT);
+
+                if (rhs->kind == AST_NEW) {
+                    fprintf(out, "((void)mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, "), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, " = ");
+                    codegen_expr(rhs, out);
+                    fprintf(out, "))");
+                } else if (rhs_simple) {
+                    fprintf(out, "((void)mylang_retain(");
+                    codegen_expr(rhs, out);
+                    fprintf(out, "), (void)mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, "), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, " = ");
+                    codegen_expr(rhs, out);
+                    fprintf(out, "))");
+                } else {
+                    fprintf(out, "((void)mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, "), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, " = mylang_retain(");
+                    codegen_expr(rhs, out);
+                    fprintf(out, ")))");
+                }
+            } else {
+                codegen_expr(node->children[0], out);
+                fprintf(out, " = ");
+                codegen_expr(node->children[1], out);
+            }
             break;
+        }
         case AST_CALL:
             codegen_call(node, out);
             break;
@@ -278,6 +319,53 @@ static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
 
 /* --- CODE GENERATION -- statements --- */
 
+/* -- refcount cleanup list ------------------------------------------- */
+
+#define MAX_CLEANUP 128
+static const char* cleanup_names[MAX_CLEANUP];
+static int         cleanup_count = 0;
+
+static void cleanup_add(const char* name) {
+    if (cleanup_count < MAX_CLEANUP) cleanup_names[cleanup_count++] = name;
+}
+
+static void cleanup_emit(FILE* out, int indent) {
+    int i;
+    for (i = cleanup_count - 1; i >= 0; i--) {
+        indent_line(out, indent);
+        fprintf(out, "mylang_release(%s);\n", cleanup_names[i]);
+    }
+}
+
+static void cleanup_remove(const char* name) {
+    int i;
+    for (i = 0; i < cleanup_count; i++) {
+        if (strcmp(cleanup_names[i], name) == 0) {
+            int j;
+            for (j = i; j < cleanup_count - 1; j++) cleanup_names[j] = cleanup_names[j + 1];
+            cleanup_count--;
+            return;
+        }
+    }
+}
+
+static void cleanup_clear(void) { cleanup_count = 0; }
+
+static void cleanup_remove_from_expr(AstNode* expr) {
+    if (!expr) return;
+    if (expr->kind == AST_IDENT) {
+        resolve_type(expr);
+        if (expr->resolved_type.kind == TYPE_CLASS) {
+            cleanup_remove(expr->tok.text);
+        }
+    }
+    int i;
+    for (i = 0; i < expr->child_count; i++) {
+        cleanup_remove_from_expr(expr->children[i]);
+    }
+    cleanup_remove_from_expr(expr->next);
+}
+
 static void codegen_stmt(AstNode* node, FILE* out, int indent);
 
 static void indent_line(FILE* out, int indent) {
@@ -317,10 +405,22 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
     }
 
     if (node->child_count > 0) {
-        fprintf(out, " = ");
-        codegen_expr(node->children[0], out);
+        if (type.kind == TYPE_CLASS && node->children[0]->kind != AST_NEW) {
+            fprintf(out, " = mylang_retain(");
+            codegen_expr(node->children[0], out);
+            fprintf(out, ")");
+        } else {
+            fprintf(out, " = ");
+            codegen_expr(node->children[0], out);
+        }
+    } else if (type.kind == TYPE_CLASS && type.is_pointer) {
+        fprintf(out, " = NULL");
     }
     fprintf(out, ";\n");
+
+    if (type.kind == TYPE_CLASS && type.is_pointer) {
+        cleanup_add(node->tok.text);
+    }
 }
 
 static void codegen_if_stmt(AstNode* node, FILE* out, int indent) {
@@ -349,8 +449,11 @@ static void codegen_while_stmt(AstNode* node, FILE* out, int indent) {
 
 static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
     if (node->child_count > 0) {
-        emit_bounds_checks(node->children[0], out, indent);
+        AstNode* ret_expr = node->children[0];
+        emit_bounds_checks(ret_expr, out, indent);
+        cleanup_remove_from_expr(ret_expr);
     }
+    cleanup_emit(out, indent);
     indent_line(out, indent);
     fprintf(out, "return");
     if (node->child_count > 0) {
@@ -396,8 +499,8 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
     }
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??   CODE GENERATION ??top-level declarations
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??*/
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??   CODE GENERATION ??top-level declarations
+   ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??*/
 
 static void codegen_class_decl(AstNode* node, FILE* out) {
     ClassInfo* si = symtab_find_class(node->tok.text);
@@ -447,6 +550,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     fprintf(out, ")\n");
 
     /* body */
+    cleanup_clear();
     fprintf(out, "{\n");
 
     symtab_enter_scope();
@@ -456,6 +560,21 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         AstNode* p = params;
         while (p) {
             symtab_insert(p->tok.text, p->resolved_type);
+            if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
+                cleanup_add(p->tok.text);
+            }
+            p = p->next;
+        }
+    }
+
+    /* retain class-typed parameters at entry */
+    {
+        AstNode* p = params;
+        while (p) {
+            if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
+                indent_line(out, 1);
+                fprintf(out, "mylang_retain(%s);\n", p->tok.text);
+            }
             p = p->next;
         }
     }
@@ -473,8 +592,8 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     fprintf(out, "}\n\n");
 }
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??   PUBLIC INTERFACE
-   ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T??*/
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??   PUBLIC INTERFACE
+   ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T??*/
 
 void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "/* Generated by MyLang compiler */\n");
@@ -497,6 +616,37 @@ void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "    if ((size_t)(idx) >= *(size_t*)((char*)(arr) - sizeof(size_t))) \\\n");
     fprintf(out, "        __debugbreak(); \\\n");
     fprintf(out, "} while(0)\n\n");
+
+    fprintf(out, "#ifdef _MSC_VER\n");
+    fprintf(out, "#include <windows.h>\n");
+    fprintf(out, "#define mylang_atomic_inc(p) InterlockedIncrement(p)\n");
+    fprintf(out, "#define mylang_atomic_dec(p) InterlockedDecrement(p)\n");
+    fprintf(out, "#else\n");
+    fprintf(out, "#include <stdatomic.h>\n");
+    fprintf(out, "#define mylang_atomic_inc(p) (atomic_fetch_add(p, 1) + 1)\n");
+    fprintf(out, "#define mylang_atomic_dec(p) (atomic_fetch_sub(p, 1) - 1)\n");
+    fprintf(out, "#endif\n\n");
+
+    fprintf(out, "typedef struct { volatile long refcount; } ObjHeader;\n");
+    fprintf(out, "#define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))\n\n");
+
+    fprintf(out, "static void* mylang_new_object(size_t sz) {\n");
+    fprintf(out, "    ObjHeader* h = calloc(1, sizeof(ObjHeader) + sz);\n");
+    fprintf(out, "    h->refcount = 1;\n");
+    fprintf(out, "    return h + 1;\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "static void* mylang_retain(void* ptr) {\n");
+    fprintf(out, "    if (ptr) mylang_atomic_inc(&mylang_obj_hdr(ptr)->refcount);\n");
+    fprintf(out, "    return ptr;\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "static int mylang_release(void* ptr) {\n");
+    fprintf(out, "    if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {\n");
+    fprintf(out, "        free(mylang_obj_hdr(ptr));\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "    return 0;\n");
+    fprintf(out, "}\n\n");
 
     AstNode* decl = program->children[0];
     while (decl) {

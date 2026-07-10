@@ -1,0 +1,30 @@
+class Point {
+    int x;
+    int y;
+}
+
+Point makePoint(int a, int b) {
+    Point p = new Point;
+    p.x = a;
+    p.y = b;
+    return p;
+}
+
+Point addPoints(Point a, Point b) {
+    Point r = new Point;
+    r.x = a.x + b.x;
+    r.y = a.y + b.y;
+    return r;
+}
+
+int main() {
+    Point p = makePoint(1, 2);
+    Point q = new Point;
+    q.x = 3;
+    q.y = 4;
+
+    Point r = q;
+    r = addPoints(p, q);
+
+    return r.x;
+}
