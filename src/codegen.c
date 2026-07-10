@@ -351,6 +351,52 @@ static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
     emit_bounds_checks(expr->next, out, indent);
 }
 
+/* -- caller-side arg guard helpers ----------------------------------- */
+
+static int call_needs_guard(AstNode* arg) {
+    resolve_type(arg);
+    if (arg->resolved_type.kind != TYPE_CLASS) return 0;
+    if (arg->kind == AST_IDENT && symtab_lookup(arg->tok.text)) return 0;
+    return 1;
+}
+
+static void emit_call_guards(AstNode* expr, FILE* out, int is_retain) {
+    if (!expr) return;
+    if (expr->kind == AST_CALL) {
+        AstNode* callee = expr->children[0];
+        AstNode* args  = (expr->child_count > 1) ? expr->children[1] : NULL;
+
+        if (callee->kind == AST_MEMBER_ACCESS) {
+            AstNode* obj = callee->children[0];
+            if (call_needs_guard(obj)) {
+                if (is_retain) { fprintf(out, "mylang_retain("); codegen_expr(obj, out); fprintf(out, "); "); }
+                else           { fprintf(out, "mylang_release("); codegen_expr(obj, out); fprintf(out, "); "); }
+            }
+        }
+        AstNode* a = args;
+        while (a) {
+            if (call_needs_guard(a)) {
+                if (is_retain) { fprintf(out, "mylang_retain("); codegen_expr(a, out); fprintf(out, "); "); }
+                else           { fprintf(out, "mylang_release("); codegen_expr(a, out); fprintf(out, "); "); }
+            }
+            a = a->next;
+        }
+    }
+    int i;
+    for (i = 0; i < expr->child_count; i++) emit_call_guards(expr->children[i], out, is_retain);
+}
+
+static void emit_stmt_call_retains(AstNode* expr, FILE* out, int indent) {
+    indent_line(out, indent);
+    emit_call_guards(expr, out, 1);
+    fprintf(out, "\n");
+}
+static void emit_stmt_call_releases(AstNode* expr, FILE* out, int indent) {
+    indent_line(out, indent);
+    emit_call_guards(expr, out, 0);
+    fprintf(out, "\n");
+}
+
 /* --- CODE GENERATION -- statements --- */
 
 /* -- refcount cleanup list ------------------------------------------- */
@@ -520,10 +566,14 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
 
 static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
     emit_bounds_checks(node->children[0], out, indent);
-    indent_line(out, indent);
     AstNode* expr = node->children[0];
     resolve_type(expr);
+
+    emit_stmt_call_retains(expr, out, indent);
+
+    indent_line(out, indent);
     if (expr->kind == AST_CALL && expr->resolved_type.kind == TYPE_CLASS) {
+        /* discarded class return: release the +1 from callee */
         fprintf(out, "(void)mylang_release(");
         codegen_expr(expr, out);
         fprintf(out, ")");
@@ -531,6 +581,8 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
         codegen_expr(expr, out);
     }
     fprintf(out, ";\n");
+
+    emit_stmt_call_releases(expr, out, indent);
 }
 
 static void codegen_stmt(AstNode* node, FILE* out, int indent) {
@@ -602,12 +654,8 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
     thiz_type.kind = TYPE_CLASS; strncpy(thiz_type.class_name, class_name, 63);
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
-    cleanup_add("this"); indent_line(out, 1);
-    fprintf(out, "mylang_retain(thiz);\n");
     { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
-        if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
-            cleanup_add(p->tok.text); indent_line(out, 1);
-            fprintf(out, "mylang_retain(%s);\n", p->tok.text); } p = p->next; } }
+        p = p->next; } }
     if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
         while (s) { codegen_stmt(s, out, 1); s = s->next; } }
     cleanup_emit(out, 1);
@@ -657,21 +705,6 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         AstNode* p = params;
         while (p) {
             symtab_insert(p->tok.text, p->resolved_type);
-            if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
-                cleanup_add(p->tok.text);
-            }
-            p = p->next;
-        }
-    }
-
-    /* retain class-typed parameters at entry */
-    {
-        AstNode* p = params;
-        while (p) {
-            if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
-                indent_line(out, 1);
-                fprintf(out, "mylang_retain(%s);\n", p->tok.text);
-            }
             p = p->next;
         }
     }
