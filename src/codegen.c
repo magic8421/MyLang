@@ -359,7 +359,8 @@ static void cleanup_emit(FILE* out, int indent) {
     int i;
     for (i = cleanup_count - 1; i >= 0; i--) {
         indent_line(out, indent);
-        fprintf(out, "mylang_release(%s);\n", cleanup_names[i]);
+        fprintf(out, "mylang_release(%s);\n",
+                strcmp(cleanup_names[i], "this") == 0 ? "thiz" : cleanup_names[i]);
     }
 }
 
@@ -580,6 +581,8 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
     thiz_type.kind = TYPE_CLASS; strncpy(thiz_type.class_name, class_name, 63);
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
+    cleanup_add("this"); indent_line(out, 1);
+    fprintf(out, "mylang_retain(thiz);\n");
     { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
         if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
             cleanup_add(p->tok.text); indent_line(out, 1);
