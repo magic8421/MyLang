@@ -1,0 +1,32 @@
+struct Point {
+    int x;
+    int y;
+}
+
+int add(int a, int b) {
+    return a + b;
+}
+
+int main() {
+    int x = 10;
+    int[] arr = new int[5];
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+
+    Point p = new Point;
+    p.x = 3;
+    p.y = add(arr[0], arr[1]);
+
+    if (x > 5) {
+        x = add(x, 1);
+    } else {
+        x = x - 1;
+    }
+
+    while (x < 20) {
+        x = x + 1;
+    }
+
+    return x;
+}

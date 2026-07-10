@@ -1,0 +1,43 @@
+#include "token.h"
+
+const char* token_kind_name(TokenKind kind) {
+    switch (kind) {
+        case TOK_EOF:       return "EOF";
+        case TOK_IDENT:     return "identifier";
+        case TOK_INT_LIT:   return "integer literal";
+        case TOK_CHAR_LIT:  return "char literal";
+        case TOK_KW_INT:    return "int";
+        case TOK_KW_CHAR:   return "char";
+        case TOK_KW_IF:     return "if";
+        case TOK_KW_ELSE:   return "else";
+        case TOK_KW_WHILE:  return "while";
+        case TOK_KW_RETURN: return "return";
+        case TOK_KW_NEW:    return "new";
+        case TOK_KW_STRUCT: return "struct";
+        case TOK_PLUS:      return "+";
+        case TOK_MINUS:     return "-";
+        case TOK_STAR:      return "*";
+        case TOK_SLASH:     return "/";
+        case TOK_PERCENT:   return "%";
+        case TOK_EQ:        return "==";
+        case TOK_NE:        return "!=";
+        case TOK_LT:        return "<";
+        case TOK_LE:        return "<=";
+        case TOK_GT:        return ">";
+        case TOK_GE:        return ">=";
+        case TOK_ASSIGN:    return "=";
+        case TOK_NOT:       return "!";
+        case TOK_AND:       return "&&";
+        case TOK_OR:        return "||";
+        case TOK_LPAREN:    return "(";
+        case TOK_RPAREN:    return ")";
+        case TOK_LBRACE:    return "{";
+        case TOK_RBRACE:    return "}";
+        case TOK_LBRACKET:  return "[";
+        case TOK_RBRACKET:  return "]";
+        case TOK_SEMI:      return ";";
+        case TOK_COMMA:     return ",";
+        case TOK_DOT:       return ".";
+        default:            return "?";
+    }
+}
