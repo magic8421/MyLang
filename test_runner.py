@@ -382,6 +382,21 @@ int main() {
     return b.v + b.total;
 }
 """, 22),
+
+    ("method_return_reassign", """
+class Box {
+    int v;
+    Box set(int x) { this.v = x; return this; }
+}
+int main() {
+    Box a = new Box;
+    a.set(1);
+    Box b = new Box;
+    b.set(9);
+    b = a.set(5);
+    return a.v + b.v;
+}
+""", 10),
 ]
 
 # ============================================================
