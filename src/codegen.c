@@ -260,6 +260,14 @@ static void codegen_expr(AstNode* node, FILE* out) {
                     fprintf(out, " = ");
                     codegen_expr(rhs, out);
                     fprintf(out, "))");
+                } else if (rhs->kind == AST_CALL) {
+                    fprintf(out, "((void)mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, "), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, " = ");
+                    codegen_expr(rhs, out);
+                    fprintf(out, "))");
                 } else if (rhs_simple) {
                     fprintf(out, "((void)mylang_retain(");
                     codegen_expr(rhs, out);
@@ -432,7 +440,8 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
     }
 
     if (node->child_count > 0) {
-        if (type.kind == TYPE_CLASS && node->children[0]->kind != AST_NEW) {
+        if (type.kind == TYPE_CLASS && node->children[0]->kind != AST_NEW
+            && node->children[0]->kind != AST_CALL) {
             fprintf(out, " = mylang_retain(");
             codegen_expr(node->children[0], out);
             fprintf(out, ")");
@@ -480,14 +489,15 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
         emit_bounds_checks(ret, out, indent);
         resolve_type(ret);
 
-        if (ret->kind == AST_IDENT && ret->resolved_type.kind == TYPE_CLASS) {
-            cleanup_remove(ret->tok.text);
+        if (ret->resolved_type.kind == TYPE_CLASS) {
+            indent_line(out, indent);
+            fprintf(out, "void* _r = mylang_retain(");
+            codegen_expr(ret, out);
+            fprintf(out, ");\n");
             cleanup_emit(out, indent);
             cleanup_clear();
             indent_line(out, indent);
-            fprintf(out, "return ");
-            codegen_expr(ret, out);
-            fprintf(out, ";\n");
+            fprintf(out, "return _r;\n");
         } else {
             char tbuf[128];
             c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
