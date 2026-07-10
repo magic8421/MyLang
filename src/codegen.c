@@ -449,18 +449,33 @@ static void codegen_while_stmt(AstNode* node, FILE* out, int indent) {
 
 static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
     if (node->child_count > 0) {
-        AstNode* ret_expr = node->children[0];
-        emit_bounds_checks(ret_expr, out, indent);
-        cleanup_remove_from_expr(ret_expr);
+        AstNode* ret = node->children[0];
+        emit_bounds_checks(ret, out, indent);
+        resolve_type(ret);
+
+        if (ret->kind == AST_IDENT && ret->resolved_type.kind == TYPE_CLASS) {
+            cleanup_remove(ret->tok.text);
+            cleanup_emit(out, indent);
+            indent_line(out, indent);
+            fprintf(out, "return ");
+            codegen_expr(ret, out);
+            fprintf(out, ";\n");
+        } else {
+            char tbuf[128];
+            c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
+            indent_line(out, indent);
+            fprintf(out, "%s _mylang_ret = ", tbuf);
+            codegen_expr(ret, out);
+            fprintf(out, ";\n");
+            cleanup_emit(out, indent);
+            indent_line(out, indent);
+            fprintf(out, "return _mylang_ret;\n");
+        }
+    } else {
+        cleanup_emit(out, indent);
+        indent_line(out, indent);
+        fprintf(out, "return;\n");
     }
-    cleanup_emit(out, indent);
-    indent_line(out, indent);
-    fprintf(out, "return");
-    if (node->child_count > 0) {
-        fprintf(out, " ");
-        codegen_expr(node->children[0], out);
-    }
-    fprintf(out, ";\n");
 }
 
 static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
