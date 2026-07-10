@@ -17,7 +17,7 @@ static const KeywordEntry keywords[] = {
     {"while",  TOK_KW_WHILE},
     {"return", TOK_KW_RETURN},
     {"new",    TOK_KW_NEW},
-    {"struct", TOK_KW_STRUCT},
+    {"class",  TOK_KW_CLASS},
     {NULL,     0},
 };
 

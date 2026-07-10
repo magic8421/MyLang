@@ -6,13 +6,13 @@
 typedef enum {
     TYPE_INT,
     TYPE_CHAR,
-    TYPE_STRUCT,
+    TYPE_CLASS,
     TYPE_VOID,
 } TypeKind;
 
 typedef struct {
     TypeKind kind;
-    char     struct_name[64];
+    char     class_name[64];
     int      is_pointer;
     int      array_size;
 } Type;
@@ -21,7 +21,7 @@ typedef struct AstNode AstNode;
 
 typedef enum {
     AST_PROGRAM,
-    AST_STRUCT_DECL,
+    AST_CLASS_DECL,
     AST_FUNC_DECL,
     AST_BLOCK,
     AST_VAR_DECL,
@@ -49,7 +49,7 @@ struct AstNode {
     int      child_count;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
-    /* for AST_IDENT / AST_STRUCT_DECL: name in tok.text */
+    /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */
     AstNode* next;  /* linked list for decls / stmts */
 };
 

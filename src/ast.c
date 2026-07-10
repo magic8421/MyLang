@@ -32,7 +32,7 @@ const char* type_name(const Type* t) {
         case TYPE_INT:    return "int";
         case TYPE_CHAR:   return "char";
         case TYPE_VOID:   return "void";
-        case TYPE_STRUCT: return t->struct_name;
+        case TYPE_CLASS: return t->class_name;
     }
     return "?";
 }
@@ -40,8 +40,8 @@ const char* type_name(const Type* t) {
 int type_equal(const Type* a, const Type* b) {
     if (a->kind != b->kind) return 0;
     if (a->is_pointer != b->is_pointer) return 0;
-    if (a->kind == TYPE_STRUCT) {
-        return strcmp(a->struct_name, b->struct_name) == 0;
+    if (a->kind == TYPE_CLASS) {
+        return strcmp(a->class_name, b->class_name) == 0;
     }
     return 1;
 }

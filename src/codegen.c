@@ -10,7 +10,7 @@ static const char* c_base_name(const Type* t) {
     switch (t->kind) {
         case TYPE_INT:    return "int";
         case TYPE_CHAR:   return "char";
-        case TYPE_STRUCT: return t->struct_name;
+        case TYPE_CLASS: return t->class_name;
         default:          return "int";
     }
 }
@@ -76,7 +76,7 @@ static Type resolve_type(AstNode* node) {
 
         case AST_MEMBER_ACCESS: {
             Type obj = resolve_type(node->children[0]);
-            StructInfo* si = symtab_find_struct(obj.struct_name);
+            ClassInfo* si = symtab_find_class(obj.class_name);
             if (si) {
                 int i;
                 for (i = 0; i < si->field_count; i++) {
@@ -399,8 +399,8 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
 /* ══════════════════════════════════════════════════════════════════�?   CODE GENERATION �?top-level declarations
    ══════════════════════════════════════════════════════════════════�?*/
 
-static void codegen_struct_decl(AstNode* node, FILE* out) {
-    StructInfo* si = symtab_find_struct(node->tok.text);
+static void codegen_class_decl(AstNode* node, FILE* out) {
+    ClassInfo* si = symtab_find_class(node->tok.text);
     if (!si) return;
 
     fprintf(out, "typedef struct {\n");
@@ -500,8 +500,8 @@ void codegen_program(AstNode* program, FILE* out) {
 
     AstNode* decl = program->children[0];
     while (decl) {
-        if (decl->kind == AST_STRUCT_DECL) {
-            codegen_struct_decl(decl, out);
+        if (decl->kind == AST_CLASS_DECL) {
+            codegen_class_decl(decl, out);
         }
         decl = decl->next;
     }

@@ -5,7 +5,7 @@
 
 static Scope*       current_scope = NULL;
 static int          scope_counter = 0;
-static StructInfo*  struct_list   = NULL;
+static ClassInfo*  class_list   = NULL;
 static FuncInfo*    func_list     = NULL;
 
 static unsigned hash_string(const char* s) {
@@ -17,7 +17,7 @@ static unsigned hash_string(const char* s) {
 }
 
 void symtab_init(void) {
-    struct_list  = NULL;
+    class_list  = NULL;
     scope_counter = 0;
     current_scope = calloc(1, sizeof(Scope));
     current_scope->level = scope_counter++;
@@ -80,13 +80,13 @@ SymEntry* symtab_lookup_current(const char* name) {
     return NULL;
 }
 
-void symtab_add_struct(const char* name, StructInfo* info) {
-    info->next = struct_list;
-    struct_list = info;
+void symtab_add_class(const char* name, ClassInfo* info) {
+    info->next = class_list;
+    class_list = info;
 }
 
-StructInfo* symtab_find_struct(const char* name) {
-    StructInfo* s = struct_list;
+ClassInfo* symtab_find_class(const char* name) {
+    ClassInfo* s = class_list;
     while (s) {
         if (strcmp(s->name, name) == 0) {
             return s;
@@ -96,7 +96,7 @@ StructInfo* symtab_find_struct(const char* name) {
     return NULL;
 }
 
-int symtab_add_field(StructInfo* info, const char* name, Type type) {
+int symtab_add_field(ClassInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
     strncpy(info->field_names[info->field_count], name, 63);
     info->field_names[info->field_count][63] = '\0';

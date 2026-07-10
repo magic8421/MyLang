@@ -14,7 +14,7 @@ typedef enum {
     TOK_KW_WHILE,
     TOK_KW_RETURN,
     TOK_KW_NEW,
-    TOK_KW_STRUCT,
+    TOK_KW_CLASS,
 
     TOK_PLUS,
     TOK_MINUS,
