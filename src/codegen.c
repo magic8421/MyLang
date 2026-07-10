@@ -3,8 +3,6 @@
 #include <string.h>
 #include <stdio.h>
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   TYPE HELPERS
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 static const char* c_base_name(const Type* t) {
     switch (t->kind) {
@@ -25,8 +23,6 @@ static void c_type_str(const Type* t, char* buf, int bufsz) {
     }
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   TYPE RESOLUTION (semantic analysis pass)
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 static Type resolve_type(AstNode* node);
 
@@ -90,8 +86,18 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_CALL: {
-            FuncInfo* fi = symtab_find_func(node->children[0]->tok.text);
-            if (fi) { t = fi->return_type; }
+            if (node->children[0]->kind == AST_MEMBER_ACCESS) {
+                AstNode* mem = node->children[0];
+                AstNode* obj = mem->children[0];
+                resolve_type(obj);
+                if (obj->resolved_type.kind == TYPE_CLASS) {
+                    MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mem->tok.text);
+                    if (mi) { t = mi->return_type; }
+                }
+            } else {
+                FuncInfo* fi = symtab_find_func(node->children[0]->tok.text);
+                if (fi) { t = fi->return_type; }
+            }
             break;
         }
 
@@ -117,9 +123,6 @@ static Type resolve_type(AstNode* node) {
     return t;
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   CODE GENERATION ??expressions
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
-
 static void codegen_expr(AstNode* node, FILE* out);
 
 static void codegen_binary(AstNode* node, FILE* out) {
@@ -136,6 +139,26 @@ static void codegen_unary(AstNode* node, FILE* out) {
 }
 
 static void codegen_call(AstNode* node, FILE* out) {
+    /* method call: p.foo(...) ClassName_foo(p, ...) */
+    if (node->children[0]->kind == AST_MEMBER_ACCESS) {
+        AstNode* mem = node->children[0];
+        AstNode* obj = mem->children[0];
+        const char* mname = mem->tok.text;
+        resolve_type(obj);
+        if (obj->resolved_type.kind == TYPE_CLASS) {
+            fprintf(out, "%s_%s(", obj->resolved_type.class_name, mname);
+            codegen_expr(obj, out);
+            AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+            while (args) {
+                fprintf(out, ", ");
+                codegen_expr(args, out);
+                args = args->next;
+            }
+            fprintf(out, ")");
+            return;
+        }
+    }
+    /* normal function call */
     codegen_expr(node->children[0], out);
     fprintf(out, "(");
     AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
@@ -210,7 +233,10 @@ static void codegen_expr(AstNode* node, FILE* out) {
             codegen_char_lit(node, out);
             break;
         case AST_IDENT:
-            fprintf(out, "%s", node->tok.text);
+            if (strcmp(node->tok.text, "this") == 0)
+                fprintf(out, "thiz");
+            else
+                fprintf(out, "%s", node->tok.text);
             break;
         case AST_BINARY:
             codegen_binary(node, out);
@@ -514,23 +540,54 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
     }
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   CODE GENERATION ??top-level declarations
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
+
+static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name);
 
 static void codegen_class_decl(AstNode* node, FILE* out) {
-    ClassInfo* si = symtab_find_class(node->tok.text);
-    if (!si) return;
+    ClassInfo* ci = symtab_find_class(node->tok.text);
+    if (!ci) return;
 
     fprintf(out, "typedef struct {\n");
     int i;
-    for (i = 0; i < si->field_count; i++) {
+    for (i = 0; i < ci->field_count; i++) {
         char ftype_buf[128];
-        c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
-        fprintf(out, "    %s %s;\n", ftype_buf, si->field_names[i]);
+        c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
+        fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
     }
     fprintf(out, "} %s;\n\n", node->tok.text);
+
+    /* emit method declarations */
+    AstNode* m = node->children[0];
+    while (m) {
+        codegen_method_decl(m, out, node->tok.text);
+        m = m->next;
+    }
 }
 
+
+static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name) {
+    char ret_buf[128];
+    c_type_str(&node->resolved_type, ret_buf, sizeof(ret_buf));
+    fprintf(out, "%s %s_%s(%s* thiz", ret_buf, class_name, node->tok.text, class_name);
+    AstNode* params = NULL; AstNode* body = NULL;
+    if (node->child_count == 2) { params = node->children[0]; body = node->children[1]; }
+    else { body = node->children[0]; }
+    { AstNode* p = params; while (p) { fprintf(out, ", ");
+        char pt[128]; c_type_str(&p->resolved_type, pt, sizeof(pt));
+        fprintf(out, "%s %s", pt, p->tok.text); p = p->next; } }
+    fprintf(out, ")\n{\n");
+    cleanup_clear(); symtab_enter_scope();
+    Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
+    thiz_type.kind = TYPE_CLASS; strncpy(thiz_type.class_name, class_name, 63);
+    thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
+    { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
+        if (p->resolved_type.kind == TYPE_CLASS && p->resolved_type.is_pointer) {
+            cleanup_add(p->tok.text); indent_line(out, 1);
+            fprintf(out, "mylang_retain(%s);\n", p->tok.text); } p = p->next; } }
+    if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
+        while (s) { codegen_stmt(s, out, 1); s = s->next; } }
+    symtab_exit_scope(); fprintf(out, "}\n\n");
+}
 static void codegen_func_decl(AstNode* node, FILE* out) {
     /* return type */
     {
@@ -606,9 +663,6 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     symtab_exit_scope();
     fprintf(out, "}\n\n");
 }
-
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   PUBLIC INTERFACE
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "/* Generated by MyLang compiler */\n");

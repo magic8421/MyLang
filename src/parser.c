@@ -37,9 +37,6 @@ static int is_type_name(const char* name) {
 static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   TYPE PARSING
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
-
 static Type parse_type(Parser* p) {
     Type t;
     memset(&t, 0, sizeof(t));
@@ -50,6 +47,9 @@ static Type parse_type(Parser* p) {
     } else if (check(p, TOK_KW_CHAR)) {
         advance(p);
         t.kind = TYPE_CHAR;
+    } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
+        advance(p);
+        t.kind = TYPE_VOID;
     } else if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         t.kind = TYPE_CLASS;
         strncpy(t.class_name, p->current.text, 63);
@@ -76,8 +76,6 @@ static Type parse_type(Parser* p) {
     return t;
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   EXPRESSION PARSING
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_INT_LIT)) {
@@ -94,6 +92,13 @@ static AstNode* parse_primary(Parser* p) {
     }
     if (check(p, TOK_IDENT)) {
         Token t = p->current; advance(p);
+        return ast_new_node(AST_IDENT, t);
+    }
+    if (check(p, TOK_KW_THIS)) {
+        Token t = p->current; advance(p);
+        t.kind = TOK_IDENT;
+        strncpy(t.text, "this", 255);
+        t.text[255] = '\0';
         return ast_new_node(AST_IDENT, t);
     }
     if (check(p, TOK_LPAREN)) {
@@ -377,14 +382,12 @@ static AstNode* parse_stmt(Parser* p) {
     return NULL;
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   TOP-LEVEL PARSING
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 static AstNode* parse_class_decl(Parser* p) {
-    Token kw = p->current; advance(p); /* struct */
+    Token kw = p->current; advance(p); /* class */
 
     if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "error at %d:%d: expected struct name\n",
+        fprintf(stderr, "error at %d:%d: expected class name\n",
                 p->current.line, p->current.col);
         p->had_error = 1;
         return NULL;
@@ -396,25 +399,89 @@ static AstNode* parse_class_decl(Parser* p) {
     strncpy(info->name, name.text, 63);
     info->name[63] = '\0';
 
+    /* register early so methods with this return type resolve */
+    symtab_add_class(name.text, info);
+
+    AstNode* methods = NULL;
+
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         Type ft = parse_type(p);
         if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "error at %d:%d: expected field name\n",
+            fprintf(stderr, "error at %d:%d: expected field or method name\n",
                     p->current.line, p->current.col);
             p->had_error = 1;
             break;
         }
         Token fname = p->current; advance(p);
-        expect(p, TOK_SEMI);
-        symtab_add_field(info, fname.text, ft);
+
+        if (check(p, TOK_LPAREN)) {
+            /* METHOD */
+            advance(p); /* consume ( */
+
+            symtab_enter_scope();
+
+            /* register implicit this */
+            Type this_type;
+            memset(&this_type, 0, sizeof(this_type));
+            this_type.kind = TYPE_CLASS;
+            strncpy(this_type.class_name, name.text, 63);
+            this_type.is_pointer = 1;
+            symtab_insert("this", this_type);
+
+            AstNode* mparams = NULL;
+            int mc = 0;
+            char mpn[16][64];
+            Type mpt[16];
+
+            if (!check(p, TOK_RPAREN)) {
+                do {
+                    Type pt = parse_type(p);
+                    if (!check(p, TOK_IDENT)) {
+                        fprintf(stderr, "error at %d:%d: expected parameter name\n",
+                                p->current.line, p->current.col);
+                        p->had_error = 1;
+                        break;
+                    }
+                    Token pn = p->current; advance(p);
+                    AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
+                    pd->resolved_type = pt;
+                    symtab_insert(pn.text, pt);
+                    mparams = ast_append_list(mparams, pd);
+                    if (mc < 16) {
+                        strncpy(mpn[mc], pn.text, 63);
+                        mpn[mc][63] = '\0';
+                        mpt[mc] = pt;
+                        mc++;
+                    }
+                } while (check(p, TOK_COMMA) && (advance(p), 1));
+            }
+            expect(p, TOK_RPAREN);
+
+            AstNode* mbody = parse_stmt(p);
+
+            symtab_exit_scope();
+
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt);
+
+            AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
+            mnode->resolved_type = ft;
+            if (mparams) { mnode->children[mnode->child_count++] = mparams; }
+            mnode->children[mnode->child_count++] = mbody;
+            methods = ast_append_list(methods, mnode);
+
+        } else {
+            /* FIELD */
+            expect(p, TOK_SEMI);
+            symtab_add_field(info, fname.text, ft);
+        }
     }
     expect(p, TOK_RBRACE);
-
-    symtab_add_class(name.text, info);
 
     AstNode* node = ast_new_node(AST_CLASS_DECL, name);
     node->resolved_type.kind = TYPE_CLASS;
     strncpy(node->resolved_type.class_name, name.text, 63);
+    node->children[0] = methods;
+    if (methods) node->child_count = 1;
     return node;
 }
 
@@ -480,8 +547,6 @@ static AstNode* parse_top_level(Parser* p) {
     return NULL;
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   PUBLIC INTERFACE
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
 void parser_init(Parser* p, Lexer* lexer) {
     p->lexer     = lexer;

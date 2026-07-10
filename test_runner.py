@@ -281,6 +281,58 @@ int main() {
     return x;
 }
 """, 23),
+
+    ("method_get_set", """
+int id(int x) { return x; }
+class Counter {
+    int value;
+    int get() { return this.value; }
+    void set(int v) { this.value = v; }
+    int inc() { this.value = this.value + 1; return this.value; }
+}
+int main() {
+    Counter c = new Counter;
+    c.set(10);
+    int a = c.get();
+    int b = c.inc();
+    return id(a + b);
+}
+""", 21),
+
+    ("method_thiz_alias", """
+class Box {
+    int x;
+    Box set(int v) {
+        this.x = v;
+        return this;
+    }
+    int get() { return this.x; }
+}
+int main() {
+    Box b = new Box;
+    b.set(7);
+    Box c = b.set(3);
+    return b.get() + c.get();
+}
+""", 6),
+
+    ("method_multi_param", """
+class Point {
+    int x;
+    int y;
+    void move(int dx, int dy) {
+        this.x = this.x + dx;
+        this.y = this.y + dy;
+    }
+}
+int main() {
+    Point p = new Point;
+    p.x = 1;
+    p.y = 2;
+    p.move(10, 20);
+    return p.x + p.y;
+}
+""", 33),
 ]
 
 # ============================================================

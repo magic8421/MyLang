@@ -14,6 +14,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_RETURN: return "return";
         case TOK_KW_NEW:    return "new";
         case TOK_KW_CLASS:  return "class";
+        case TOK_KW_THIS:   return "this";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

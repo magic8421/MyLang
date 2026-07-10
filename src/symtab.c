@@ -122,3 +122,31 @@ FuncInfo* symtab_find_func(const char* name) {
     }
     return NULL;
 }
+
+void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
+                       int pc, const char pn[][64], const Type pt[]) {
+    MethodInfo* m = calloc(1, sizeof(MethodInfo));
+    strncpy(m->name, name, 63);
+    m->name[63] = '\0';
+    m->return_type = ret_type;
+    m->param_count = pc;
+    int i;
+    for (i = 0; i < pc && i < 16; i++) {
+        strncpy(m->param_names[i], pn[i], 63);
+        m->param_names[i][63] = '\0';
+        m->param_types[i] = pt[i];
+    }
+    m->next = cls->methods;
+    cls->methods = m;
+}
+
+MethodInfo* symtab_find_method(const char* class_name, const char* method_name) {
+    ClassInfo* cls = symtab_find_class(class_name);
+    if (!cls) return NULL;
+    MethodInfo* m = cls->methods;
+    while (m) {
+        if (strcmp(m->name, method_name) == 0) return m;
+        m = m->next;
+    }
+    return NULL;
+}

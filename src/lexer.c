@@ -18,6 +18,7 @@ static const KeywordEntry keywords[] = {
     {"return", TOK_KW_RETURN},
     {"new",    TOK_KW_NEW},
     {"class",  TOK_KW_CLASS},
+    {"this",   TOK_KW_THIS},
     {NULL,     0},
 };
 
