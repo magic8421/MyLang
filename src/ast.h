@@ -41,7 +41,6 @@ typedef struct {
     int      array_size;
     int      is_ref;       /* by-reference parameter */
     int      is_out;       /* out-parameter */
-    int      is_in;        /* read-only by-reference parameter */
     int      type_id;
 } Type;
 

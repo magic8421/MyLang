@@ -77,11 +77,10 @@ static Type resolve_type(AstNode* node) {
             SymEntry* e = symtab_lookup(node->tok.text);
             if (e) {
                 t = e->type;
-                /* A ref/out/in parameter is a pointer in C, but its value
-                   type for the caller is the referenced object. */
+                /* A ref/out parameter is a pointer in C, but its value type
+                   for the caller is the referenced object. */
                 t.is_ref = 0;
                 t.is_out = 0;
-                t.is_in = 0;
             }
             break;
         }
@@ -198,36 +197,29 @@ static void codegen_unary(AstNode* node, FILE* out) {
     codegen_expr(node->children[0], out);
 }
 
-static int type_is_ref_like(const Type* t) {
-    return t->is_ref || t->is_out || t->is_in;
+static int type_is_ref_out(const Type* t) {
+    return t->is_ref || t->is_out;
 }
 
-/* Emit a single argument for a ref/out/in parameter.  Only a local variable
-   identifier is allowed.  It is passed as &var, or as the raw pointer if var
-   itself is already a ref-like parameter.  An `in` argument cannot be passed
-   to a mutable `ref`/`out` parameter. */
+/* Emit a single argument.  If the callee expects a ref/out parameter, only a
+   local variable identifier is allowed; it is passed as &var, or as the raw
+   pointer if var itself is already a ref/out parameter. */
 static void codegen_call_arg(AstNode* arg, const Type* param_type, FILE* out) {
-    if (type_is_ref_like(param_type)) {
+    if (type_is_ref_out(param_type)) {
         if (arg->kind != AST_IDENT) {
-            fprintf(stderr, "error at %d:%d: ref/out/in argument must be a local variable\n",
+            fprintf(stderr, "error at %d:%d: ref/out argument must be a local variable\n",
                     arg->tok.line, arg->tok.col);
-            fprintf(out, "0 /* invalid ref-like argument */");
+            fprintf(out, "0 /* invalid ref/out argument */");
             return;
         }
         SymEntry* e = symtab_lookup(arg->tok.text);
         if (!e) {
-            fprintf(stderr, "error at %d:%d: ref/out/in argument must be a local variable\n",
+            fprintf(stderr, "error at %d:%d: ref/out argument must be a local variable\n",
                     arg->tok.line, arg->tok.col);
-            fprintf(out, "0 /* invalid ref-like argument */");
-            return;
-        }
-        if ((param_type->is_ref || param_type->is_out) && e->type.is_in) {
-            fprintf(stderr, "error at %d:%d: cannot pass in parameter '%s' to ref/out\n",
-                    arg->tok.line, arg->tok.col, arg->tok.text);
             fprintf(out, "0 /* invalid ref/out argument */");
             return;
         }
-        if (type_is_ref_like(&e->type)) {
+        if (type_is_ref_out(&e->type)) {
             fprintf(out, "%s", arg->tok.text);
         } else {
             fprintf(out, "&%s", arg->tok.text);
@@ -397,7 +389,7 @@ static void codegen_expr(AstNode* node, FILE* out) {
                 fprintf(out, "thiz");
             } else {
                 SymEntry* e = symtab_lookup(node->tok.text);
-                if (e && type_is_ref_like(&e->type)) {
+                if (e && (e->type.is_ref || e->type.is_out)) {
                     fprintf(out, "(*%s)", node->tok.text);
                 } else {
                     fprintf(out, "%s", node->tok.text);
@@ -997,7 +989,7 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     else { body = node->children[0]; }
     { AstNode* p = params; while (p) { fprintf(out, ", ");
         char pt[128]; c_type_str(&p->resolved_type, pt, sizeof(pt));
-        if (type_is_ref_like(&p->resolved_type)) {
+        if (type_is_ref_out(&p->resolved_type)) {
             fprintf(out, "%s* %s", pt, p->tok.text);
         } else {
             fprintf(out, "%s %s", pt, p->tok.text);
@@ -1053,7 +1045,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
             if (!first) fprintf(out, ", ");
             char ptype_buf[128];
             c_type_str(&p->resolved_type, ptype_buf, sizeof(ptype_buf));
-            if (type_is_ref_like(&p->resolved_type)) {
+            if (type_is_ref_out(&p->resolved_type)) {
                 fprintf(out, "%s* %s", ptype_buf, p->tok.text);
             } else {
                 fprintf(out, "%s %s", ptype_buf, p->tok.text);

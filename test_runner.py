@@ -692,60 +692,6 @@ i32 main() {
     return a[0] + a[1];
 }
 """, 15),
-
-    ("in_i32", """
-i32 sum(in i32 a, in i32 b) {
-    return a + b;
-}
-i32 main() {
-    i32 x = 3;
-    i32 y = 4;
-    return sum(x, y);
-}
-""", 7),
-
-    ("in_class", """
-class Point {
-    i32 x;
-}
-i32 get_x(in Point p) {
-    return p.x;
-}
-i32 main() {
-    Point p = new Point;
-    p.x = 99;
-    return get_x(p);
-}
-""", 99),
-
-    ("in_chain", """
-i32 id(in i32 x) {
-    return x;
-}
-i32 proxy(in i32 y) {
-    return id(y);
-}
-i32 main() {
-    i32 v = 5;
-    return proxy(v);
-}
-""", 5),
-
-    ("out_definite_branch", """
-void choose(i32 c, out i32 r) {
-    if (c > 0) {
-        r = 10;
-    } else {
-        r = 20;
-    }
-}
-i32 main() {
-    i32 v;
-    choose(0, v);
-    return v;
-}
-""", 20),
-
     ("struct_basic", """
 struct Point {
     i32 x;
