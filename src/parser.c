@@ -53,6 +53,8 @@ static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
+static int next_class_type_id = TYPE_ID_CLASS_BASE;
+
 static Type parse_type(Parser* p) {
     Type t;
     memset(&t, 0, sizeof(t));
@@ -60,9 +62,11 @@ static Type parse_type(Parser* p) {
     if (check(p, TOK_KW_INT)) {
         advance(p);
         t.kind = TYPE_INT;
+        t.type_id = TYPE_ID_INT;
     } else if (check(p, TOK_KW_CHAR)) {
         advance(p);
         t.kind = TYPE_CHAR;
+        t.type_id = TYPE_ID_CHAR;
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.kind = TYPE_VOID;
@@ -71,6 +75,8 @@ static Type parse_type(Parser* p) {
         CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 1;
+        ClassInfo* ci = symtab_find_class(p->current.text);
+        if (ci) t.type_id = ci->type_id;
         advance(p);
     } else {
         t.kind = TYPE_VOID;
@@ -78,6 +84,7 @@ static Type parse_type(Parser* p) {
 
     if (check(p, TOK_LBRACKET)) {
         advance(p);
+        t.is_array = 1;
         if (check(p, TOK_RBRACKET)) {
             advance(p);
             t.is_pointer = 1;
@@ -443,6 +450,7 @@ static AstNode* parse_class_decl(Parser* p) {
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
     info->name[63] = '\0';
+    info->type_id = next_class_type_id++;
 
     /* register early so methods with this return type resolve */
     symtab_add_class(name.text, info);

@@ -17,6 +17,7 @@ typedef struct MethodInfo {
 
 typedef struct ClassInfo {
     char name[64];
+    int  type_id;
     int  field_count;
     char field_names[MAX_FIELDS][64];
     Type field_types[MAX_FIELDS];

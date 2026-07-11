@@ -31,31 +31,25 @@
 
 ## Open Design Questions
 
-### 5. Class dynamic arrays use wrong header
+### 5. Class dynamic arrays use wrong header  [FIXED]
 
-Current problems:
+Fix summary:
 
-- `mylang_new_array` stores `size_t count` before the payload.
-- `mylang_release` expects `ObjHeader` (refcount) at the same offset.
-- `new Box[N]` is treated as a class object, so cleanup calls `mylang_release`,
-  which corrupts the header and never frees the array.
-- `new int[N]` is never freed because `int[]` is not a class type and has no
-  cleanup.
-
-Proposed design:
-
-- Arrays are **not** class objects. They have their own `size_t count` header
-  and their own destructor `mylang_free_array(arr)`.
-- A local array variable should be released with `mylang_free_array` at scope
-  exit, not `mylang_release`.
-- Class arrays should be arrays of **pointers**:
-  - Allocation size: `sizeof(size_t) + N * sizeof(Class*)`
-  - `arr[0] = new Box;` stores a `Box*` in the slot.
-  - `arr[0].v` dereferences that pointer.
-- When freeing a class-pointer array:
-  - `mylang_release` every non-NULL element.
-  - Then free the array block using the count header.
-- Bounds checking should work for class arrays too.
+- `ObjHeader` now stores `refcount`, `type_id`, and `length`.
+- `type_id` uses bit `0x80000000` for `TYPE_IS_ARRAY`; primitive IDs are 0-15
+  and class IDs start at 16.
+- `mylang_new_array(count, elem_size, type_id)` creates a single heap object
+  with a proper `ObjHeader`.
+- `mylang_release` is now generic: when the header's `type_id` has the array
+  bit, it iterates non-NULL class-pointer elements and releases them before
+  freeing the array block.
+- Class dynamic arrays are arrays of pointers (`Box**` in C). Element reads use
+  `array_get_class`, element writes use `array_replace_class`, which releases
+  the old element and stores the new one.
+- Primitive dynamic arrays use `array_get_T` / `array_set_T` inline helpers that
+  perform bounds checks without re-evaluating side-effecting index expressions.
+- Local array variables enter the cleanup list and are released with
+  `mylang_release` at scope exit.
 
 ### 6. Add explicit fixed-width primitive types
 

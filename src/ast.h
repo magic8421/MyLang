@@ -10,11 +10,28 @@ typedef enum {
     TYPE_VOID,
 } TypeKind;
 
+#define TYPE_ID_INT     0
+#define TYPE_ID_CHAR    1
+#define TYPE_ID_U8      2
+#define TYPE_ID_U16     3
+#define TYPE_ID_U32     4
+#define TYPE_ID_U64     5
+#define TYPE_ID_I8      6
+#define TYPE_ID_I16     7
+#define TYPE_ID_I32     8
+#define TYPE_ID_I64     9
+#define TYPE_ID_F32     10
+#define TYPE_ID_F64     11
+#define TYPE_ID_CLASS_BASE 16
+#define TYPE_IS_ARRAY   0x80000000U
+
 typedef struct {
     TypeKind kind;
     char     class_name[64];
     int      is_pointer;
+    int      is_array;
     int      array_size;
+    int      type_id;
 } Type;
 
 typedef struct AstNode AstNode;

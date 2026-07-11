@@ -48,3 +48,56 @@ p = new Obj;
 你的意思是现在数组存放class类型的时候没有存 `ObjHeader` 是吗？ 
 我的想法是数组对于 int short char float double 等值类型是不用引用计数那些的 然后 只有class类型才需要 （以后应该会有struct类型也是按值拷贝的不用引用计数）
 我们还需要定义 u32 u64 u16 u8 i32 i64 i16 i8 f32 f64 这些类型 这样清爽一些
+
+260711-1654
+
+你刚才说：ObjHeader 加 is_class 字段（对象时不用，数组时表示元素是不是 class 指针）。 
+不要这样 ObjHeader 加一个 type_id 字段 32位无符号 用其最高位 做一个 TYPE_IS_ARRAY bit    
+type_id 低24位可以用来存 type信息 
+目前就预留 16个类型给 简单数据 比如
+`u8`, `u16`, `u32`, `u64`,  `i8`, `i16`, `i32`, `i64`, `f32`, `f64`
+所以class的type_id要大于15  编译时 按照定义出现的顺序 每个class type_id递增  不重复 
+mylang_array_release 释放的时候 判断 type_id是否大于15  就可以决定要不要 mylang_release(data[i]) 
+
+然后这个 mylang_bounds 我也觉得不妥 复杂表达式很有可能出错 
+比如 arr[++i] 这种 会有严重副作用吧
+我现在的想法是  对于每一种类型 你要生成一些 模板代码 比方说：
+
+第一种方法：
+
+inline int array_get_int(int *arr, size_t idx) {
+    if ((size_t)(idx) >= *(size_t*)((char*)(arr) - sizeof(size_t))){
+        __debugbreak();
+    }
+    return arr[idx];
+}
+
+inline void array_set_int(int *arr, size_t idx, int val) {
+    if ((size_t)(idx) >= *(size_t*)((char*)(arr) - sizeof(size_t))) { 
+        __debugbreak();
+    }
+    arr[idx] = val;
+}
+
+第二种方法：
+
+typedef struct {
+    size_t len;
+    int data[];
+} IntArray;
+
+inline int array_get_int(IntArray *arr, size_t idx) {
+    if (idx >= arr->len) {
+        __debugbreak();
+    }
+    return arr->data[idx];
+}
+
+inline void array_set_int(IntArray *arr, size_t idx, int val) {
+    if (idx >= arr->len) {
+        __debugbreak();
+    }
+    arr->data[idx] = val;
+}
+
+你觉得哪种方法好？
