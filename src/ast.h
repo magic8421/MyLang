@@ -47,7 +47,7 @@ struct AstNode {
     Token    tok;
     AstNode* children[4];
     int      child_count;
-    char     temp_name[32];
+    char     temp_name[64];
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
     /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */

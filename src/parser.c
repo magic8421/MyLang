@@ -1,5 +1,6 @@
 #include "parser.h"
 #include "symtab.h"
+#include "util.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -67,7 +68,7 @@ static Type parse_type(Parser* p) {
         t.kind = TYPE_VOID;
     } else if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         t.kind = TYPE_CLASS;
-        strncpy(t.class_name, p->current.text, 63);
+        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 1;
         advance(p);
@@ -112,8 +113,7 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_KW_THIS)) {
         Token t = p->current; advance(p);
         t.kind = TOK_IDENT;
-        strncpy(t.text, "this", 255);
-        t.text[255] = '\0';
+        CHECK_STRSCPY(strscpy(t.text, "this", sizeof(t.text)), "token text too long");
         return ast_new_node(AST_IDENT, t);
     }
     if (check(p, TOK_LPAREN)) {
@@ -132,7 +132,7 @@ static AstNode* parse_primary(Parser* p) {
         else if (check(p, TOK_KW_CHAR)) { advance(p); base.kind = TYPE_CHAR; }
         else if (check(p, TOK_IDENT))   {
             base.kind = TYPE_CLASS;
-            strncpy(base.class_name, p->current.text, 63);
+            CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "class name too long");
             base.class_name[63] = '\0';
             advance(p);
         } else {
@@ -441,7 +441,7 @@ static AstNode* parse_class_decl(Parser* p) {
     expect(p, TOK_LBRACE);
 
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
-    strncpy(info->name, name.text, 63);
+    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
     info->name[63] = '\0';
 
     /* register early so methods with this return type resolve */
@@ -469,7 +469,7 @@ static AstNode* parse_class_decl(Parser* p) {
             Type this_type;
             memset(&this_type, 0, sizeof(this_type));
             this_type.kind = TYPE_CLASS;
-            strncpy(this_type.class_name, name.text, 63);
+            CHECK_STRSCPY(strscpy(this_type.class_name, name.text, sizeof(this_type.class_name)), "class name too long");
             this_type.is_pointer = 1;
             symtab_insert("this", this_type);
 
@@ -493,8 +493,7 @@ static AstNode* parse_class_decl(Parser* p) {
                     symtab_insert(pn.text, pt);
                     mparams = ast_append_list(mparams, pd);
                     if (mc < 16) {
-                        strncpy(mpn[mc], pn.text, 63);
-                        mpn[mc][63] = '\0';
+                        CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                         mpt[mc] = pt;
                         mc++;
                     }
@@ -524,7 +523,7 @@ static AstNode* parse_class_decl(Parser* p) {
 
     AstNode* node = ast_new_node(AST_CLASS_DECL, name);
     node->resolved_type.kind = TYPE_CLASS;
-    strncpy(node->resolved_type.class_name, name.text, 63);
+    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text, sizeof(node->resolved_type.class_name)), "class name too long");
     node->children[0] = methods;
     if (methods) node->child_count = 1;
     return node;

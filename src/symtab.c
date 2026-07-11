@@ -1,4 +1,5 @@
 #include "symtab.h"
+#include "util.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -45,8 +46,7 @@ Scope* symtab_current_scope(void) {
 void symtab_insert(const char* name, Type type) {
     unsigned idx = hash_string(name);
     SymEntry* e  = malloc(sizeof(SymEntry));
-    strncpy(e->name, name, 63);
-    e->name[63] = '\0';
+    CHECK_STRSCPY(strscpy(e->name, name, sizeof(e->name)), "symbol name too long");
     e->type = type;
     e->next = current_scope->table[idx];
     current_scope->table[idx] = e;
@@ -98,8 +98,7 @@ ClassInfo* symtab_find_class(const char* name) {
 
 int symtab_add_field(ClassInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
-    strncpy(info->field_names[info->field_count], name, 63);
-    info->field_names[info->field_count][63] = '\0';
+    CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");
     info->field_types[info->field_count] = type;
     info->field_count++;
     return 0;
@@ -107,8 +106,7 @@ int symtab_add_field(ClassInfo* info, const char* name, Type type) {
 
 void symtab_add_func(const char* name, Type ret_type) {
     FuncInfo* f = malloc(sizeof(FuncInfo));
-    strncpy(f->name, name, 63);
-    f->name[63] = '\0';
+    CHECK_STRSCPY(strscpy(f->name, name, sizeof(f->name)), "function name too long");
     f->return_type = ret_type;
     f->next = func_list;
     func_list = f;
@@ -126,14 +124,12 @@ FuncInfo* symtab_find_func(const char* name) {
 void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                        int pc, const char pn[][64], const Type pt[]) {
     MethodInfo* m = calloc(1, sizeof(MethodInfo));
-    strncpy(m->name, name, 63);
-    m->name[63] = '\0';
+    CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "method name too long");
     m->return_type = ret_type;
     m->param_count = pc;
     int i;
     for (i = 0; i < pc && i < 16; i++) {
-        strncpy(m->param_names[i], pn[i], 63);
-        m->param_names[i][63] = '\0';
+        CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
         m->param_types[i] = pt[i];
     }
     m->next = cls->methods;

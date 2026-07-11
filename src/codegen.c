@@ -1,5 +1,6 @@
 #include "codegen.h"
 #include "symtab.h"
+#include "util.h"
 #include <string.h>
 #include <stdio.h>
 
@@ -14,13 +15,15 @@ static const char* c_base_name(const Type* t) {
 }
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
+    int n;
     if (t->kind == TYPE_CLASS || t->is_pointer) {
-        snprintf(buf, bufsz, "%s*", c_base_name(t));
+        n = snprintf(buf, bufsz, "%s*", c_base_name(t));
     } else if (t->array_size > 0) {
-        snprintf(buf, bufsz, "%s", c_base_name(t));
+        n = snprintf(buf, bufsz, "%s", c_base_name(t));
     } else {
-        snprintf(buf, bufsz, "%s", c_base_name(t));
+        n = snprintf(buf, bufsz, "%s", c_base_name(t));
     }
+    CHECK_SNPRINTF(n, (size_t)bufsz, "type name too long");
 }
 
 
@@ -386,7 +389,8 @@ static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
 
     if (call_needs_guard(expr) && expr->temp_name[0] == '\0') {
         int id = guard_tmp_id++;
-        snprintf(expr->temp_name, sizeof(expr->temp_name), "_g%d", id);
+        int n = snprintf(expr->temp_name, sizeof(expr->temp_name), "_g%d", id);
+        CHECK_SNPRINTF(n, sizeof(expr->temp_name), "guard temporary name too long");
 
         char tbuf[128];
         c_type_str(&expr->resolved_type, tbuf, sizeof(tbuf));
@@ -394,13 +398,13 @@ static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
         fprintf(out, "%s %s = ", tbuf, expr->temp_name);
 
         /* Evaluate the original expression without using its own temp name. */
-        char saved[32];
-        strncpy(saved, expr->temp_name, sizeof(saved) - 1);
-        saved[sizeof(saved) - 1] = '\0';
+        char saved[64];
+        CHECK_STRSCPY(strscpy(saved, expr->temp_name, sizeof(saved)),
+                      "guard temporary name too long");
         expr->temp_name[0] = '\0';
         codegen_expr(expr, out);
-        strncpy(expr->temp_name, saved, sizeof(expr->temp_name) - 1);
-        expr->temp_name[sizeof(expr->temp_name) - 1] = '\0';
+        CHECK_STRSCPY(strscpy(expr->temp_name, saved, sizeof(expr->temp_name)),
+                      "guard temporary name too long");
 
         fprintf(out, ";\n");
     }
@@ -775,7 +779,8 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     fprintf(out, ")\n{\n");
     cleanup_push_scope(); symtab_enter_scope();
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
-    thiz_type.kind = TYPE_CLASS; strncpy(thiz_type.class_name, class_name, 63);
+    thiz_type.kind = TYPE_CLASS;
+    CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
     { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
         p = p->next; } }
