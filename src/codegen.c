@@ -404,6 +404,7 @@ static void emit_stmt_call_releases(AstNode* expr, FILE* out, int indent) {
 #define MAX_CLEANUP 128
 static const char* cleanup_names[MAX_CLEANUP];
 static int         cleanup_count = 0;
+static int         assign_tmp_id = 0;
 
 static void cleanup_add(const char* name) {
     if (cleanup_count < MAX_CLEANUP) cleanup_names[cleanup_count++] = name;
@@ -568,6 +569,43 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
     emit_bounds_checks(node->children[0], out, indent);
     AstNode* expr = node->children[0];
     resolve_type(expr);
+
+    /* class pointer assignment: evaluate RHS first, release old LHS, then assign.
+       This avoids use-after-free when RHS aliases LHS (e.g. b = b.set(5)). */
+    if (expr->kind == AST_ASSIGN) {
+        AstNode* lhs = expr->children[0];
+        AstNode* rhs = expr->children[1];
+        resolve_type(lhs);
+        resolve_type(rhs);
+        Type lt = lhs->resolved_type;
+        if (lhs->kind == AST_IDENT && lt.kind == TYPE_CLASS && lt.is_pointer) {
+            emit_stmt_call_retains(expr, out, indent);
+
+            int id = assign_tmp_id++;
+            indent_line(out, indent);
+            fprintf(out, "void* _my_assign_%d = ", id);
+            if (rhs->kind == AST_CALL || rhs->kind == AST_NEW) {
+                codegen_expr(rhs, out);
+            } else {
+                fprintf(out, "mylang_retain(");
+                codegen_expr(rhs, out);
+                fprintf(out, ")");
+            }
+            fprintf(out, ";\n");
+
+            indent_line(out, indent);
+            fprintf(out, "mylang_release(");
+            codegen_expr(lhs, out);
+            fprintf(out, ");\n");
+
+            indent_line(out, indent);
+            codegen_expr(lhs, out);
+            fprintf(out, " = _my_assign_%d;\n", id);
+
+            emit_stmt_call_releases(expr, out, indent);
+            return;
+        }
+    }
 
     emit_stmt_call_retains(expr, out, indent);
 
