@@ -43,3 +43,8 @@ p = new Obj;
 头部 ObjHeader 要存运行时类型 要存引用计数 可能还会有gc链表 甚至mutex（像java）
 
 想要c#的 in out inout 属性语法
+
+先探讨一下不要改代码 
+你的意思是现在数组存放class类型的时候没有存 `ObjHeader` 是吗？ 
+我的想法是数组对于 int short char float double 等值类型是不用引用计数那些的 然后 只有class类型才需要 （以后应该会有struct类型也是按值拷贝的不用引用计数）
+我们还需要定义 u32 u64 u16 u8 i32 i64 i16 i8 f32 f64 这些类型 这样清爽一些

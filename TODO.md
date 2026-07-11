@@ -6,73 +6,75 @@
 
 - Generated old code: `((void)mylang_release(lhs), (lhs = rhs))`
 - Repro: `b = b.set(5);` where `set` returns `this` -> segfault
-- Fix: in `codegen_expr_stmt`, class-pointer assignments now use a temporary:
-  ```c
-  void* _my_assign_0 = Box_set(b, 5);
-  mylang_release(b);
-  b = _my_assign_0;
-  ```
-- Assignment is now restricted to standalone statements and direct variable
-  initializers. The parser rejects assignments in `if`/`while` conditions,
-  call arguments, return expressions, array indices, `new` array sizes, and
-  other nested expression contexts, so the old unsafe codegen path is no
-  longer reachable there.
+- Fix: in `codegen_expr_stmt`, class-pointer assignments now use a temporary.
+- Assignment is restricted to standalone statements and direct variable
+  initializers. The parser rejects assignments in other contexts.
 
 ### 2. Cleanup list is function-global, not scope-aware  [FIXED]
 
-- Class locals inside `if` / `while` blocks are released at function end
-- Repro: `if (1) { Box b = new Box; }` -> C compile error: `b` undeclared
-- Repro: `while (...) { Box b = new Box; }` -> duplicate cleanup entries -> leak + double free
-- Fix: added `cleanup_push_scope()` / `cleanup_pop_scope()`; every block (function,
-  method, `if`/`while` body) now releases its own class locals on exit.
-- `return` statements use `cleanup_reset()` so early returns still clean up all
-  enclosing scopes correctly.
+- Added `cleanup_push_scope()` / `cleanup_pop_scope()`.
+- Every block releases its own class locals on exit.
+- `return` uses `cleanup_reset()` for early returns.
 
 ### 3. Call guards re-evaluate side-effecting non-local arguments  [FIXED]
 
-- `use(a.get())` used to generate `Box_get(a)` three times
-- Caused wrong behavior / leaks when calls had side effects or returned new objects
-- Fix: in `codegen_expr_stmt`, guarded class subexpressions are now evaluated into
-  typed temporaries once before the call. Retain/release guards operate on the
-  temporaries instead of re-evaluating the original expression. Calls / `new`
-  temporaries are released (they own a +1 reference); borrowed temporaries are
-  retained then released.
+- Guarded class subexpressions are extracted into typed temporaries once.
+- Retain/release guards operate on temporaries instead of re-evaluating.
+- Calls / `new` temporaries are released; borrowed temporaries are retained
+  then released.
 
 ### 4. Class field and array element assignment skip refcounting  [FIXED]
 
-- `list.head = new Node;` used to leak the old value and under-retain the new one
-- `arr[0] = new Box;` had the same problem
-- Fix: `codegen_expr` now handles any class-typed LHS (identifier, member access,
-  array access) by releasing the old value and retaining the RHS when needed.
-- `emit_guarded_temp_decls` skips the LHS of an assignment so temporaries do not
-  replace the real lvalue.
-- Note: class dynamic arrays still have unrelated allocation/header issues
-  (see #5), but the assignment side now emits the correct retain/release logic.
+- `codegen_expr` now handles any class-typed LHS.
+- `emit_guarded_temp_decls` skips assignment LHS so temporaries do not replace
+  the real lvalue.
+
+## Open Design Questions
 
 ### 5. Class dynamic arrays use wrong header
 
-- `mylang_new_array` stores `size_t count`; `mylang_release` expects `ObjHeader`
-- `new Box[N]` leaks the array and corrupts refcount semantics
-- Fix: separate array allocation or per-element headers
+Current problems:
 
-## Medium
+- `mylang_new_array` stores `size_t count` before the payload.
+- `mylang_release` expects `ObjHeader` (refcount) at the same offset.
+- `new Box[N]` is treated as a class object, so cleanup calls `mylang_release`,
+  which corrupts the header and never frees the array.
+- `new int[N]` is never freed because `int[]` is not a class type and has no
+  cleanup.
 
-6. `mylang_release` does not null the pointer
-   - After release the variable still holds the old address; later access is UAF
+Proposed design:
 
-7. Non-MSVC atomic macros are incorrect
-   - `atomic_fetch_add` on `volatile long` is not valid C11 atomic
-   - Use `_Atomic long` / `atomic_long`
+- Arrays are **not** class objects. They have their own `size_t count` header
+  and their own destructor `mylang_free_array(arr)`.
+- A local array variable should be released with `mylang_free_array` at scope
+  exit, not `mylang_release`.
+- Class arrays should be arrays of **pointers**:
+  - Allocation size: `sizeof(size_t) + N * sizeof(Class*)`
+  - `arr[0] = new Box;` stores a `Box*` in the slot.
+  - `arr[0].v` dereferences that pointer.
+- When freeing a class-pointer array:
+  - `mylang_release` every non-NULL element.
+  - Then free the array block using the count header.
+- Bounds checking should work for class arrays too.
 
-8. `mylang_new_array` multiplication overflow not checked
-   - `count * elem_size` can overflow
+### 6. Add explicit fixed-width primitive types
 
-## Already Fixed (but still mentioned in note.txt)
+Plan to support value types that do not participate in reference counting:
 
-9. `return r->x;` with local class `r`
-   - Current codegen evaluates return value first, then releases `r`
+- Unsigned: `u8`, `u16`, `u32`, `u64`
+- Signed:   `i8`, `i16`, `i32`, `i64`
+- Float:    `f32`, `f64`
+- Existing: `int`, `char` (keep for compatibility)
+
+Rules:
+
+- Value types are copied by value.
+- Local value-type variables do not enter the refcount cleanup list.
+- Arrays of value types allocate `N * sizeof(T)` directly.
+- No retain/release on value-type fields or array elements.
+- Map to C types: `uint8_t`, `int32_t`, `float`, `double`, etc.
 
 ## Runtime Primitives
 
-- `mylang_retain` / `mylang_release` themselves are basically correct
-- The bugs are mostly in how codegen emits calls to them
+- `mylang_retain` / `mylang_release` are basically correct for class objects.
+- Arrays need a separate lifecycle (`mylang_new_array` / `mylang_free_array`).
