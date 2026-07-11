@@ -257,48 +257,27 @@ static void codegen_expr(AstNode* node, FILE* out) {
             AstNode* rhs = node->children[1];
             Type lt = lhs->resolved_type;
 
-            if (lhs->kind == AST_IDENT && lt.kind == TYPE_CLASS && lt.is_pointer) {
-                int rhs_simple = (rhs->kind == AST_IDENT || rhs->kind == AST_INT_LIT || rhs->kind == AST_CHAR_LIT);
+            if (lt.kind == TYPE_CLASS) {
+                int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+                int rhs_local = (rhs->kind == AST_IDENT && symtab_lookup(rhs->tok.text) != NULL);
 
-                if (rhs->kind == AST_NEW) {
-                    fprintf(out, "((void)mylang_release(");
-                    codegen_expr(lhs, out);
-                    fprintf(out, "), (");
-                    codegen_expr(lhs, out);
-                    fprintf(out, " = ");
+                fprintf(out, "((");
+                if (!rhs_owned && !rhs_local) {
+                    fprintf(out, "(void)mylang_retain(");
                     codegen_expr(rhs, out);
-                    fprintf(out, "))");
-                } else if (rhs->kind == AST_CALL) {
-                    fprintf(out, "((void)mylang_release(");
-                    codegen_expr(lhs, out);
-                    fprintf(out, "), (");
-                    codegen_expr(lhs, out);
-                    fprintf(out, " = ");
-                    codegen_expr(rhs, out);
-                    fprintf(out, "))");
-                } else if (rhs_simple) {
-                    fprintf(out, "((void)mylang_retain(");
-                    codegen_expr(rhs, out);
-                    fprintf(out, "), (void)mylang_release(");
-                    codegen_expr(lhs, out);
-                    fprintf(out, "), (");
-                    codegen_expr(lhs, out);
-                    fprintf(out, " = ");
-                    codegen_expr(rhs, out);
-                    fprintf(out, "))");
-                } else {
-                    fprintf(out, "((void)mylang_release(");
-                    codegen_expr(lhs, out);
-                    fprintf(out, "), (");
-                    codegen_expr(lhs, out);
-                    fprintf(out, " = mylang_retain(");
-                    codegen_expr(rhs, out);
-                    fprintf(out, ")))");
+                    fprintf(out, "), ");
                 }
-            } else {
-                codegen_expr(node->children[0], out);
+                fprintf(out, "(void)mylang_release(");
+                codegen_expr(lhs, out);
+                fprintf(out, "), (");
+                codegen_expr(lhs, out);
                 fprintf(out, " = ");
-                codegen_expr(node->children[1], out);
+                codegen_expr(rhs, out);
+                fprintf(out, ")))");
+            } else {
+                codegen_expr(lhs, out);
+                fprintf(out, " = ");
+                codegen_expr(rhs, out);
             }
             break;
         }
@@ -381,6 +360,15 @@ static int guard_needs_retain(AstNode* node) {
    caller-side retain/release guards are emitted. */
 static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
     if (!expr) return;
+
+    /* Do not extract the LHS of an assignment into a temporary; it must remain
+       an lvalue so the assignment writes to the real location. */
+    if (expr->kind == AST_ASSIGN) {
+        emit_guarded_temp_decls(expr->children[1], out, indent);
+        emit_guarded_temp_decls(expr->next, out, indent);
+        return;
+    }
+
     int i;
     for (i = 0; i < expr->child_count; i++) {
         emit_guarded_temp_decls(expr->children[i], out, indent);
@@ -671,14 +659,17 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
             emit_stmt_call_retains(expr, out, indent);
 
             int id = assign_tmp_id++;
+            int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+            int rhs_local = (rhs->kind == AST_IDENT && symtab_lookup(rhs->tok.text) != NULL);
+
             indent_line(out, indent);
             fprintf(out, "void* _my_assign_%d = ", id);
-            if (rhs->kind == AST_CALL || rhs->kind == AST_NEW) {
-                codegen_expr(rhs, out);
-            } else {
+            if (!rhs_owned && !rhs_local) {
                 fprintf(out, "mylang_retain(");
                 codegen_expr(rhs, out);
                 fprintf(out, ")");
+            } else {
+                codegen_expr(rhs, out);
             }
             fprintf(out, ";\n");
 

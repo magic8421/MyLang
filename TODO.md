@@ -38,11 +38,16 @@
   temporaries are released (they own a +1 reference); borrowed temporaries are
   retained then released.
 
-### 4. Class field and array element assignment skip refcounting
+### 4. Class field and array element assignment skip refcounting  [FIXED]
 
-- `list.head = new Node;` leaks old value and new Node
-- `arr[0] = new Box;` leaks element
-- Fix: handle `AST_MEMBER_ACCESS` / `AST_ARRAY_ACCESS` LHS in assignment
+- `list.head = new Node;` used to leak the old value and under-retain the new one
+- `arr[0] = new Box;` had the same problem
+- Fix: `codegen_expr` now handles any class-typed LHS (identifier, member access,
+  array access) by releasing the old value and retaining the RHS when needed.
+- `emit_guarded_temp_decls` skips the LHS of an assignment so temporaries do not
+  replace the real lvalue.
+- Note: class dynamic arrays still have unrelated allocation/header issues
+  (see #5), but the assignment side now emits the correct retain/release logic.
 
 ### 5. Class dynamic arrays use wrong header
 
