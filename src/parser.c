@@ -35,6 +35,10 @@ static int expr_contains_assign(AstNode* node) {
     return expr_contains_assign(node->next);
 }
 
+static int expr_is_direct_assignment(AstNode* node) {
+    return node && node->kind == AST_ASSIGN;
+}
+
 static int is_type_name(const char* name) {
     if (strcmp(name, "int") == 0 || strcmp(name, "char") == 0) return 1;
     return symtab_find_class(name) != NULL;
@@ -46,6 +50,7 @@ static int is_type_name(const char* name) {
 
 static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
+static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
 static Type parse_type(Parser* p) {
     Type t;
@@ -142,7 +147,7 @@ static AstNode* parse_primary(Parser* p) {
 
         if (check(p, TOK_LBRACKET)) {
             advance(p);
-            node->children[0] = parse_expr(p);
+            node->children[0] = parse_expr_no_assign(p, "new array size");
             node->child_count = 1;
             expect(p, TOK_RBRACKET);
         }
@@ -162,7 +167,7 @@ static AstNode* parse_postfix(Parser* p) {
     for (;;) {
         if (check(p, TOK_LBRACKET)) {
             Token t = p->current; advance(p);
-            AstNode* idx = parse_expr(p);
+            AstNode* idx = parse_expr_no_assign(p, "array index");
             AstNode* arr = ast_new_node(AST_ARRAY_ACCESS, t);
             ast_add_child(arr, node);
             ast_add_child(arr, idx);
@@ -186,10 +191,10 @@ static AstNode* parse_postfix(Parser* p) {
             ast_add_child(call, node);
             if (!check(p, TOK_RPAREN)) {
                 AstNode* args = NULL;
-                args = ast_append_list(args, parse_expr(p));
+                args = ast_append_list(args, parse_expr_no_assign(p, "call argument"));
                 while (check(p, TOK_COMMA)) {
                     advance(p);
-                    args = ast_append_list(args, parse_expr(p));
+                    args = ast_append_list(args, parse_expr_no_assign(p, "call argument"));
                 }
                 call->children[1] = args;
                 call->child_count = 2;
@@ -274,6 +279,16 @@ static AstNode* parse_assignment(Parser* p) {
 
 static AstNode* parse_expr(Parser* p) { return parse_assignment(p); }
 
+static AstNode* parse_expr_no_assign(Parser* p, const char* where) {
+    AstNode* e = parse_expr(p);
+    if (e && expr_contains_assign(e)) {
+        fprintf(stderr, "error at %d:%d: assignment not allowed in %s\n",
+                e->tok.line, e->tok.col, where);
+        p->had_error = 1;
+    }
+    return e;
+}
+
 /* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   STATEMENT PARSING
    �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
 
@@ -318,6 +333,11 @@ static AstNode* parse_var_decl(Parser* p) {
         advance(p);
         AstNode* init = parse_expr(p);
         ast_add_child(node, init);
+        if (init && !p->had_error && !expr_is_direct_assignment(init) && expr_contains_assign(init)) {
+            fprintf(stderr, "error at %d:%d: assignment not allowed in variable initializer\n",
+                    init->tok.line, init->tok.col);
+            p->had_error = 1;
+        }
         if (init && init->kind == AST_NEW && type.kind == TYPE_CLASS) {
             type.is_pointer = 1;
         }
@@ -378,7 +398,7 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         AstNode* node = ast_new_node(AST_RETURN_STMT, kw);
         if (!check(p, TOK_SEMI)) {
-            ast_add_child(node, parse_expr(p));
+            ast_add_child(node, parse_expr_no_assign(p, "return expression"));
         }
         expect(p, TOK_SEMI);
         return node;
@@ -391,6 +411,11 @@ static AstNode* parse_stmt(Parser* p) {
     /* expression statement */
     if (!check(p, TOK_EOF) && !check(p, TOK_RBRACE)) {
         AstNode* expr = parse_expr(p);
+        if (expr && !p->had_error && !expr_is_direct_assignment(expr) && expr_contains_assign(expr)) {
+            fprintf(stderr, "error at %d:%d: assignment not allowed in expression statement\n",
+                    expr->tok.line, expr->tok.col);
+            p->had_error = 1;
+        }
         if (expr) {
             AstNode* es = ast_new_node(AST_EXPR_STMT, expr->tok);
             ast_add_child(es, expr);

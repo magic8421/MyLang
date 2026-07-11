@@ -12,8 +12,11 @@
   mylang_release(b);
   b = _my_assign_0;
   ```
-- Limitation: only fixed for top-level assignment statements. Nested assignments
-  (e.g. inside `if` conditions or call arguments) still use the old codegen.
+- Assignment is now restricted to standalone statements and direct variable
+  initializers. The parser rejects assignments in `if`/`while` conditions,
+  call arguments, return expressions, array indices, `new` array sizes, and
+  other nested expression contexts, so the old unsafe codegen path is no
+  longer reachable there.
 
 ### 2. Cleanup list is function-global, not scope-aware
 
