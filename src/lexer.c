@@ -136,9 +136,21 @@ static Token read_number(Lexer* lexer) {
 
 static Token read_char_literal(Lexer* lexer) {
     lexer_advance(lexer); /* skip opening ' */
+
+    if (lexer_is_eof(lexer)) {
+        fprintf(stderr, "lexer error at %d:%d: unterminated char literal\n",
+                lexer->line, lexer->col);
+        return make_token(lexer, TOK_CHAR_LIT, NULL, 0, 0);
+    }
+
     char c = lexer_peek_char(lexer);
     if (c == '\\') {
         lexer_advance(lexer);
+        if (lexer_is_eof(lexer)) {
+            fprintf(stderr, "lexer error at %d:%d: unterminated char literal after '\\'\n",
+                    lexer->line, lexer->col);
+            return make_token(lexer, TOK_CHAR_LIT, NULL, 0, 0);
+        }
         c = lexer_peek_char(lexer);
         switch (c) {
             case 'n':  c = '\n'; break;
@@ -152,7 +164,7 @@ static Token read_char_literal(Lexer* lexer) {
     } else {
         lexer_advance(lexer);
     }
-    if (lexer_peek_char(lexer) == '\'') {
+    if (!lexer_is_eof(lexer) && lexer_peek_char(lexer) == '\'') {
         lexer_advance(lexer); /* skip closing ' */
     }
     Token tok = make_token(lexer, TOK_CHAR_LIT, NULL, 0, 0);
