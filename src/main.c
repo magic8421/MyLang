@@ -54,7 +54,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    codegen_program(ast, out);
+    codegen_program(ast, out, src_path);
     fclose(out);
 
     printf("compiled '%s' -> '%s'\n", src_path, out_path);

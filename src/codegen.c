@@ -4,6 +4,18 @@
 #include <string.h>
 #include <stdio.h>
 
+static const char* g_source_file = "";
+static char        g_source_file_escaped[1024];
+
+static void escape_source_file(const char* src) {
+    size_t i, j;
+    if (!src) src = "";
+    for (i = 0, j = 0; src[i] != '\0' && j < sizeof(g_source_file_escaped) - 2; i++) {
+        if (src[i] == '\\' || src[i] == '"') g_source_file_escaped[j++] = '\\';
+        g_source_file_escaped[j++] = src[i];
+    }
+    g_source_file_escaped[j] = '\0';
+}
 
 static const char* c_base_name(const Type* t) {
     switch (t->kind) {
@@ -214,7 +226,7 @@ static void codegen_array_access(AstNode* node, FILE* out) {
         codegen_expr(arr, out);
         fprintf(out, ", ");
         codegen_expr(idx, out);
-        fprintf(out, ")");
+        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
     } else {
         codegen_expr(arr, out);
         fprintf(out, "[");
@@ -335,7 +347,7 @@ static void codegen_expr(AstNode* node, FILE* out) {
                     } else {
                         codegen_expr(rhs, out);
                     }
-                    fprintf(out, ")");
+                    fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
                     break;
                 }
             }
@@ -402,9 +414,9 @@ static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
         /* Dynamic arrays use runtime bounds inside getter/setter helpers. */
         if (at.array_size > 0) {
             indent_line(out, indent);
-            fprintf(out, "if ((size_t)(");
+            fprintf(out, "MY_LOC(\"%s\", %d); MY_CHECK((size_t)(", g_source_file_escaped, expr->tok.line);
             codegen_expr(idx, out);
-            fprintf(out, ") >= %d) __debugbreak();\n", at.array_size);
+            fprintf(out, ") < %d, \"index out of bounds\");\n", at.array_size);
         }
     } else {
         int i;
@@ -705,6 +717,8 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             cleanup_emit(out, indent);
             cleanup_reset();
             indent_line(out, indent);
+            fprintf(out, "MY_POP();\n");
+            indent_line(out, indent);
             fprintf(out, "return _r;\n");
         } else {
             char tbuf[128];
@@ -716,11 +730,15 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             cleanup_emit(out, indent);
             cleanup_reset();
             indent_line(out, indent);
+            fprintf(out, "MY_POP();\n");
+            indent_line(out, indent);
             fprintf(out, "return _mylang_ret;\n");
         }
     } else {
         cleanup_emit(out, indent);
         cleanup_reset();
+        indent_line(out, indent);
+        fprintf(out, "MY_POP();\n");
         indent_line(out, indent);
         fprintf(out, "return;\n");
     }
@@ -771,7 +789,7 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 } else {
                     codegen_expr(rhs, out);
                 }
-                fprintf(out, ");\n");
+                fprintf(out, ", \"%s\", %d);\n", g_source_file_escaped, expr->tok.line);
 
                 emit_stmt_call_releases(expr, out, indent);
                 return;
@@ -897,10 +915,21 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
     { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
         p = p->next; } }
+
+    indent_line(out, 1);
+    fprintf(out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->tok.text, g_source_file_escaped, node->tok.line);
+
+    fprintf(out, "{\n");
     if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
-        while (s) { codegen_stmt(s, out, 1); s = s->next; } }
+        while (s) { codegen_stmt(s, out, 2); s = s->next; } }
+    cleanup_pop_scope(out, 2);
+    fprintf(out, "}\n");
+
     cleanup_pop_scope(out, 1);
-    symtab_exit_scope(); fprintf(out, "}\n\n");
+    symtab_exit_scope();
+    indent_line(out, 1);
+    fprintf(out, "MY_POP();\n");
+    fprintf(out, "}\n\n");
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
     /* return type */
@@ -950,21 +979,33 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         }
     }
 
+    indent_line(out, 1);
+    fprintf(out, "MY_PUSH(\"%s\", \"%s\", %d);\n", node->tok.text, g_source_file_escaped, node->tok.line);
+
+    fprintf(out, "{\n");
+
     /* walk body statements */
     if (body && body->kind == AST_BLOCK) {
         AstNode* s = body->children[0];
         while (s) {
-            codegen_stmt(s, out, 1);
+            codegen_stmt(s, out, 2);
             s = s->next;
         }
     }
 
+    cleanup_pop_scope(out, 2);
+    fprintf(out, "}\n");
+
     cleanup_pop_scope(out, 1);
     symtab_exit_scope();
+    indent_line(out, 1);
+    fprintf(out, "MY_POP();\n");
     fprintf(out, "}\n\n");
 }
 
-void codegen_program(AstNode* program, FILE* out) {
+void codegen_program(AstNode* program, FILE* out, const char* source_file) {
+    g_source_file = source_file ? source_file : "";
+    escape_source_file(g_source_file);
     fprintf(out, "/* Generated by MyLang compiler */\n");
     fprintf(out, "#include <stdio.h>\n");
     fprintf(out, "#include <stdlib.h>\n");
@@ -989,6 +1030,53 @@ void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "#define mylang_atomic_dec(p) (atomic_fetch_sub(p, 1) - 1)\n");
     fprintf(out, "#endif\n\n");
 
+    fprintf(out, "#ifdef _MSC_VER\n");
+    fprintf(out, "#define MY_TL __declspec(thread)\n");
+    fprintf(out, "#else\n");
+    fprintf(out, "#define MY_TL _Thread_local\n");
+    fprintf(out, "#endif\n\n");
+
+    fprintf(out, "typedef struct {\n");
+    fprintf(out, "    const char* func;\n");
+    fprintf(out, "    const char* file;\n");
+    fprintf(out, "    int         line;\n");
+    fprintf(out, "} MyFrame;\n\n");
+    fprintf(out, "#define MY_STACK_MAX 128\n\n");
+    fprintf(out, "MY_TL const char* __my_file = NULL;\n");
+    fprintf(out, "MY_TL int         __my_line = 0;\n");
+    fprintf(out, "MY_TL MyFrame     __my_stack[MY_STACK_MAX];\n");
+    fprintf(out, "MY_TL int         __my_depth = 0;\n\n");
+    fprintf(out, "#define MY_LOC(f, l) do { __my_file = (f); __my_line = (l); } while(0)\n");
+    fprintf(out, "#define MY_PUSH(fn, f, l) do { \\\n");
+    fprintf(out, "    if (__my_depth < MY_STACK_MAX) { \\\n");
+    fprintf(out, "        MyFrame* _fr = &__my_stack[__my_depth++]; \\\n");
+    fprintf(out, "        _fr->func = (fn); _fr->file = (f); _fr->line = (l); \\\n");
+    fprintf(out, "    } \\\n");
+    fprintf(out, "} while(0)\n");
+    fprintf(out, "#define MY_POP() do { if (__my_depth > 0) __my_depth--; } while(0)\n\n");
+    fprintf(out, "static inline void my_backtrace(void) {\n");
+    fprintf(out, "    if (__my_depth == 0) {\n");
+    fprintf(out, "        fprintf(stderr, \"  (stack empty)\\n\");\n");
+    fprintf(out, "        return;\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "    fprintf(stderr, \"Backtrace (most recent call first):\\n\");\n");
+    fprintf(out, "    { int _i; for (_i = __my_depth - 1; _i >= 0; _i--) {\n");
+    fprintf(out, "        MyFrame* _fr = &__my_stack[_i];\n");
+    fprintf(out, "        fprintf(stderr, \"  #%%d %%s at %%s:%%d\\n\", __my_depth - 1 - _i,\n");
+    fprintf(out, "                _fr->func ? _fr->func : \"???\",\n");
+    fprintf(out, "                _fr->file ? _fr->file : \"???\",\n");
+    fprintf(out, "                _fr->line);\n");
+    fprintf(out, "    } }\n");
+    fprintf(out, "}\n\n");
+    fprintf(out, "static inline void my_panic(const char* msg) {\n");
+    fprintf(out, "    fprintf(stderr, \"Panic: %%s\\n\", msg);\n");
+    fprintf(out, "    fprintf(stderr, \"  -> triggered at %%s:%%d\\n\",\n");
+    fprintf(out, "            __my_file ? __my_file : \"?\", __my_line);\n");
+    fprintf(out, "    my_backtrace();\n");
+    fprintf(out, "    abort();\n");
+    fprintf(out, "}\n\n");
+    fprintf(out, "#define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)\n\n");
+
     fprintf(out, "typedef struct { volatile long refcount; uint32_t type_id; size_t length; } ObjHeader;\n");
     fprintf(out, "#define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))\n\n");
 
@@ -1007,10 +1095,10 @@ void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "    return h + 1;\n");
     fprintf(out, "}\n\n");
 
-    fprintf(out, "#define mylang_bounds(arr, idx) do { \\\n");
-    fprintf(out, "    if ((size_t)(idx) >= mylang_obj_hdr(arr)->length) \\\n");
-    fprintf(out, "        __debugbreak(); \\\n");
-    fprintf(out, "} while(0)\n\n");
+    fprintf(out, "static inline void mylang_check_bounds(void* arr, size_t idx, const char* file, int line) {\n");
+    fprintf(out, "    MY_LOC(file, line);\n");
+    fprintf(out, "    MY_CHECK((size_t)(idx) < mylang_obj_hdr(arr)->length, \"index out of bounds\");\n");
+    fprintf(out, "}\n\n");
 
     fprintf(out, "static void* mylang_retain(void* ptr) {\n");
     fprintf(out, "    if (ptr) mylang_atomic_inc(&mylang_obj_hdr(ptr)->refcount);\n");
@@ -1033,30 +1121,30 @@ void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "    return 0;\n");
     fprintf(out, "}\n\n");
 
-    fprintf(out, "static inline int8_t   array_get_int8_t  (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int8_t*)arr)[idx];   }\n");
-    fprintf(out, "static inline void     array_set_int8_t  (void* arr, size_t idx, int8_t   val) { mylang_bounds(arr, idx); ((int8_t*)arr)[idx]   = val; }\n");
-    fprintf(out, "static inline int16_t  array_get_int16_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int16_t*)arr)[idx];  }\n");
-    fprintf(out, "static inline void     array_set_int16_t (void* arr, size_t idx, int16_t  val) { mylang_bounds(arr, idx); ((int16_t*)arr)[idx]  = val; }\n");
-    fprintf(out, "static inline int32_t  array_get_int32_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int32_t*)arr)[idx];  }\n");
-    fprintf(out, "static inline void     array_set_int32_t (void* arr, size_t idx, int32_t  val) { mylang_bounds(arr, idx); ((int32_t*)arr)[idx]  = val; }\n");
-    fprintf(out, "static inline int64_t  array_get_int64_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int64_t*)arr)[idx];  }\n");
-    fprintf(out, "static inline void     array_set_int64_t (void* arr, size_t idx, int64_t  val) { mylang_bounds(arr, idx); ((int64_t*)arr)[idx]  = val; }\n");
-    fprintf(out, "static inline uint8_t  array_get_uint8_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint8_t*)arr)[idx];  }\n");
-    fprintf(out, "static inline void     array_set_uint8_t (void* arr, size_t idx, uint8_t  val) { mylang_bounds(arr, idx); ((uint8_t*)arr)[idx]  = val; }\n");
-    fprintf(out, "static inline uint16_t array_get_uint16_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint16_t*)arr)[idx]; }\n");
-    fprintf(out, "static inline void     array_set_uint16_t(void* arr, size_t idx, uint16_t val) { mylang_bounds(arr, idx); ((uint16_t*)arr)[idx] = val; }\n");
-    fprintf(out, "static inline uint32_t array_get_uint32_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint32_t*)arr)[idx]; }\n");
-    fprintf(out, "static inline void     array_set_uint32_t(void* arr, size_t idx, uint32_t val) { mylang_bounds(arr, idx); ((uint32_t*)arr)[idx] = val; }\n");
-    fprintf(out, "static inline uint64_t array_get_uint64_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint64_t*)arr)[idx]; }\n");
-    fprintf(out, "static inline void     array_set_uint64_t(void* arr, size_t idx, uint64_t val) { mylang_bounds(arr, idx); ((uint64_t*)arr)[idx] = val; }\n");
-    fprintf(out, "static inline float    array_get_float   (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((float*)arr)[idx];    }\n");
-    fprintf(out, "static inline void     array_set_float   (void* arr, size_t idx, float    val) { mylang_bounds(arr, idx); ((float*)arr)[idx]    = val; }\n");
-    fprintf(out, "static inline double   array_get_double  (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((double*)arr)[idx];   }\n");
-    fprintf(out, "static inline void     array_set_double  (void* arr, size_t idx, double   val) { mylang_bounds(arr, idx); ((double*)arr)[idx]   = val; }\n");
-    fprintf(out, "static inline void* array_get_class(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((void**)arr)[idx]; }\n");
-    fprintf(out, "static inline void array_replace_class(void* arr, size_t idx, void* val) {\n");
+    fprintf(out, "static inline int8_t   array_get_int8_t  (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((int8_t*)arr)[idx];   }\n");
+    fprintf(out, "static inline void     array_set_int8_t  (void* arr, size_t idx, int8_t   val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((int8_t*)arr)[idx]   = val; }\n");
+    fprintf(out, "static inline int16_t  array_get_int16_t (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((int16_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int16_t (void* arr, size_t idx, int16_t  val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((int16_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline int32_t  array_get_int32_t (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((int32_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int32_t (void* arr, size_t idx, int32_t  val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((int32_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline int64_t  array_get_int64_t (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((int64_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int64_t (void* arr, size_t idx, int64_t  val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((int64_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline uint8_t  array_get_uint8_t (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((uint8_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_uint8_t (void* arr, size_t idx, uint8_t  val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((uint8_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline uint16_t array_get_uint16_t(void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((uint16_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint16_t(void* arr, size_t idx, uint16_t val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((uint16_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline uint32_t array_get_uint32_t(void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((uint32_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint32_t(void* arr, size_t idx, uint32_t val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((uint32_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline uint64_t array_get_uint64_t(void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((uint64_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint64_t(void* arr, size_t idx, uint64_t val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((uint64_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline float    array_get_float   (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((float*)arr)[idx];    }\n");
+    fprintf(out, "static inline void     array_set_float   (void* arr, size_t idx, float    val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((float*)arr)[idx]    = val; }\n");
+    fprintf(out, "static inline double   array_get_double  (void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((double*)arr)[idx];   }\n");
+    fprintf(out, "static inline void     array_set_double  (void* arr, size_t idx, double   val, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); ((double*)arr)[idx]   = val; }\n");
+    fprintf(out, "static inline void* array_get_class(void* arr, size_t idx, const char* file, int line) { mylang_check_bounds(arr, idx, file, line); return ((void**)arr)[idx]; }\n");
+    fprintf(out, "static inline void array_replace_class(void* arr, size_t idx, void* val, const char* file, int line) {\n");
     fprintf(out, "    void** _ap; void* _old;\n");
-    fprintf(out, "    mylang_bounds(arr, idx);\n");
+    fprintf(out, "    mylang_check_bounds(arr, idx, file, line);\n");
     fprintf(out, "    _ap = (void**)arr;\n");
     fprintf(out, "    _old = _ap[idx];\n");
     fprintf(out, "    _ap[idx] = val;\n");
