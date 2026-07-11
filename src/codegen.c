@@ -214,13 +214,20 @@ static void codegen_array_access(AstNode* node, FILE* out) {
 
 static void codegen_member_access(AstNode* node, FILE* out) {
     AstNode* obj = node->children[0];
-    codegen_expr(obj, out);
-    if (obj->resolved_type.is_pointer) {
-        fprintf(out, "->");
+    resolve_type(obj);
+    if (obj->resolved_type.kind == TYPE_CLASS) {
+        /* Class references may come from void* getters (e.g. dynamic arrays),
+           so cast to the concrete struct pointer before using ->. */
+        fprintf(out, "((%s*)", obj->resolved_type.class_name);
+        codegen_expr(obj, out);
+        fprintf(out, ")->%s", node->tok.text);
+    } else if (obj->resolved_type.is_pointer) {
+        codegen_expr(obj, out);
+        fprintf(out, "->%s", node->tok.text);
     } else {
-        fprintf(out, ".");
+        codegen_expr(obj, out);
+        fprintf(out, ".%s", node->tok.text);
     }
-    fprintf(out, "%s", node->tok.text);
 }
 
 static void codegen_new(AstNode* node, FILE* out) {

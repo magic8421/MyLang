@@ -397,6 +397,117 @@ int main() {
     return a.v + b.v;
 }
 """, 10),
+
+    ("class_array_basic", """
+class Box {
+    int v;
+    int get() { return this.v; }
+}
+int main() {
+    Box[] arr = new Box[3];
+    arr[0] = new Box;
+    arr[0].v = 1;
+    arr[1] = new Box;
+    arr[1].v = 10;
+    arr[2] = arr[0];
+    return arr[0].get() + arr[1].v + arr[2].v;
+}
+""", 12),
+
+    ("class_array_pass_to_func", """
+class Box {
+    int v;
+}
+int sum(Box[] arr) {
+    return arr[0].v + arr[1].v;
+}
+int main() {
+    Box[] a = new Box[2];
+    a[0] = new Box;
+    a[0].v = 3;
+    a[1] = new Box;
+    a[1].v = 4;
+    return sum(a);
+}
+""", 7),
+
+    ("class_array_return_func", """
+class Box {
+    int v;
+}
+Box[] make() {
+    Box[] a = new Box[2];
+    a[0] = new Box;
+    a[0].v = 5;
+    a[1] = new Box;
+    a[1].v = 7;
+    return a;
+}
+int main() {
+    Box[] x = make();
+    return x[0].v + x[1].v;
+}
+""", 12),
+
+    ("class_array_bounds", """
+class Box {
+    int v;
+}
+int main() {
+    Box[] a = new Box[2];
+    return a[5].v;
+}
+""", "crash"),
+
+    ("class_array_replace", """
+class Box {
+    int v;
+}
+int main() {
+    Box[] a = new Box[2];
+    a[0] = new Box;
+    a[0].v = 1;
+    Box b = a[0];
+    a[0] = new Box;
+    a[0].v = 10;
+    return b.v + a[0].v;
+}
+""", 11),
+
+    ("class_array_loop", """
+class Box {
+    int v;
+}
+int main() {
+    Box[] a = new Box[4];
+    int i = 0;
+    while (i < 4) {
+        a[i] = new Box;
+        a[i].v = i;
+        i = i + 1;
+    }
+    int s = 0;
+    i = 0;
+    while (i < 4) {
+        s = s + a[i].v;
+        i = i + 1;
+    }
+    return s;
+}
+""", 6),
+
+    ("class_array_method_call", """
+class Box {
+    int v;
+    int get() { return this.v; }
+}
+int main() {
+    Box[] a = new Box[2];
+    a[0] = new Box;
+    a[0].v = 5;
+    return a[0].get();
+}
+""", 5),
 ]
 
 # ============================================================
