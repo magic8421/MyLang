@@ -68,23 +68,21 @@ Rules:
 - No retain/release on value-type fields or array elements.
 - Map to C types: `uint8_t`, `int32_t`, `float`, `double`, etc.
 
-### 7. C#-style ref/out parameters  [FIXED]
+### 7. Pass-by-reference `ref` parameters  [FIXED]
 
 Implemented pass-by-reference for local variables only.
 
 Syntax:
 
 - `void f(ref i32 x)` receives a pointer to a local `i32`.
-- `void f(out i32 x)` receives a pointer to a local `i32`; the caller does not
-  need to initialize it.
 
 Codegen rules:
 
-- `ref` / `out` parameters are emitted as C pointers (`T* name`).
-- Reading or writing a ref/out parameter dereferences the pointer.
-- A call argument matching a ref/out parameter must be a local variable
-  identifier.  Normal locals are passed as `&var`; an argument that is itself
-  a ref/out parameter is passed as its raw pointer.
+- `ref` parameters are emitted as C pointers (`T* name`).
+- Reading or writing a ref parameter dereferences the pointer.
+- A call argument matching a ref parameter must be a local variable identifier.
+  Normal locals are passed as `&var`; an argument that is itself a ref parameter
+  is passed as its raw pointer.
 - `void` is accepted as a function return type.
 
 ### 8. C-style struct value types  [FIXED]

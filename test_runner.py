@@ -578,17 +578,6 @@ i32 main() {
 }
 """, 11),
 
-    ("out_i32", """
-void get_answer(out i32 x) {
-    x = 42;
-}
-i32 main() {
-    i32 a;
-    get_answer(a);
-    return a;
-}
-""", 42),
-
     ("ref_class", """
 class Counter {
     i32 n;
@@ -604,21 +593,6 @@ i32 main() {
 }
 """, 6),
 
-    ("out_class", """
-class Box {
-    i32 v;
-}
-void make(out Box b) {
-    b = new Box;
-    b.v = 99;
-}
-i32 main() {
-    Box b;
-    make(b);
-    return b.v;
-}
-""", 99),
-
     ("ref_chain", """
 void bump(ref i32 x) {
     x = x + 1;
@@ -633,26 +607,26 @@ i32 main() {
 }
 """, 11),
 
-    ("out_multi_return", """
-void divmod(i32 a, i32 b, out i32 q, out i32 r) {
+    ("ref_multi_return", """
+void divmod(i32 a, i32 b, ref i32 q, ref i32 r) {
     q = a / b;
     r = a % b;
 }
 i32 main() {
-    i32 q;
-    i32 r;
+    i32 q = 0;
+    i32 r = 0;
     divmod(17, 5, q, r);
     return q * 10 + r;
 }
 """, 32),
 
-    ("method_ref_out", """
+    ("method_ref", """
 class Accumulator {
     i32 total;
     void add(ref i32 x) {
         this.total = this.total + x;
     }
-    void get(out i32 r) {
+    void get(ref i32 r) {
         r = this.total;
     }
 }
@@ -661,7 +635,7 @@ i32 main() {
     a.total = 5;
     i32 v = 7;
     a.add(v);
-    i32 result;
+    i32 result = 0;
     a.get(result);
     return result;
 }
@@ -680,18 +654,6 @@ i32 main() {
 }
 """, 6),
 
-    ("out_array", """
-void make(out i32[] arr) {
-    arr = new i32[2];
-    arr[0] = 7;
-    arr[1] = 8;
-}
-i32 main() {
-    i32[] a;
-    make(a);
-    return a[0] + a[1];
-}
-""", 15),
     ("struct_basic", """
 struct Point {
     i32 x;
@@ -761,7 +723,7 @@ i32 main() {
 }
 """, 5),
 
-    ("struct_ref_out", """
+    ("struct_ref", """
 struct Counter {
     i32 n;
 }

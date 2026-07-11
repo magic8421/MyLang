@@ -610,15 +610,11 @@ static AstNode* parse_class_decl(Parser* p) {
             if (!check(p, TOK_RPAREN)) {
                 do {
                     int is_ref = 0;
-                    int is_out = 0;
                     if (check(p, TOK_KW_REF)) {
                         is_ref = 1; advance(p);
-                    } else if (check(p, TOK_KW_OUT)) {
-                        is_out = 1; advance(p);
                     }
                     Type pt = parse_type(p);
                     pt.is_ref = is_ref;
-                    pt.is_out = is_out;
                     if (!check(p, TOK_IDENT)) {
                         fprintf(stderr, "error at %d:%d: expected parameter name\n",
                                 p->current.line, p->current.col);
@@ -680,15 +676,11 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     if (!check(p, TOK_RPAREN)) {
         do {
             int is_ref = 0;
-            int is_out = 0;
             if (check(p, TOK_KW_REF)) {
                 is_ref = 1; advance(p);
-            } else if (check(p, TOK_KW_OUT)) {
-                is_out = 1; advance(p);
             }
             Type param_type = parse_type(p);
             param_type.is_ref = is_ref;
-            param_type.is_out = is_out;
             if (!check(p, TOK_IDENT)) {
                 fprintf(stderr, "error at %d:%d: expected parameter name\n",
                         p->current.line, p->current.col);
