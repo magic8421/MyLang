@@ -30,6 +30,7 @@ static const char* c_base_name(const Type* t) {
         case TYPE_F32:   return "float";
         case TYPE_F64:   return "double";
         case TYPE_CLASS: return t->class_name;
+        case TYPE_STRUCT: return t->class_name;
         case TYPE_VOID:  return "void";
         default:         return "int32_t";
     }
@@ -120,13 +121,24 @@ static Type resolve_type(AstNode* node) {
 
         case AST_MEMBER_ACCESS: {
             Type obj = resolve_type(node->children[0]);
-            ClassInfo* si = symtab_find_class(obj.class_name);
-            if (si) {
+            ClassInfo* ci = symtab_find_class(obj.class_name);
+            if (ci) {
                 int i;
-                for (i = 0; i < si->field_count; i++) {
-                    if (strcmp(si->field_names[i], node->tok.text) == 0) {
-                        t = si->field_types[i];
+                for (i = 0; i < ci->field_count; i++) {
+                    if (strcmp(ci->field_names[i], node->tok.text) == 0) {
+                        t = ci->field_types[i];
                         break;
+                    }
+                }
+            } else {
+                StructInfo* si = symtab_find_struct(obj.class_name);
+                if (si) {
+                    int i;
+                    for (i = 0; i < si->field_count; i++) {
+                        if (strcmp(si->field_names[i], node->tok.text) == 0) {
+                            t = si->field_types[i];
+                            break;
+                        }
                     }
                 }
             }
@@ -285,13 +297,23 @@ static void codegen_array_access(AstNode* node, FILE* out) {
         Type et = resolve_type(node);
         if (et.kind == TYPE_CLASS) {
             fprintf(out, "array_get_class(");
+            codegen_expr(arr, out);
+            fprintf(out, ", ");
+            codegen_expr(idx, out);
+            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
+        } else if (et.kind == TYPE_STRUCT) {
+            fprintf(out, "(*(%s*)array_get_struct_ptr(", c_base_name(&et));
+            codegen_expr(arr, out);
+            fprintf(out, ", ");
+            codegen_expr(idx, out);
+            fprintf(out, ", sizeof(%s), \"%s\", %d))", c_base_name(&et), g_source_file_escaped, node->tok.line);
         } else {
             fprintf(out, "array_get_%s(", c_base_name(&et));
+            codegen_expr(arr, out);
+            fprintf(out, ", ");
+            codegen_expr(idx, out);
+            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
         }
-        codegen_expr(arr, out);
-        fprintf(out, ", ");
-        codegen_expr(idx, out);
-        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
     } else {
         codegen_expr(arr, out);
         fprintf(out, "[");
@@ -401,25 +423,39 @@ static void codegen_expr(AstNode* node, FILE* out) {
                     AstNode* arr = lhs->children[0];
                     AstNode* idx = lhs->children[1];
                     int is_class_elem = (lt.kind == TYPE_CLASS && lt.is_pointer);
+                    int is_struct_elem = (lt.kind == TYPE_STRUCT);
                     int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
 
-                    if (is_class_elem) {
+                    if (is_struct_elem) {
+                        fprintf(out, "(*(%s*)array_get_struct_ptr(", c_base_name(&lt));
+                        codegen_expr(arr, out);
+                        fprintf(out, ", ");
+                        codegen_expr(idx, out);
+                        fprintf(out, ", sizeof(%s), \"%s\", %d)) = ", c_base_name(&lt), g_source_file_escaped, node->tok.line);
+                        codegen_expr(rhs, out);
+                    } else if (is_class_elem) {
                         fprintf(out, "array_replace_class(");
+                        codegen_expr(arr, out);
+                        fprintf(out, ", ");
+                        codegen_expr(idx, out);
+                        fprintf(out, ", ");
+                        if (!rhs_owned) {
+                            fprintf(out, "mylang_retain(");
+                            codegen_expr(rhs, out);
+                            fprintf(out, ")");
+                        } else {
+                            codegen_expr(rhs, out);
+                        }
+                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
                     } else {
                         fprintf(out, "array_set_%s(", c_base_name(&lt));
-                    }
-                    codegen_expr(arr, out);
-                    fprintf(out, ", ");
-                    codegen_expr(idx, out);
-                    fprintf(out, ", ");
-                    if (is_class_elem && !rhs_owned) {
-                        fprintf(out, "mylang_retain(");
+                        codegen_expr(arr, out);
+                        fprintf(out, ", ");
+                        codegen_expr(idx, out);
+                        fprintf(out, ", ");
                         codegen_expr(rhs, out);
-                        fprintf(out, ")");
-                    } else {
-                        codegen_expr(rhs, out);
+                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
                     }
-                    fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
                     break;
                 }
             }
@@ -947,6 +983,20 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
 
 static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name);
 
+static void codegen_struct_decl(AstNode* node, FILE* out) {
+    StructInfo* si = symtab_find_struct(node->tok.text);
+    if (!si) return;
+
+    fprintf(out, "typedef struct {\n");
+    int i;
+    for (i = 0; i < si->field_count; i++) {
+        char ftype_buf[128];
+        c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
+        fprintf(out, "    %s %s;\n", ftype_buf, si->field_names[i]);
+    }
+    fprintf(out, "} %s;\n\n", node->tok.text);
+}
+
 static void codegen_class_decl(AstNode* node, FILE* out) {
     ClassInfo* ci = symtab_find_class(node->tok.text);
     if (!ci) return;
@@ -1099,6 +1149,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "#endif\n\n");
 
     fprintf(out, "#define MYLANG_TYPE_IS_ARRAY   0x80000000U\n");
+    fprintf(out, "#define MYLANG_TYPE_IS_STRUCT  0x40000000U\n");
     fprintf(out, "#define MYLANG_TYPE_ID_CLASS_BASE 16\n\n");
 
     fprintf(out, "#ifdef _MSC_VER\n");
@@ -1190,11 +1241,13 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "    if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {\n");
     fprintf(out, "        ObjHeader* h = mylang_obj_hdr(ptr);\n");
     fprintf(out, "        if (h->type_id & MYLANG_TYPE_IS_ARRAY) {\n");
-    fprintf(out, "            uint32_t et = h->type_id & ~MYLANG_TYPE_IS_ARRAY;\n");
-    fprintf(out, "            if (et >= MYLANG_TYPE_ID_CLASS_BASE) {\n");
-    fprintf(out, "                void** data = (void**)ptr;\n");
-    fprintf(out, "                size_t i;\n");
-    fprintf(out, "                for (i = 0; i < h->length; i++) mylang_release(data[i]);\n");
+    fprintf(out, "            if (!(h->type_id & MYLANG_TYPE_IS_STRUCT)) {\n");
+    fprintf(out, "                uint32_t et = h->type_id & ~MYLANG_TYPE_IS_ARRAY;\n");
+    fprintf(out, "                if (et >= MYLANG_TYPE_ID_CLASS_BASE) {\n");
+    fprintf(out, "                    void** data = (void**)ptr;\n");
+    fprintf(out, "                    size_t i;\n");
+    fprintf(out, "                    for (i = 0; i < h->length; i++) mylang_release(data[i]);\n");
+    fprintf(out, "                }\n");
     fprintf(out, "            }\n");
     fprintf(out, "        }\n");
     fprintf(out, "        free(h);\n");
@@ -1231,8 +1284,20 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "    _ap[idx] = val;\n");
     fprintf(out, "    mylang_release(_old);\n");
     fprintf(out, "}\n\n");
+    fprintf(out, "static inline void* array_get_struct_ptr(void* arr, size_t idx, size_t elem_size, const char* file, int line) {\n");
+    fprintf(out, "    mylang_check_bounds(arr, idx, file, line);\n");
+    fprintf(out, "    return (char*)arr + idx * elem_size;\n");
+    fprintf(out, "}\n\n");
 
     AstNode* decl = program->children[0];
+    while (decl) {
+        if (decl->kind == AST_STRUCT_DECL) {
+            codegen_struct_decl(decl, out);
+        }
+        decl = decl->next;
+    }
+
+    decl = program->children[0];
     while (decl) {
         if (decl->kind == AST_CLASS_DECL) {
             codegen_class_decl(decl, out);

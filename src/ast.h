@@ -6,6 +6,7 @@
 typedef enum {
     TYPE_VOID = 0,
     TYPE_CLASS,
+    TYPE_STRUCT,
     TYPE_I8,
     TYPE_I16,
     TYPE_I32,
@@ -30,6 +31,7 @@ typedef enum {
 #define TYPE_ID_F64      9
 #define TYPE_ID_CLASS_BASE 16
 #define TYPE_IS_ARRAY    0x80000000U
+#define TYPE_IS_STRUCT   0x40000000U
 
 typedef struct {
     TypeKind kind;
@@ -48,6 +50,7 @@ typedef struct AstNode AstNode;
 typedef enum {
     AST_PROGRAM,
     AST_CLASS_DECL,
+    AST_STRUCT_DECL,
     AST_FUNC_DECL,
     AST_BLOCK,
     AST_VAR_DECL,

@@ -7,6 +7,7 @@
 static Scope*       current_scope = NULL;
 static int          scope_counter = 0;
 static ClassInfo*  class_list   = NULL;
+static StructInfo* struct_list  = NULL;
 static FuncInfo*    func_list     = NULL;
 
 static unsigned hash_string(const char* s) {
@@ -97,6 +98,28 @@ ClassInfo* symtab_find_class(const char* name) {
 }
 
 int symtab_add_field(ClassInfo* info, const char* name, Type type) {
+    if (info->field_count >= MAX_FIELDS) return -1;
+    CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");
+    info->field_types[info->field_count] = type;
+    info->field_count++;
+    return 0;
+}
+
+void symtab_add_struct(const char* name, StructInfo* info) {
+    info->next = struct_list;
+    struct_list = info;
+}
+
+StructInfo* symtab_find_struct(const char* name) {
+    StructInfo* s = struct_list;
+    while (s) {
+        if (strcmp(s->name, name) == 0) return s;
+        s = s->next;
+    }
+    return NULL;
+}
+
+int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
     CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");
     info->field_types[info->field_count] = type;

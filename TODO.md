@@ -96,6 +96,33 @@ Codegen rules:
   ref-like parameter is passed as its raw pointer.
 - `void` is accepted as a function return type.
 
+### 8. C-style struct value types  [FIXED]
+
+Implemented stack-allocated `struct` value types with copy-by-value semantics.
+
+Syntax:
+
+```mylang
+struct Point {
+    i32 x;
+    i32 y;
+}
+```
+
+Phase 1 restrictions:
+
+- Fields must be primitive types (`i8`..`f64`).
+- Structs cannot be created with `new Struct`.
+- `new Struct[N]` creates a dynamic array of inline struct values.
+
+Semantics:
+
+- Assignment copies the whole struct (C struct assignment).
+- Structs are passed and returned by value.
+- `ref` / `out` / `in Struct` compile to C pointers.
+- Struct arrays are tracked with `TYPE_IS_STRUCT` so the runtime does not try to
+  release struct elements as class references.
+
 ## Runtime Primitives
 
 - `mylang_retain` / `mylang_release` are basically correct for class objects.

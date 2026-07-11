@@ -23,6 +23,7 @@ static const KeywordEntry keywords[] = {
     {"ref",    TOK_KW_REF},
     {"out",    TOK_KW_OUT},
     {"in",     TOK_KW_IN},
+    {"struct", TOK_KW_STRUCT},
     {"if",     TOK_KW_IF},
     {"else",   TOK_KW_ELSE},
     {"while",  TOK_KW_WHILE},

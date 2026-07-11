@@ -25,6 +25,15 @@ typedef struct ClassInfo {
     struct ClassInfo* next;
 } ClassInfo;
 
+typedef struct StructInfo {
+    char name[64];
+    int  type_id;
+    int  field_count;
+    char field_names[MAX_FIELDS][64];
+    Type field_types[MAX_FIELDS];
+    struct StructInfo* next;
+} StructInfo;
+
 typedef struct SymEntry {
     char name[64];
     Type type;
@@ -49,6 +58,10 @@ SymEntry*   symtab_lookup_current(const char* name);
 void        symtab_add_class(const char* name, ClassInfo* info);
 ClassInfo*  symtab_find_class(const char* name);
 int         symtab_add_field(ClassInfo* info, const char* name, Type type);
+
+void        symtab_add_struct(const char* name, StructInfo* info);
+StructInfo* symtab_find_struct(const char* name);
+int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[]);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);

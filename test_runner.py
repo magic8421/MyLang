@@ -745,6 +745,104 @@ i32 main() {
     return v;
 }
 """, 20),
+
+    ("struct_basic", """
+struct Point {
+    i32 x;
+    i32 y;
+}
+i32 main() {
+    Point p;
+    p.x = 3;
+    p.y = 4;
+    return p.x + p.y;
+}
+""", 7),
+
+    ("struct_assign_copy", """
+struct Vec {
+    i32 v;
+}
+i32 main() {
+    Vec a;
+    a.v = 10;
+    Vec b = a;
+    b.v = 20;
+    return a.v + b.v;
+}
+""", 30),
+
+    ("struct_array_dynamic", """
+struct Vec {
+    i32 v;
+}
+i32 main() {
+    Vec[] arr = new Vec[3];
+    arr[0].v = 1;
+    arr[1].v = 2;
+    arr[2].v = 3;
+    return arr[0].v + arr[1].v + arr[2].v;
+}
+""", 6),
+
+    ("struct_array_fixed", """
+struct Vec {
+    i32 v;
+}
+i32 main() {
+    Vec[3] arr;
+    arr[0].v = 5;
+    arr[1].v = 10;
+    arr[2].v = 15;
+    return arr[2].v;
+}
+""", 15),
+
+    ("struct_func_arg_return", """
+struct Pair {
+    i32 a;
+    i32 b;
+}
+Pair make(i32 x, i32 y) {
+    Pair p;
+    p.a = x;
+    p.b = y;
+    return p;
+}
+i32 main() {
+    Pair q = make(2, 3);
+    return q.a + q.b;
+}
+""", 5),
+
+    ("struct_ref_out", """
+struct Counter {
+    i32 n;
+}
+void inc(ref Counter c) {
+    c.n = c.n + 1;
+}
+i32 main() {
+    Counter c;
+    c.n = 7;
+    inc(c);
+    return c.n;
+}
+""", 8),
+
+    ("struct_class_field", """
+struct BoxVal {
+    i32 v;
+}
+class Container {
+    BoxVal box;
+}
+i32 main() {
+    Container c = new Container;
+    c.box.v = 42;
+    return c.box.v;
+}
+""", 42),
 ]
 
 # ============================================================

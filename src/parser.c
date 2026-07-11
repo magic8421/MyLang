@@ -41,7 +41,7 @@ static int expr_is_direct_assignment(AstNode* node) {
 }
 
 static int is_type_name(const char* name) {
-    return symtab_find_class(name) != NULL;
+    return symtab_find_class(name) != NULL || symtab_find_struct(name) != NULL;
 }
 
 /* ================================================================
@@ -52,7 +52,7 @@ static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
-static int next_class_type_id = TYPE_ID_CLASS_BASE;
+static int next_type_id = TYPE_ID_CLASS_BASE;
 
 static Type parse_type(Parser* p) {
     Type t;
@@ -101,13 +101,21 @@ static Type parse_type(Parser* p) {
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.kind = TYPE_VOID;
-    } else if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
+    } else if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
         t.kind = TYPE_CLASS;
         CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 1;
         ClassInfo* ci = symtab_find_class(p->current.text);
         if (ci) t.type_id = ci->type_id;
+        advance(p);
+    } else if (check(p, TOK_IDENT) && symtab_find_struct(p->current.text)) {
+        t.kind = TYPE_STRUCT;
+        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "struct name too long");
+        t.class_name[63] = '\0';
+        t.is_pointer = 0;
+        StructInfo* si = symtab_find_struct(p->current.text);
+        if (si) t.type_id = si->type_id;
         advance(p);
     } else {
         t.kind = TYPE_VOID;
@@ -179,8 +187,16 @@ static AstNode* parse_primary(Parser* p) {
         else if (check(p, TOK_KW_F32))  { advance(p); base.kind = TYPE_F32; base.type_id = TYPE_ID_F32; }
         else if (check(p, TOK_KW_F64))  { advance(p); base.kind = TYPE_F64; base.type_id = TYPE_ID_F64; }
         else if (check(p, TOK_IDENT))   {
-            base.kind = TYPE_CLASS;
-            CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "class name too long");
+            ClassInfo* ci = symtab_find_class(p->current.text);
+            StructInfo* si = symtab_find_struct(p->current.text);
+            if (si) {
+                base.kind = TYPE_STRUCT;
+                base.type_id = si->type_id;
+            } else {
+                base.kind = TYPE_CLASS;
+                (void)ci;
+            }
+            CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "type name too long");
             base.class_name[63] = '\0';
             advance(p);
         } else {
@@ -198,6 +214,10 @@ static AstNode* parse_primary(Parser* p) {
             node->children[0] = parse_expr_no_assign(p, "new array size");
             node->child_count = 1;
             expect(p, TOK_RBRACKET);
+        } else if (base.kind == TYPE_STRUCT) {
+            fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value; use 'new %s[N]' for an array\n",
+                    new_tok.line, new_tok.col, base.class_name);
+            p->had_error = 1;
         }
         return node;
     }
@@ -607,6 +627,58 @@ static AstNode* parse_stmt(Parser* p) {
 }
 
 
+static AstNode* parse_struct_decl(Parser* p) {
+    advance(p); /* struct */
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "error at %d:%d: expected struct name\n",
+                p->current.line, p->current.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    Token name = p->current; advance(p);
+    expect(p, TOK_LBRACE);
+
+    StructInfo* info = calloc(1, sizeof(StructInfo));
+    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
+    info->name[63] = '\0';
+    info->type_id = next_type_id++ | TYPE_IS_STRUCT;
+
+    /* register early so later types can refer to it */
+    symtab_add_struct(name.text, info);
+
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        Type ft = parse_type(p);
+        if (ft.kind == TYPE_VOID || ft.kind == TYPE_CLASS || ft.kind == TYPE_STRUCT ||
+            ft.is_array || ft.array_size > 0) {
+            fprintf(stderr, "error at %d:%d: struct fields must be primitive types in this phase\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            /* try to recover */
+            if (check(p, TOK_IDENT)) advance(p);
+            expect(p, TOK_SEMI);
+            continue;
+        }
+        if (!check(p, TOK_IDENT)) {
+            fprintf(stderr, "error at %d:%d: expected field name\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            break;
+        }
+        Token fname = p->current; advance(p);
+        symtab_add_struct_field(info, fname.text, ft);
+        expect(p, TOK_SEMI);
+    }
+    expect(p, TOK_RBRACE);
+
+    AstNode* node = ast_new_node(AST_STRUCT_DECL, name);
+    node->resolved_type.kind = TYPE_STRUCT;
+    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text, sizeof(node->resolved_type.class_name)), "struct name too long");
+    node->resolved_type.type_id = info->type_id;
+    return node;
+}
+
+
 static AstNode* parse_class_decl(Parser* p) {
     advance(p); /* class */
 
@@ -622,7 +694,7 @@ static AstNode* parse_class_decl(Parser* p) {
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
     info->name[63] = '\0';
-    info->type_id = next_class_type_id++;
+    info->type_id = next_type_id++;
 
     /* register early so methods with this return type resolve */
     symtab_add_class(name.text, info);
@@ -814,6 +886,10 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
 static AstNode* parse_top_level(Parser* p) {
     if (check(p, TOK_KW_CLASS)) {
         return parse_class_decl(p);
+    }
+
+    if (check(p, TOK_KW_STRUCT)) {
+        return parse_struct_decl(p);
     }
 
     if (is_primitive_type_token(p) ||

@@ -20,6 +20,7 @@ typedef enum {
     TOK_KW_REF,
     TOK_KW_OUT,
     TOK_KW_IN,
+    TOK_KW_STRUCT,
     TOK_KW_IF,
     TOK_KW_ELSE,
     TOK_KW_WHILE,
