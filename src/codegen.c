@@ -645,7 +645,6 @@ static void emit_stmt_call_releases(AstNode* expr, FILE* out, int indent) {
 #define MAX_CLEANUP 128
 typedef struct {
     const char* name;
-    int         is_array;
 } CleanupEntry;
 static CleanupEntry cleanup_entries[MAX_CLEANUP];
 static int          cleanup_count = 0;
@@ -655,10 +654,9 @@ static int          assign_tmp_id = 0;
 static int cleanup_scope_stack[MAX_SCOPE];
 static int cleanup_scope_depth = 0;
 
-static void cleanup_add(const char* name, int is_array) {
+static void cleanup_add(const char* name) {
     if (cleanup_count < MAX_CLEANUP) {
         cleanup_entries[cleanup_count].name = name;
-        cleanup_entries[cleanup_count].is_array = is_array;
         cleanup_count++;
     }
 }
@@ -672,20 +670,6 @@ static void cleanup_emit(FILE* out, int indent) {
                 strcmp(name, "this") == 0 ? "thiz" : name);
     }
 }
-
-static void cleanup_remove(const char* name) {
-    int i;
-    for (i = 0; i < cleanup_count; i++) {
-        if (strcmp(cleanup_entries[i].name, name) == 0) {
-            int j;
-            for (j = i; j < cleanup_count - 1; j++) cleanup_entries[j] = cleanup_entries[j + 1];
-            cleanup_count--;
-            return;
-        }
-    }
-}
-
-static void cleanup_clear(void) { cleanup_count = 0; }
 
 static void cleanup_push_scope(void) {
     if (cleanup_scope_depth < MAX_SCOPE) {
@@ -709,21 +693,6 @@ static void cleanup_pop_scope(FILE* out, int indent) {
 static void cleanup_reset(void) {
     cleanup_count = 0;
     cleanup_scope_depth = 0;
-}
-
-static void cleanup_remove_from_expr(AstNode* expr) {
-    if (!expr) return;
-    if (expr->kind == AST_IDENT) {
-        resolve_type(expr);
-        if (expr->resolved_type.kind == TYPE_CLASS) {
-            cleanup_remove(expr->tok.text);
-        }
-    }
-    int i;
-    for (i = 0; i < expr->child_count; i++) {
-        cleanup_remove_from_expr(expr->children[i]);
-    }
-    cleanup_remove_from_expr(expr->next);
 }
 
 static void codegen_stmt(AstNode* node, FILE* out, int indent);
@@ -783,7 +752,7 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
 
     if ((type.kind == TYPE_CLASS && type.is_pointer && !type.is_array) ||
         (type.is_array && type.array_size == 0)) {
-        cleanup_add(node->tok.text, 1);
+        cleanup_add(node->tok.text);
     }
 }
 
