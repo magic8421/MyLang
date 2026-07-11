@@ -41,7 +41,6 @@ static int expr_is_direct_assignment(AstNode* node) {
 }
 
 static int is_type_name(const char* name) {
-    if (strcmp(name, "int") == 0 || strcmp(name, "char") == 0) return 1;
     return symtab_find_class(name) != NULL;
 }
 
@@ -59,14 +58,46 @@ static Type parse_type(Parser* p) {
     Type t;
     memset(&t, 0, sizeof(t));
 
-    if (check(p, TOK_KW_INT)) {
+    if (check(p, TOK_KW_I32)) {
         advance(p);
-        t.kind = TYPE_INT;
-        t.type_id = TYPE_ID_INT;
-    } else if (check(p, TOK_KW_CHAR)) {
+        t.kind = TYPE_I32;
+        t.type_id = TYPE_ID_I32;
+    } else if (check(p, TOK_KW_I8)) {
         advance(p);
-        t.kind = TYPE_CHAR;
-        t.type_id = TYPE_ID_CHAR;
+        t.kind = TYPE_I8;
+        t.type_id = TYPE_ID_I8;
+    } else if (check(p, TOK_KW_I16)) {
+        advance(p);
+        t.kind = TYPE_I16;
+        t.type_id = TYPE_ID_I16;
+    } else if (check(p, TOK_KW_I64)) {
+        advance(p);
+        t.kind = TYPE_I64;
+        t.type_id = TYPE_ID_I64;
+    } else if (check(p, TOK_KW_U8)) {
+        advance(p);
+        t.kind = TYPE_U8;
+        t.type_id = TYPE_ID_U8;
+    } else if (check(p, TOK_KW_U16)) {
+        advance(p);
+        t.kind = TYPE_U16;
+        t.type_id = TYPE_ID_U16;
+    } else if (check(p, TOK_KW_U32)) {
+        advance(p);
+        t.kind = TYPE_U32;
+        t.type_id = TYPE_ID_U32;
+    } else if (check(p, TOK_KW_U64)) {
+        advance(p);
+        t.kind = TYPE_U64;
+        t.type_id = TYPE_ID_U64;
+    } else if (check(p, TOK_KW_F32)) {
+        advance(p);
+        t.kind = TYPE_F32;
+        t.type_id = TYPE_ID_F32;
+    } else if (check(p, TOK_KW_F64)) {
+        advance(p);
+        t.kind = TYPE_F64;
+        t.type_id = TYPE_ID_F64;
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.kind = TYPE_VOID;
@@ -104,13 +135,15 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_INT_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_INT_LIT, t);
-        n->resolved_type.kind = TYPE_INT;
+        n->resolved_type.kind = TYPE_I32;
+        n->resolved_type.type_id = TYPE_ID_I32;
         return n;
     }
     if (check(p, TOK_CHAR_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_CHAR_LIT, t);
-        n->resolved_type.kind = TYPE_CHAR;
+        n->resolved_type.kind = TYPE_I8;
+        n->resolved_type.type_id = TYPE_ID_I8;
         return n;
     }
     if (check(p, TOK_IDENT)) {
@@ -135,8 +168,16 @@ static AstNode* parse_primary(Parser* p) {
         Type base;
         memset(&base, 0, sizeof(base));
 
-        if (check(p, TOK_KW_INT))       { advance(p); base.kind = TYPE_INT; }
-        else if (check(p, TOK_KW_CHAR)) { advance(p); base.kind = TYPE_CHAR; }
+        if (check(p, TOK_KW_I32))       { advance(p); base.kind = TYPE_I32; base.type_id = TYPE_ID_I32; }
+        else if (check(p, TOK_KW_I8)) { advance(p); base.kind = TYPE_I8;  base.type_id = TYPE_ID_I8; }
+        else if (check(p, TOK_KW_I16))  { advance(p); base.kind = TYPE_I16; base.type_id = TYPE_ID_I16; }
+        else if (check(p, TOK_KW_I64))  { advance(p); base.kind = TYPE_I64; base.type_id = TYPE_ID_I64; }
+        else if (check(p, TOK_KW_U8))   { advance(p); base.kind = TYPE_U8;  base.type_id = TYPE_ID_U8; }
+        else if (check(p, TOK_KW_U16))  { advance(p); base.kind = TYPE_U16; base.type_id = TYPE_ID_U16; }
+        else if (check(p, TOK_KW_U32))  { advance(p); base.kind = TYPE_U32; base.type_id = TYPE_ID_U32; }
+        else if (check(p, TOK_KW_U64))  { advance(p); base.kind = TYPE_U64; base.type_id = TYPE_ID_U64; }
+        else if (check(p, TOK_KW_F32))  { advance(p); base.kind = TYPE_F32; base.type_id = TYPE_ID_F32; }
+        else if (check(p, TOK_KW_F64))  { advance(p); base.kind = TYPE_F64; base.type_id = TYPE_ID_F64; }
         else if (check(p, TOK_IDENT))   {
             base.kind = TYPE_CLASS;
             CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "class name too long");
@@ -313,8 +354,16 @@ static AstNode* parse_block(Parser* p) {
     return block;
 }
 
+static int is_primitive_type_token(Parser* p) {
+    return check(p, TOK_KW_U8)   || check(p, TOK_KW_U16)  ||
+           check(p, TOK_KW_U32)  || check(p, TOK_KW_U64)  ||
+           check(p, TOK_KW_I8)   || check(p, TOK_KW_I16)  ||
+           check(p, TOK_KW_I32)  || check(p, TOK_KW_I64)  ||
+           check(p, TOK_KW_F32)  || check(p, TOK_KW_F64);
+}
+
 static int stmt_looks_like_var_decl(Parser* p) {
-    if (check(p, TOK_KW_INT) || check(p, TOK_KW_CHAR)) return 1;
+    if (is_primitive_type_token(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
         if (next == TOK_IDENT) return 1;
@@ -579,7 +628,7 @@ static AstNode* parse_top_level(Parser* p) {
         return parse_class_decl(p);
     }
 
-    if (check(p, TOK_KW_INT) || check(p, TOK_KW_CHAR) ||
+    if (is_primitive_type_token(p) ||
         (check(p, TOK_IDENT) && is_type_name(p->current.text))) {
         Type ret_type = parse_type(p);
         if (!check(p, TOK_IDENT)) {

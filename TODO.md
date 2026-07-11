@@ -51,14 +51,14 @@ Fix summary:
 - Local array variables enter the cleanup list and are released with
   `mylang_release` at scope exit.
 
-### 6. Add explicit fixed-width primitive types
+### 6. Add explicit fixed-width primitive types  [FIXED]
 
-Plan to support value types that do not participate in reference counting:
+Implemented value types that do not participate in reference counting:
 
 - Unsigned: `u8`, `u16`, `u32`, `u64`
 - Signed:   `i8`, `i16`, `i32`, `i64`
 - Float:    `f32`, `f64`
-- Existing: `int`, `char` (keep for compatibility)
+- Removed legacy `int` and `char` keywords; use `i32` and `i8` instead.
 
 Rules:
 

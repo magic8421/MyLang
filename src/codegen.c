@@ -7,10 +7,18 @@
 
 static const char* c_base_name(const Type* t) {
     switch (t->kind) {
-        case TYPE_INT:    return "int";
-        case TYPE_CHAR:   return "char";
+        case TYPE_I8:    return "int8_t";
+        case TYPE_I16:   return "int16_t";
+        case TYPE_I32:   return "int32_t";
+        case TYPE_I64:   return "int64_t";
+        case TYPE_U8:    return "uint8_t";
+        case TYPE_U16:   return "uint16_t";
+        case TYPE_U32:   return "uint32_t";
+        case TYPE_U64:   return "uint64_t";
+        case TYPE_F32:   return "float";
+        case TYPE_F64:   return "double";
         case TYPE_CLASS: return t->class_name;
-        default:          return "int";
+        default:         return "int32_t";
     }
 }
 
@@ -42,11 +50,13 @@ static Type resolve_type(AstNode* node) {
 
     switch (node->kind) {
         case AST_INT_LIT:
-            t.kind = TYPE_INT;
+            t.kind = TYPE_I32;
+            t.type_id = TYPE_ID_I32;
             break;
 
         case AST_CHAR_LIT:
-            t.kind = TYPE_CHAR;
+            t.kind = TYPE_I8;
+            t.type_id = TYPE_ID_I8;
             break;
 
         case AST_IDENT: {
@@ -61,7 +71,8 @@ static Type resolve_type(AstNode* node) {
                 op == TOK_LT || op == TOK_LE ||
                 op == TOK_GT || op == TOK_GE ||
                 op == TOK_AND || op == TOK_OR) {
-                t.kind = TYPE_INT;
+                t.kind = TYPE_I32;
+                t.type_id = TYPE_ID_I32;
             } else {
                 t = resolve_type(node->children[0]);
             }
@@ -1022,10 +1033,26 @@ void codegen_program(AstNode* program, FILE* out) {
     fprintf(out, "    return 0;\n");
     fprintf(out, "}\n\n");
 
-    fprintf(out, "static inline int array_get_int(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int*)arr)[idx]; }\n");
-    fprintf(out, "static inline void array_set_int(void* arr, size_t idx, int val) { mylang_bounds(arr, idx); ((int*)arr)[idx] = val; }\n");
-    fprintf(out, "static inline char array_get_char(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((char*)arr)[idx]; }\n");
-    fprintf(out, "static inline void array_set_char(void* arr, size_t idx, char val) { mylang_bounds(arr, idx); ((char*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline int8_t   array_get_int8_t  (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int8_t*)arr)[idx];   }\n");
+    fprintf(out, "static inline void     array_set_int8_t  (void* arr, size_t idx, int8_t   val) { mylang_bounds(arr, idx); ((int8_t*)arr)[idx]   = val; }\n");
+    fprintf(out, "static inline int16_t  array_get_int16_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int16_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int16_t (void* arr, size_t idx, int16_t  val) { mylang_bounds(arr, idx); ((int16_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline int32_t  array_get_int32_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int32_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int32_t (void* arr, size_t idx, int32_t  val) { mylang_bounds(arr, idx); ((int32_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline int64_t  array_get_int64_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((int64_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_int64_t (void* arr, size_t idx, int64_t  val) { mylang_bounds(arr, idx); ((int64_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline uint8_t  array_get_uint8_t (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint8_t*)arr)[idx];  }\n");
+    fprintf(out, "static inline void     array_set_uint8_t (void* arr, size_t idx, uint8_t  val) { mylang_bounds(arr, idx); ((uint8_t*)arr)[idx]  = val; }\n");
+    fprintf(out, "static inline uint16_t array_get_uint16_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint16_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint16_t(void* arr, size_t idx, uint16_t val) { mylang_bounds(arr, idx); ((uint16_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline uint32_t array_get_uint32_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint32_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint32_t(void* arr, size_t idx, uint32_t val) { mylang_bounds(arr, idx); ((uint32_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline uint64_t array_get_uint64_t(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((uint64_t*)arr)[idx]; }\n");
+    fprintf(out, "static inline void     array_set_uint64_t(void* arr, size_t idx, uint64_t val) { mylang_bounds(arr, idx); ((uint64_t*)arr)[idx] = val; }\n");
+    fprintf(out, "static inline float    array_get_float   (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((float*)arr)[idx];    }\n");
+    fprintf(out, "static inline void     array_set_float   (void* arr, size_t idx, float    val) { mylang_bounds(arr, idx); ((float*)arr)[idx]    = val; }\n");
+    fprintf(out, "static inline double   array_get_double  (void* arr, size_t idx) { mylang_bounds(arr, idx); return ((double*)arr)[idx];   }\n");
+    fprintf(out, "static inline void     array_set_double  (void* arr, size_t idx, double   val) { mylang_bounds(arr, idx); ((double*)arr)[idx]   = val; }\n");
     fprintf(out, "static inline void* array_get_class(void* arr, size_t idx) { mylang_bounds(arr, idx); return ((void**)arr)[idx]; }\n");
     fprintf(out, "static inline void array_replace_class(void* arr, size_t idx, void* val) {\n");
     fprintf(out, "    void** _ap; void* _old;\n");

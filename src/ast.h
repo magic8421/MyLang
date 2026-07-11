@@ -4,26 +4,32 @@
 #include "token.h"
 
 typedef enum {
-    TYPE_INT,
-    TYPE_CHAR,
+    TYPE_VOID = 0,
     TYPE_CLASS,
-    TYPE_VOID,
+    TYPE_I8,
+    TYPE_I16,
+    TYPE_I32,
+    TYPE_I64,
+    TYPE_U8,
+    TYPE_U16,
+    TYPE_U32,
+    TYPE_U64,
+    TYPE_F32,
+    TYPE_F64,
 } TypeKind;
 
-#define TYPE_ID_INT     0
-#define TYPE_ID_CHAR    1
-#define TYPE_ID_U8      2
-#define TYPE_ID_U16     3
-#define TYPE_ID_U32     4
-#define TYPE_ID_U64     5
-#define TYPE_ID_I8      6
-#define TYPE_ID_I16     7
-#define TYPE_ID_I32     8
-#define TYPE_ID_I64     9
-#define TYPE_ID_F32     10
-#define TYPE_ID_F64     11
+#define TYPE_ID_I8       0
+#define TYPE_ID_I16      1
+#define TYPE_ID_I32      2
+#define TYPE_ID_I64      3
+#define TYPE_ID_U8       4
+#define TYPE_ID_U16      5
+#define TYPE_ID_U32      6
+#define TYPE_ID_U64      7
+#define TYPE_ID_F32      8
+#define TYPE_ID_F64      9
 #define TYPE_ID_CLASS_BASE 16
-#define TYPE_IS_ARRAY   0x80000000U
+#define TYPE_IS_ARRAY    0x80000000U
 
 typedef struct {
     TypeKind kind;

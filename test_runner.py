@@ -91,9 +91,9 @@ STATUS_BREAKPOINT = -2147483645  # 0x80000003
 
 TESTS = [
     ("basic_arith", """
-int main() {
-    int x = 10;
-    int y = x + 5;
+i32 main() {
+    i32 x = 10;
+    i32 y = x + 5;
     if (y == 15) {
         return 100;
     }
@@ -102,9 +102,9 @@ int main() {
 """, 100),
 
     ("while_sum", """
-int main() {
-    int i = 1;
-    int s = 0;
+i32 main() {
+    i32 i = 1;
+    i32 s = 0;
     while (i <= 10) {
         s = s + i;
         i = i + 1;
@@ -114,8 +114,8 @@ int main() {
 """, 55),
 
     ("if_else", """
-int main() {
-    int x = 3;
+i32 main() {
+    i32 x = 3;
     if (x > 5) {
         return 1;
     } else {
@@ -126,10 +126,10 @@ int main() {
 
     ("new_class", """
 class Point {
-    int x;
-    int y;
+    i32 x;
+    i32 y;
 }
-int main() {
+i32 main() {
     Point p = new Point;
     p.x = 10;
     p.y = 20;
@@ -139,13 +139,13 @@ int main() {
 
     ("class_pass_to_func", """
 class Point {
-    int x;
-    int y;
+    i32 x;
+    i32 y;
 }
-int sum(Point a, Point b) {
+i32 sum(Point a, Point b) {
     return a.x + b.x + a.y + b.y;
 }
-int main() {
+i32 main() {
     Point p = new Point;
     p.x = 1;
     p.y = 2;
@@ -158,16 +158,16 @@ int main() {
 
     ("class_return", """
 class Point {
-    int x;
-    int y;
+    i32 x;
+    i32 y;
 }
-Point make(int a, int b) {
+Point make(i32 a, i32 b) {
     Point p = new Point;
     p.x = a;
     p.y = b;
     return p;
 }
-int main() {
+i32 main() {
     Point p = make(7, 3);
     return p.x + p.y;
 }
@@ -175,10 +175,10 @@ int main() {
 
     ("class_assign", """
 class Point {
-    int x;
-    int y;
+    i32 x;
+    i32 y;
 }
-int main() {
+i32 main() {
     Point p = new Point;
     p.x = 10;
     Point q = p;
@@ -188,8 +188,8 @@ int main() {
 """, 40),
 
     ("bounds_dynamic_oob", """
-int main() {
-    int[] arr = new int[3];
+i32 main() {
+    i32[] arr = new i32[3];
     arr[0] = 1;
     arr[5] = 0;
     return 0;
@@ -197,8 +197,8 @@ int main() {
 """, "crash"),
 
     ("bounds_fixed_oob", """
-int main() {
-    int[3] arr;
+i32 main() {
+    i32[3] arr;
     arr[0] = 1;
     arr[10] = 0;
     return 0;
@@ -206,17 +206,17 @@ int main() {
 """, "crash"),
 
     ("bounds_in_bounds", """
-int main() {
-    int[] arr = new int[10];
+i32 main() {
+    i32[] arr = new i32[10];
     arr[5] = 42;
     return arr[5];
 }
 """, 42),
 
     ("neg_and_not", """
-int main() {
-    int x = 5;
-    int y = -x;
+i32 main() {
+    i32 x = 5;
+    i32 y = -x;
     if (y != -5) return 0;
     if (!(x == 4)) {
         return 10;
@@ -226,10 +226,10 @@ int main() {
 """, 10),
 
     ("compare_ops", """
-int main() {
-    int a = 3;
-    int b = 5;
-    int r = 0;
+i32 main() {
+    i32 a = 3;
+    i32 b = 5;
+    i32 r = 0;
     if (a < b) r = r + 1;
     if (a <= b) r = r + 1;
     if (b > a) r = r + 1;
@@ -241,35 +241,35 @@ int main() {
 """, 6),
 
     ("nested_calls", """
-int mul(int a, int b) { return a * b; }
-int add(int a, int b) { return a + b; }
-int main() {
+i32 mul(i32 a, i32 b) { return a * b; }
+i32 add(i32 a, i32 b) { return a + b; }
+i32 main() {
     return add(mul(2, 3), mul(4, 5));
 }
 """, 26),
 
     ("char_literal", """
-int main() {
-    char c = 'A';
-    int x = 65;
+i32 main() {
+    i8 c = 'A';
+    i32 x = 65;
     if (c == x) return 42;
     return 0;
 }
 """, 42),
 
     ("new_array_expr_size", """
-int main() {
-    int n = 5;
-    int[] arr = new int[n + 2];
+i32 main() {
+    i32 n = 5;
+    i32[] arr = new i32[n + 2];
     arr[6] = 99;
     return arr[6];
 }
 """, 99),
 
     ("nested_if_while", """
-int main() {
-    int x = 0;
-    int i = 0;
+i32 main() {
+    i32 x = 0;
+    i32 i = 0;
     while (i < 5) {
         if (i < 3) {
             x = x + i;
@@ -283,32 +283,32 @@ int main() {
 """, 23),
 
     ("method_get_set", """
-int id(int x) { return x; }
+i32 id(i32 x) { return x; }
 class Counter {
-    int value;
-    int get() { return this.value; }
-    void set(int v) { this.value = v; }
-    int inc() { this.value = this.value + 1; return this.value; }
+    i32 value;
+    i32 get() { return this.value; }
+    void set(i32 v) { this.value = v; }
+    i32 inc() { this.value = this.value + 1; return this.value; }
 }
-int main() {
+i32 main() {
     Counter c = new Counter;
     c.set(10);
-    int a = c.get();
-    int b = c.inc();
+    i32 a = c.get();
+    i32 b = c.inc();
     return id(a + b);
 }
 """, 21),
 
     ("method_thiz_alias", """
 class Box {
-    int x;
-    Box set(int v) {
+    i32 x;
+    Box set(i32 v) {
         this.x = v;
         return this;
     }
-    int get() { return this.x; }
+    i32 get() { return this.x; }
 }
-int main() {
+i32 main() {
     Box b = new Box;
     b.set(7);
     Box c = b.set(3);
@@ -318,14 +318,14 @@ int main() {
 
     ("method_multi_param", """
 class Point {
-    int x;
-    int y;
-    void move(int dx, int dy) {
+    i32 x;
+    i32 y;
+    void move(i32 dx, i32 dy) {
         this.x = this.x + dx;
         this.y = this.y + dy;
     }
 }
-int main() {
+i32 main() {
     Point p = new Point;
     p.x = 1;
     p.y = 2;
@@ -336,10 +336,10 @@ int main() {
 
     ("method_void_no_return", """
 class Log {
-    int total;
-    void add(int v) { this.total = this.total + v; }
+    i32 total;
+    void add(i32 v) { this.total = this.total + v; }
 }
-int main() {
+i32 main() {
     Log l = new Log;
     l.add(3);
     l.add(4);
@@ -349,10 +349,10 @@ int main() {
 
     ("method_return_captured", """
 class Box {
-    int v;
-    Box set(int x) { this.v = x; return this; }
+    i32 v;
+    Box set(i32 x) { this.v = x; return this; }
 }
-int main() {
+i32 main() {
     Box a = new Box;
     Box b = a.set(5);
     Box c = a.set(7);
@@ -362,9 +362,9 @@ int main() {
 
     ("method_return_discarded", """
 class Box {
-    int v;
-    int total;
-    Box set(int x) {
+    i32 v;
+    i32 total;
+    Box set(i32 x) {
         this.v = x;
         return this;
     }
@@ -373,7 +373,7 @@ class Box {
         return this;
     }
 }
-int main() {
+i32 main() {
     Box b = new Box;
     b.set(10);
     b.set(20);
@@ -385,10 +385,10 @@ int main() {
 
     ("method_return_reassign", """
 class Box {
-    int v;
-    Box set(int x) { this.v = x; return this; }
+    i32 v;
+    Box set(i32 x) { this.v = x; return this; }
 }
-int main() {
+i32 main() {
     Box a = new Box;
     a.set(1);
     Box b = new Box;
@@ -400,10 +400,10 @@ int main() {
 
     ("class_array_basic", """
 class Box {
-    int v;
-    int get() { return this.v; }
+    i32 v;
+    i32 get() { return this.v; }
 }
-int main() {
+i32 main() {
     Box[] arr = new Box[3];
     arr[0] = new Box;
     arr[0].v = 1;
@@ -416,12 +416,12 @@ int main() {
 
     ("class_array_pass_to_func", """
 class Box {
-    int v;
+    i32 v;
 }
-int sum(Box[] arr) {
+i32 sum(Box[] arr) {
     return arr[0].v + arr[1].v;
 }
-int main() {
+i32 main() {
     Box[] a = new Box[2];
     a[0] = new Box;
     a[0].v = 3;
@@ -433,7 +433,7 @@ int main() {
 
     ("class_array_return_func", """
 class Box {
-    int v;
+    i32 v;
 }
 Box[] make() {
     Box[] a = new Box[2];
@@ -443,7 +443,7 @@ Box[] make() {
     a[1].v = 7;
     return a;
 }
-int main() {
+i32 main() {
     Box[] x = make();
     return x[0].v + x[1].v;
 }
@@ -451,9 +451,9 @@ int main() {
 
     ("class_array_bounds", """
 class Box {
-    int v;
+    i32 v;
 }
-int main() {
+i32 main() {
     Box[] a = new Box[2];
     return a[5].v;
 }
@@ -461,9 +461,9 @@ int main() {
 
     ("class_array_replace", """
 class Box {
-    int v;
+    i32 v;
 }
-int main() {
+i32 main() {
     Box[] a = new Box[2];
     a[0] = new Box;
     a[0].v = 1;
@@ -476,17 +476,17 @@ int main() {
 
     ("class_array_loop", """
 class Box {
-    int v;
+    i32 v;
 }
-int main() {
+i32 main() {
     Box[] a = new Box[4];
-    int i = 0;
+    i32 i = 0;
     while (i < 4) {
         a[i] = new Box;
         a[i].v = i;
         i = i + 1;
     }
-    int s = 0;
+    i32 s = 0;
     i = 0;
     while (i < 4) {
         s = s + a[i].v;
@@ -498,16 +498,74 @@ int main() {
 
     ("class_array_method_call", """
 class Box {
-    int v;
-    int get() { return this.v; }
+    i32 v;
+    i32 get() { return this.v; }
 }
-int main() {
+i32 main() {
     Box[] a = new Box[2];
     a[0] = new Box;
     a[0].v = 5;
     return a[0].get();
 }
 """, 5),
+
+    ("fixed_width_basic", """
+i32 main() {
+    u8  a = 200;
+    i8  b = -5;
+    u16 c = 60000;
+    i16 d = -1000;
+    u32 e = 123456;
+    i64 f = -123456789;
+    if (a == 200 && b == -5 && c == 60000 && d == -1000 && e == 123456 && f == -123456789) {
+        return 42;
+    }
+    return 0;
+}
+""", 42),
+
+    ("fixed_width_array", """
+i32 main() {
+    u32[] arr = new u32[4];
+    arr[0] = 10;
+    arr[1] = 20;
+    arr[2] = arr[0] + arr[1];
+    arr[3] = 0;
+    return arr[2];
+}
+""", 30),
+
+    ("fixed_width_func_arg", """
+i32 sum(i16[] arr) {
+    i32 s = 0;
+    i32 i = 0;
+    while (i < 3) {
+        s = s + arr[i];
+        i = i + 1;
+    }
+    return s;
+}
+i32 main() {
+    i16[] a = new i16[3];
+    a[0] = 10;
+    a[1] = 20;
+    a[2] = 30;
+    return sum(a);
+}
+""", 60),
+
+    ("float_array", """
+i32 main() {
+    f32[] a = new f32[3];
+    a[0] = 1;
+    a[1] = 2;
+    a[2] = a[0] + a[1];
+    if (a[2] == 3) {
+        return 3;
+    }
+    return 0;
+}
+""", 3),
 ]
 
 # ============================================================

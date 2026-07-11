@@ -10,8 +10,16 @@ typedef struct {
 } KeywordEntry;
 
 static const KeywordEntry keywords[] = {
-    {"int",    TOK_KW_INT},
-    {"char",   TOK_KW_CHAR},
+    {"u8",     TOK_KW_U8},
+    {"u16",    TOK_KW_U16},
+    {"u32",    TOK_KW_U32},
+    {"u64",    TOK_KW_U64},
+    {"i8",     TOK_KW_I8},
+    {"i16",    TOK_KW_I16},
+    {"i32",    TOK_KW_I32},
+    {"i64",    TOK_KW_I64},
+    {"f32",    TOK_KW_F32},
+    {"f64",    TOK_KW_F64},
     {"if",     TOK_KW_IF},
     {"else",   TOK_KW_ELSE},
     {"while",  TOK_KW_WHILE},

@@ -6,8 +6,16 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_IDENT:     return "identifier";
         case TOK_INT_LIT:   return "integer literal";
         case TOK_CHAR_LIT:  return "char literal";
-        case TOK_KW_INT:    return "int";
-        case TOK_KW_CHAR:   return "char";
+        case TOK_KW_U8:     return "u8";
+        case TOK_KW_U16:    return "u16";
+        case TOK_KW_U32:    return "u32";
+        case TOK_KW_U64:    return "u64";
+        case TOK_KW_I8:     return "i8";
+        case TOK_KW_I16:    return "i16";
+        case TOK_KW_I32:    return "i32";
+        case TOK_KW_I64:    return "i64";
+        case TOK_KW_F32:    return "f32";
+        case TOK_KW_F64:    return "f64";
         case TOK_KW_IF:     return "if";
         case TOK_KW_ELSE:   return "else";
         case TOK_KW_WHILE:  return "while";
