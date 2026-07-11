@@ -225,6 +225,11 @@ static void codegen_expr(AstNode* node, FILE* out) {
     if (!node) return;
     resolve_type(node);
 
+    if (node->temp_name[0] != '\0') {
+        fprintf(out, "%s", node->temp_name);
+        return;
+    }
+
     switch (node->kind) {
         case AST_INT_LIT:
             fprintf(out, "%d", node->tok.int_val);
@@ -353,11 +358,52 @@ static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
 
 /* -- caller-side arg guard helpers ----------------------------------- */
 
+static int guard_tmp_id = 0;
+
 static int call_needs_guard(AstNode* arg) {
     resolve_type(arg);
     if (arg->resolved_type.kind != TYPE_CLASS) return 0;
+    if (arg->kind == AST_ASSIGN) return 0;
     if (arg->kind == AST_IDENT && symtab_lookup(arg->tok.text)) return 0;
     return 1;
+}
+
+static int guard_needs_retain(AstNode* node) {
+    /* Calls/new already return an owned (+1) reference. */
+    return node->kind != AST_CALL && node->kind != AST_NEW;
+}
+
+/* Evaluate each guarded class subexpression into a temporary once, so we do
+   not re-evaluate side-effecting expressions (e.g. method calls) when the
+   caller-side retain/release guards are emitted. */
+static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
+    if (!expr) return;
+    int i;
+    for (i = 0; i < expr->child_count; i++) {
+        emit_guarded_temp_decls(expr->children[i], out, indent);
+    }
+    emit_guarded_temp_decls(expr->next, out, indent);
+
+    if (call_needs_guard(expr) && expr->temp_name[0] == '\0') {
+        int id = guard_tmp_id++;
+        snprintf(expr->temp_name, sizeof(expr->temp_name), "_g%d", id);
+
+        char tbuf[128];
+        c_type_str(&expr->resolved_type, tbuf, sizeof(tbuf));
+        indent_line(out, indent);
+        fprintf(out, "%s %s = ", tbuf, expr->temp_name);
+
+        /* Evaluate the original expression without using its own temp name. */
+        char saved[32];
+        strncpy(saved, expr->temp_name, sizeof(saved) - 1);
+        saved[sizeof(saved) - 1] = '\0';
+        expr->temp_name[0] = '\0';
+        codegen_expr(expr, out);
+        strncpy(expr->temp_name, saved, sizeof(expr->temp_name) - 1);
+        expr->temp_name[sizeof(expr->temp_name) - 1] = '\0';
+
+        fprintf(out, ";\n");
+    }
 }
 
 static void emit_call_guards(AstNode* expr, FILE* out, int is_retain) {
@@ -369,15 +415,21 @@ static void emit_call_guards(AstNode* expr, FILE* out, int is_retain) {
         if (callee->kind == AST_MEMBER_ACCESS) {
             AstNode* obj = callee->children[0];
             if (call_needs_guard(obj)) {
-                if (is_retain) { fprintf(out, "mylang_retain("); codegen_expr(obj, out); fprintf(out, "); "); }
-                else           { fprintf(out, "mylang_release("); codegen_expr(obj, out); fprintf(out, "); "); }
+                if (is_retain) {
+                    if (guard_needs_retain(obj)) fprintf(out, "mylang_retain(%s); ", obj->temp_name);
+                } else {
+                    fprintf(out, "mylang_release(%s); ", obj->temp_name);
+                }
             }
         }
         AstNode* a = args;
         while (a) {
             if (call_needs_guard(a)) {
-                if (is_retain) { fprintf(out, "mylang_retain("); codegen_expr(a, out); fprintf(out, "); "); }
-                else           { fprintf(out, "mylang_release("); codegen_expr(a, out); fprintf(out, "); "); }
+                if (is_retain) {
+                    if (guard_needs_retain(a)) fprintf(out, "mylang_retain(%s); ", a->temp_name);
+                } else {
+                    fprintf(out, "mylang_release(%s); ", a->temp_name);
+                }
             }
             a = a->next;
         }
@@ -598,6 +650,10 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
     emit_bounds_checks(node->children[0], out, indent);
     AstNode* expr = node->children[0];
     resolve_type(expr);
+
+    /* Extract guarded class subexpressions into temporaries so side-effecting
+       arguments (e.g. method calls) are evaluated exactly once. */
+    emit_guarded_temp_decls(expr, out, indent);
 
     /* class pointer assignment: evaluate RHS first, release old LHS, then assign.
        This avoids use-after-free when RHS aliases LHS (e.g. b = b.set(5)). */

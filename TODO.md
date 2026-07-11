@@ -28,11 +28,15 @@
 - `return` statements use `cleanup_reset()` so early returns still clean up all
   enclosing scopes correctly.
 
-### 3. Call guards re-evaluate side-effecting non-local arguments
+### 3. Call guards re-evaluate side-effecting non-local arguments  [FIXED]
 
-- `use(a.get())` generates `Box_get(a)` three times
-- Causes wrong behavior / leaks when calls have side effects or return new objects
-- Fix: hoist guarded expressions into temporaries
+- `use(a.get())` used to generate `Box_get(a)` three times
+- Caused wrong behavior / leaks when calls had side effects or returned new objects
+- Fix: in `codegen_expr_stmt`, guarded class subexpressions are now evaluated into
+  typed temporaries once before the call. Retain/release guards operate on the
+  temporaries instead of re-evaluating the original expression. Calls / `new`
+  temporaries are released (they own a +1 reference); borrowed temporaries are
+  retained then released.
 
 ### 4. Class field and array element assignment skip refcounting
 
