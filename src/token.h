@@ -17,6 +17,8 @@ typedef enum {
     TOK_KW_I64,
     TOK_KW_F32,
     TOK_KW_F64,
+    TOK_KW_REF,
+    TOK_KW_OUT,
     TOK_KW_IF,
     TOK_KW_ELSE,
     TOK_KW_WHILE,

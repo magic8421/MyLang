@@ -20,6 +20,8 @@ static const KeywordEntry keywords[] = {
     {"i64",    TOK_KW_I64},
     {"f32",    TOK_KW_F32},
     {"f64",    TOK_KW_F64},
+    {"ref",    TOK_KW_REF},
+    {"out",    TOK_KW_OUT},
     {"if",     TOK_KW_IF},
     {"else",   TOK_KW_ELSE},
     {"while",  TOK_KW_WHILE},

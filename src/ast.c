@@ -50,6 +50,8 @@ int type_equal(const Type* a, const Type* b) {
     if (a->is_pointer != b->is_pointer) return 0;
     if (a->is_array != b->is_array) return 0;
     if (a->array_size != b->array_size) return 0;
+    if (a->is_ref != b->is_ref) return 0;
+    if (a->is_out != b->is_out) return 0;
     if (a->kind == TYPE_CLASS) {
         return strcmp(a->class_name, b->class_name) == 0;
     }

@@ -37,6 +37,8 @@ typedef struct {
     int      is_pointer;
     int      is_array;
     int      array_size;
+    int      is_ref;       /* by-reference parameter */
+    int      is_out;       /* out-parameter */
     int      type_id;
 } Type;
 
@@ -62,6 +64,8 @@ typedef enum {
     AST_IDENT,
     AST_INT_LIT,
     AST_CHAR_LIT,
+    AST_REF_ARG,
+    AST_OUT_ARG,
 } AstKind;
 
 struct AstNode {

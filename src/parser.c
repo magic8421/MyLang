@@ -485,7 +485,7 @@ static AstNode* parse_stmt(Parser* p) {
 
 
 static AstNode* parse_class_decl(Parser* p) {
-    Token kw = p->current; advance(p); /* class */
+    advance(p); /* class */
 
     if (!check(p, TOK_IDENT)) {
         fprintf(stderr, "error at %d:%d: expected class name\n",
@@ -537,7 +537,16 @@ static AstNode* parse_class_decl(Parser* p) {
 
             if (!check(p, TOK_RPAREN)) {
                 do {
+                    int is_ref = 0;
+                    int is_out = 0;
+                    if (check(p, TOK_KW_REF)) {
+                        is_ref = 1; advance(p);
+                    } else if (check(p, TOK_KW_OUT)) {
+                        is_out = 1; advance(p);
+                    }
                     Type pt = parse_type(p);
+                    pt.is_ref = is_ref;
+                    pt.is_out = is_out;
                     if (!check(p, TOK_IDENT)) {
                         fprintf(stderr, "error at %d:%d: expected parameter name\n",
                                 p->current.line, p->current.col);
@@ -593,9 +602,21 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     symtab_enter_scope();
 
     AstNode* params = NULL;
+    int pc = 0;
+    char pn[16][64];
+    Type pt[16];
     if (!check(p, TOK_RPAREN)) {
         do {
-            Type pt = parse_type(p);
+            int is_ref = 0;
+            int is_out = 0;
+            if (check(p, TOK_KW_REF)) {
+                is_ref = 1; advance(p);
+            } else if (check(p, TOK_KW_OUT)) {
+                is_out = 1; advance(p);
+            }
+            Type param_type = parse_type(p);
+            param_type.is_ref = is_ref;
+            param_type.is_out = is_out;
             if (!check(p, TOK_IDENT)) {
                 fprintf(stderr, "error at %d:%d: expected parameter name\n",
                         p->current.line, p->current.col);
@@ -604,9 +625,14 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
             }
             Token pname = p->current; advance(p);
             AstNode* pd = ast_new_node(AST_VAR_DECL, pname);
-            pd->resolved_type = pt;
-            symtab_insert(pname.text, pt);
+            pd->resolved_type = param_type;
+            symtab_insert(pname.text, param_type);
             params = ast_append_list(params, pd);
+            if (pc < 16) {
+                CHECK_STRSCPY(strscpy(pn[pc], pname.text, sizeof(pn[pc])), "parameter name too long");
+                pt[pc] = param_type;
+                pc++;
+            }
         } while (check(p, TOK_COMMA) && (advance(p), 1));
     }
     expect(p, TOK_RPAREN);
@@ -614,7 +640,7 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     AstNode* body = parse_stmt(p);
     symtab_exit_scope();
 
-    symtab_add_func(name.text, ret_type);
+    symtab_add_func(name.text, ret_type, pc, pn, pt);
 
     AstNode* node = ast_new_node(AST_FUNC_DECL, name);
     node->resolved_type = ret_type;
@@ -629,7 +655,8 @@ static AstNode* parse_top_level(Parser* p) {
     }
 
     if (is_primitive_type_token(p) ||
-        (check(p, TOK_IDENT) && is_type_name(p->current.text))) {
+        (check(p, TOK_IDENT) && is_type_name(p->current.text)) ||
+        (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {
         Type ret_type = parse_type(p);
         if (!check(p, TOK_IDENT)) {
             fprintf(stderr, "error at %d:%d: expected function name\n",

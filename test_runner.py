@@ -566,6 +566,132 @@ i32 main() {
     return 0;
 }
 """, 3),
+
+    ("ref_i32", """
+void add_one(ref i32 x) {
+    x = x + 1;
+}
+i32 main() {
+    i32 a = 10;
+    add_one(a);
+    return a;
+}
+""", 11),
+
+    ("out_i32", """
+void get_answer(out i32 x) {
+    x = 42;
+}
+i32 main() {
+    i32 a;
+    get_answer(a);
+    return a;
+}
+""", 42),
+
+    ("ref_class", """
+class Counter {
+    i32 n;
+}
+void inc(ref Counter c) {
+    c.n = c.n + 1;
+}
+i32 main() {
+    Counter c = new Counter;
+    c.n = 5;
+    inc(c);
+    return c.n;
+}
+""", 6),
+
+    ("out_class", """
+class Box {
+    i32 v;
+}
+void make(out Box b) {
+    b = new Box;
+    b.v = 99;
+}
+i32 main() {
+    Box b;
+    make(b);
+    return b.v;
+}
+""", 99),
+
+    ("ref_chain", """
+void bump(ref i32 x) {
+    x = x + 1;
+}
+void proxy(ref i32 y) {
+    bump(y);
+}
+i32 main() {
+    i32 a = 10;
+    proxy(a);
+    return a;
+}
+""", 11),
+
+    ("out_multi_return", """
+void divmod(i32 a, i32 b, out i32 q, out i32 r) {
+    q = a / b;
+    r = a % b;
+}
+i32 main() {
+    i32 q;
+    i32 r;
+    divmod(17, 5, q, r);
+    return q * 10 + r;
+}
+""", 32),
+
+    ("method_ref_out", """
+class Accumulator {
+    i32 total;
+    void add(ref i32 x) {
+        this.total = this.total + x;
+    }
+    void get(out i32 r) {
+        r = this.total;
+    }
+}
+i32 main() {
+    Accumulator a = new Accumulator;
+    a.total = 5;
+    i32 v = 7;
+    a.add(v);
+    i32 result;
+    a.get(result);
+    return result;
+}
+""", 12),
+
+    ("ref_array", """
+void fill(ref i32[] arr) {
+    arr[0] = 1;
+    arr[1] = 2;
+    arr[2] = 3;
+}
+i32 main() {
+    i32[] a = new i32[3];
+    fill(a);
+    return a[0] + a[1] + a[2];
+}
+""", 6),
+
+    ("out_array", """
+void make(out i32[] arr) {
+    arr = new i32[2];
+    arr[0] = 7;
+    arr[1] = 8;
+}
+i32 main() {
+    i32[] a;
+    make(a);
+    return a[0] + a[1];
+}
+""", 15),
 ]
 
 # ============================================================

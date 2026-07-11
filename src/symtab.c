@@ -104,10 +104,17 @@ int symtab_add_field(ClassInfo* info, const char* name, Type type) {
     return 0;
 }
 
-void symtab_add_func(const char* name, Type ret_type) {
-    FuncInfo* f = malloc(sizeof(FuncInfo));
+void symtab_add_func(const char* name, Type ret_type,
+                     int pc, const char pn[][64], const Type pt[]) {
+    FuncInfo* f = calloc(1, sizeof(FuncInfo));
     CHECK_STRSCPY(strscpy(f->name, name, sizeof(f->name)), "function name too long");
     f->return_type = ret_type;
+    f->param_count = pc;
+    int i;
+    for (i = 0; i < pc && i < 16; i++) {
+        CHECK_STRSCPY(strscpy(f->param_names[i], pn[i], sizeof(f->param_names[i])), "parameter name too long");
+        f->param_types[i] = pt[i];
+    }
     f->next = func_list;
     func_list = f;
 }

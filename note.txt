@@ -101,3 +101,11 @@ inline void array_set_int(IntArray *arr, size_t idx, int val) {
 }
 
 你觉得哪种方法好？
+
+260712-0138
+
+加一个 must check 的返回值类型 关键字 或者 annotation 之类 
+模仿 c++ 那个呗
+不检查返回值就报错
+然后 out ref 参数 基本上差不多了 代替了异常
+一切从简

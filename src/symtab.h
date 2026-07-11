@@ -56,10 +56,14 @@ MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 typedef struct FuncInfo {
     char name[64];
     Type return_type;
+    int  param_count;
+    char param_names[16][64];
+    Type param_types[16];
     struct FuncInfo* next;
 } FuncInfo;
 
-void       symtab_add_func(const char* name, Type ret_type);
+void       symtab_add_func(const char* name, Type ret_type,
+                           int pc, const char pn[][64], const Type pt[]);
 FuncInfo*  symtab_find_func(const char* name);
 
 #endif

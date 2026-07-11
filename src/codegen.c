@@ -30,6 +30,7 @@ static const char* c_base_name(const Type* t) {
         case TYPE_F32:   return "float";
         case TYPE_F64:   return "double";
         case TYPE_CLASS: return t->class_name;
+        case TYPE_VOID:  return "void";
         default:         return "int32_t";
     }
 }
@@ -73,7 +74,13 @@ static Type resolve_type(AstNode* node) {
 
         case AST_IDENT: {
             SymEntry* e = symtab_lookup(node->tok.text);
-            if (e) { t = e->type; }
+            if (e) {
+                t = e->type;
+                /* A ref/out parameter is a pointer in C, but its value type
+                   for the caller is the referenced object. */
+                t.is_ref = 0;
+                t.is_out = 0;
+            }
             break;
         }
 
@@ -98,6 +105,8 @@ static Type resolve_type(AstNode* node) {
         case AST_ARRAY_ACCESS: {
             Type arr = resolve_type(node->children[0]);
             t = arr;
+            /* An element is never itself an array. */
+            t.is_array = 0;
             t.array_size = 0;
             if (arr.kind == TYPE_CLASS && arr.is_array && arr.is_pointer) {
                 /* dynamic class array element is a class pointer */
@@ -176,6 +185,38 @@ static void codegen_unary(AstNode* node, FILE* out) {
     codegen_expr(node->children[0], out);
 }
 
+static int type_is_ref_out(const Type* t) {
+    return t->is_ref || t->is_out;
+}
+
+/* Emit a single argument.  If the callee expects a ref/out parameter, only a
+   local variable identifier is allowed; it is passed as &var, or as the raw
+   pointer if var itself is already a ref/out parameter. */
+static void codegen_call_arg(AstNode* arg, const Type* param_type, FILE* out) {
+    if (type_is_ref_out(param_type)) {
+        if (arg->kind != AST_IDENT) {
+            fprintf(stderr, "error at %d:%d: ref/out argument must be a local variable\n",
+                    arg->tok.line, arg->tok.col);
+            fprintf(out, "0 /* invalid ref/out argument */");
+            return;
+        }
+        SymEntry* e = symtab_lookup(arg->tok.text);
+        if (!e) {
+            fprintf(stderr, "error at %d:%d: ref/out argument must be a local variable\n",
+                    arg->tok.line, arg->tok.col);
+            fprintf(out, "0 /* invalid ref/out argument */");
+            return;
+        }
+        if (type_is_ref_out(&e->type)) {
+            fprintf(out, "%s", arg->tok.text);
+        } else {
+            fprintf(out, "&%s", arg->tok.text);
+        }
+    } else {
+        codegen_expr(arg, out);
+    }
+}
+
 static void codegen_call(AstNode* node, FILE* out) {
     /* method call: p.foo(...) ClassName_foo(p, ...) */
     if (node->children[0]->kind == AST_MEMBER_ACCESS) {
@@ -184,12 +225,18 @@ static void codegen_call(AstNode* node, FILE* out) {
         const char* mname = mem->tok.text;
         resolve_type(obj);
         if (obj->resolved_type.kind == TYPE_CLASS) {
+            MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mname);
             fprintf(out, "%s_%s(", obj->resolved_type.class_name, mname);
             codegen_expr(obj, out);
             AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+            int idx = 0;
             while (args) {
                 fprintf(out, ", ");
-                codegen_expr(args, out);
+                Type expected;
+                memset(&expected, 0, sizeof(expected));
+                if (mi && idx < mi->param_count) expected = mi->param_types[idx];
+                codegen_call_arg(args, &expected, out);
+                idx++;
                 args = args->next;
             }
             fprintf(out, ")");
@@ -197,14 +244,24 @@ static void codegen_call(AstNode* node, FILE* out) {
         }
     }
     /* normal function call */
-    codegen_expr(node->children[0], out);
+    AstNode* callee = node->children[0];
+    FuncInfo* fi = NULL;
+    if (callee->kind == AST_IDENT) {
+        fi = symtab_find_func(callee->tok.text);
+    }
+    codegen_expr(callee, out);
     fprintf(out, "(");
     AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
     int first = 1;
+    int idx = 0;
     while (args) {
         if (!first) fprintf(out, ", ");
-        codegen_expr(args, out);
+        Type expected;
+        memset(&expected, 0, sizeof(expected));
+        if (fi && idx < fi->param_count) expected = fi->param_types[idx];
+        codegen_call_arg(args, &expected, out);
         first = 0;
+        idx++;
         args = args->next;
     }
     fprintf(out, ")");
@@ -305,12 +362,19 @@ static void codegen_expr(AstNode* node, FILE* out) {
         case AST_CHAR_LIT:
             codegen_char_lit(node, out);
             break;
-        case AST_IDENT:
-            if (strcmp(node->tok.text, "this") == 0)
+        case AST_IDENT: {
+            if (strcmp(node->tok.text, "this") == 0) {
                 fprintf(out, "thiz");
-            else
-                fprintf(out, "%s", node->tok.text);
+            } else {
+                SymEntry* e = symtab_lookup(node->tok.text);
+                if (e && (e->type.is_ref || e->type.is_out)) {
+                    fprintf(out, "(*%s)", node->tok.text);
+                } else {
+                    fprintf(out, "%s", node->tok.text);
+                }
+            }
             break;
+        }
         case AST_BINARY:
             codegen_binary(node, out);
             break;
@@ -906,7 +970,12 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     else { body = node->children[0]; }
     { AstNode* p = params; while (p) { fprintf(out, ", ");
         char pt[128]; c_type_str(&p->resolved_type, pt, sizeof(pt));
-        fprintf(out, "%s %s", pt, p->tok.text); p = p->next; } }
+        if (type_is_ref_out(&p->resolved_type)) {
+            fprintf(out, "%s* %s", pt, p->tok.text);
+        } else {
+            fprintf(out, "%s %s", pt, p->tok.text);
+        }
+        p = p->next; } }
     fprintf(out, ")\n{\n");
     cleanup_push_scope(); symtab_enter_scope();
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
@@ -957,7 +1026,11 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
             if (!first) fprintf(out, ", ");
             char ptype_buf[128];
             c_type_str(&p->resolved_type, ptype_buf, sizeof(ptype_buf));
-            fprintf(out, "%s %s", ptype_buf, p->tok.text);
+            if (type_is_ref_out(&p->resolved_type)) {
+                fprintf(out, "%s* %s", ptype_buf, p->tok.text);
+            } else {
+                fprintf(out, "%s %s", ptype_buf, p->tok.text);
+            }
             first = 0;
             p = p->next;
         }
