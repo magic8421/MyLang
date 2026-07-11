@@ -25,6 +25,16 @@ static int expect(Parser* p, TokenKind k) {
     return 0;
 }
 
+static int expr_contains_assign(AstNode* node) {
+    if (!node) return 0;
+    if (node->kind == AST_ASSIGN) return 1;
+    int i;
+    for (i = 0; i < node->child_count; i++) {
+        if (expr_contains_assign(node->children[i])) return 1;
+    }
+    return expr_contains_assign(node->next);
+}
+
 static int is_type_name(const char* name) {
     if (strcmp(name, "int") == 0 || strcmp(name, "char") == 0) return 1;
     return symtab_find_class(name) != NULL;
@@ -328,6 +338,11 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
+        if (expr_contains_assign(cond)) {
+            fprintf(stderr, "error at %d:%d: assignment not allowed in if condition\n",
+                    cond->tok.line, cond->tok.col);
+            p->had_error = 1;
+        }
         expect(p, TOK_RPAREN);
         AstNode* then_body = parse_stmt(p);
         AstNode* else_body = NULL;
@@ -346,6 +361,11 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
+        if (expr_contains_assign(cond)) {
+            fprintf(stderr, "error at %d:%d: assignment not allowed in while condition\n",
+                    cond->tok.line, cond->tok.col);
+            p->had_error = 1;
+        }
         expect(p, TOK_RPAREN);
         AstNode* body = parse_stmt(p);
         AstNode* node = ast_new_node(AST_WHILE_STMT, kw);
