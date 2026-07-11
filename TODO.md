@@ -68,23 +68,32 @@ Rules:
 - No retain/release on value-type fields or array elements.
 - Map to C types: `uint8_t`, `int32_t`, `float`, `double`, etc.
 
-### 7. C#-style ref/out parameters  [FIXED]
+### 7. C#-style ref/out/in parameters  [FIXED]
 
 Implemented pass-by-reference for local variables only.
 
 Syntax:
 
-- `void f(ref i32 x)` receives a pointer to a local `i32`.
+- `void f(ref i32 x)` receives a mutable pointer to a local `i32`.
 - `void f(out i32 x)` receives a pointer to a local `i32`; the caller does not
-  need to initialize it.
+  need to initialize it, but the callee must assign it on every control path.
+- `void f(in i32 x)` receives a read-only pointer to a local `i32`; direct
+  assignment to the parameter is rejected.
+
+Semantic checks:
+
+- `out` parameters are checked for definite assignment before every `return`
+  and before the function falls off the end.
+- `in` parameters cannot be passed to `ref`/`out` parameters and cannot be the
+  direct target of an assignment.
 
 Codegen rules:
 
-- `ref` / `out` parameters are emitted as C pointers (`T* name`).
-- Reading or writing a ref/out parameter dereferences the pointer.
-- A call argument matching a ref/out parameter must be a local variable
-  identifier.  Normal locals are passed as `&var`; an argument that is itself
-  a ref/out parameter is passed as its raw pointer.
+- `ref` / `out` / `in` parameters are emitted as C pointers (`T* name`).
+- Reading a ref-like parameter dereferences the pointer.
+- A call argument matching a ref-like parameter must be a local variable
+  identifier.  Normal locals are passed as `&var`; an argument that is itself a
+  ref-like parameter is passed as its raw pointer.
 - `void` is accepted as a function return type.
 
 ## Runtime Primitives

@@ -394,6 +394,14 @@ static AstNode* parse_var_decl(Parser* p) {
                     init->tok.line, init->tok.col);
             p->had_error = 1;
         }
+        if (init && init->kind == AST_ASSIGN && init->children[0]->kind == AST_IDENT) {
+            SymEntry* e = symtab_lookup(init->children[0]->tok.text);
+            if (e && e->type.is_in) {
+                fprintf(stderr, "error at %d:%d: cannot assign to in parameter '%s'\n",
+                        init->tok.line, init->tok.col, init->children[0]->tok.text);
+                p->had_error = 1;
+            }
+        }
         if (init && init->kind == AST_NEW && type.kind == TYPE_CLASS) {
             type.is_pointer = 1;
         }
@@ -403,6 +411,113 @@ static AstNode* parse_var_decl(Parser* p) {
     symtab_insert(name.text, type);
     expect(p, TOK_SEMI);
     return node;
+}
+
+/* ----------------------------------------------------------------
+   out-parameter definite-assignment check
+   ---------------------------------------------------------------- */
+
+static int out_param_index(const char* name, char names[][64], int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        if (strcmp(names[i], name) == 0) return i;
+    }
+    return -1;
+}
+
+static int analyze_out_assignments(AstNode* node, char out_names[][64], int out_count, int mask, int* had_error) {
+    if (!node) return mask;
+
+    switch (node->kind) {
+        case AST_ASSIGN: {
+            AstNode* lhs = node->children[0];
+            if (lhs && lhs->kind == AST_IDENT) {
+                int idx = out_param_index(lhs->tok.text, out_names, out_count);
+                if (idx >= 0) mask |= (1 << idx);
+            }
+            return mask;
+        }
+
+        case AST_EXPR_STMT: {
+            if (node->children[0] && node->children[0]->kind == AST_ASSIGN) {
+                AstNode* lhs = node->children[0]->children[0];
+                if (lhs && lhs->kind == AST_IDENT) {
+                    int idx = out_param_index(lhs->tok.text, out_names, out_count);
+                    if (idx >= 0) mask |= (1 << idx);
+                }
+            }
+            return mask;
+        }
+
+        case AST_BLOCK: {
+            AstNode* s = node->children[0];
+            while (s) {
+                mask = analyze_out_assignments(s, out_names, out_count, mask, had_error);
+                s = s->next;
+            }
+            return mask;
+        }
+
+        case AST_IF_STMT: {
+            int then_err = *had_error;
+            int else_err = *had_error;
+            int then_mask = analyze_out_assignments(node->children[1], out_names, out_count, mask, &then_err);
+            int else_mask = mask;
+            if (node->child_count > 2) {
+                else_mask = analyze_out_assignments(node->children[2], out_names, out_count, mask, &else_err);
+            }
+            if (then_err || else_err) *had_error = 1;
+            return then_mask & else_mask;
+        }
+
+        case AST_WHILE_STMT: {
+            /* A loop body does not guarantee assignment after the loop. */
+            analyze_out_assignments(node->children[1], out_names, out_count, mask, had_error);
+            return mask;
+        }
+
+        case AST_RETURN_STMT: {
+            int all_mask = (1 << out_count) - 1;
+            if ((mask & all_mask) != all_mask) {
+                int i;
+                for (i = 0; i < out_count; i++) {
+                    if (!(mask & (1 << i))) {
+                        fprintf(stderr, "error at %d:%d: out parameter '%s' is not assigned before return\n",
+                                node->tok.line, node->tok.col, out_names[i]);
+                    }
+                }
+                *had_error = 1;
+            }
+            return mask;
+        }
+
+        default:
+            return mask;
+    }
+}
+
+static int check_out_params_assigned(AstNode* body, char out_names[][64], int out_count) {
+    int all_mask;
+    int mask;
+    int had_error = 0;
+
+    if (out_count == 0) return 1;
+
+    all_mask = (1 << out_count) - 1;
+    mask = analyze_out_assignments(body, out_names, out_count, 0, &had_error);
+    if (had_error) return 0;
+
+    if ((mask & all_mask) != all_mask) {
+        int i;
+        for (i = 0; i < out_count; i++) {
+            if (!(mask & (1 << i))) {
+                fprintf(stderr, "error: out parameter '%s' may not be assigned on all control paths\n",
+                        out_names[i]);
+            }
+        }
+        return 0;
+    }
+    return 1;
 }
 
 static AstNode* parse_stmt(Parser* p) {
@@ -472,6 +587,14 @@ static AstNode* parse_stmt(Parser* p) {
                     expr->tok.line, expr->tok.col);
             p->had_error = 1;
         }
+        if (expr && expr_is_direct_assignment(expr) && expr->children[0]->kind == AST_IDENT) {
+            SymEntry* e = symtab_lookup(expr->children[0]->tok.text);
+            if (e && e->type.is_in) {
+                fprintf(stderr, "error at %d:%d: cannot assign to in parameter '%s'\n",
+                        expr->tok.line, expr->tok.col, expr->children[0]->tok.text);
+                p->had_error = 1;
+            }
+        }
         if (expr) {
             AstNode* es = ast_new_node(AST_EXPR_STMT, expr->tok);
             ast_add_child(es, expr);
@@ -539,14 +662,18 @@ static AstNode* parse_class_decl(Parser* p) {
                 do {
                     int is_ref = 0;
                     int is_out = 0;
+                    int is_in  = 0;
                     if (check(p, TOK_KW_REF)) {
                         is_ref = 1; advance(p);
                     } else if (check(p, TOK_KW_OUT)) {
                         is_out = 1; advance(p);
+                    } else if (check(p, TOK_KW_IN)) {
+                        is_in = 1; advance(p);
                     }
                     Type pt = parse_type(p);
                     pt.is_ref = is_ref;
                     pt.is_out = is_out;
+                    pt.is_in  = is_in;
                     if (!check(p, TOK_IDENT)) {
                         fprintf(stderr, "error at %d:%d: expected parameter name\n",
                                 p->current.line, p->current.col);
@@ -568,6 +695,21 @@ static AstNode* parse_class_decl(Parser* p) {
             expect(p, TOK_RPAREN);
 
             AstNode* mbody = parse_stmt(p);
+
+            {
+                char out_names[16][64];
+                int out_count = 0;
+                int i;
+                for (i = 0; i < mc; i++) {
+                    if (mpt[i].is_out && out_count < 16) {
+                        CHECK_STRSCPY(strscpy(out_names[out_count], mpn[i], sizeof(out_names[out_count])), "out parameter name too long");
+                        out_count++;
+                    }
+                }
+                if (!check_out_params_assigned(mbody, out_names, out_count)) {
+                    p->had_error = 1;
+                }
+            }
 
             symtab_exit_scope();
 
@@ -609,14 +751,18 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
         do {
             int is_ref = 0;
             int is_out = 0;
+            int is_in  = 0;
             if (check(p, TOK_KW_REF)) {
                 is_ref = 1; advance(p);
             } else if (check(p, TOK_KW_OUT)) {
                 is_out = 1; advance(p);
+            } else if (check(p, TOK_KW_IN)) {
+                is_in = 1; advance(p);
             }
             Type param_type = parse_type(p);
             param_type.is_ref = is_ref;
             param_type.is_out = is_out;
+            param_type.is_in  = is_in;
             if (!check(p, TOK_IDENT)) {
                 fprintf(stderr, "error at %d:%d: expected parameter name\n",
                         p->current.line, p->current.col);
@@ -638,6 +784,22 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     expect(p, TOK_RPAREN);
 
     AstNode* body = parse_stmt(p);
+
+    {
+        char out_names[16][64];
+        int out_count = 0;
+        int i;
+        for (i = 0; i < pc; i++) {
+            if (pt[i].is_out && out_count < 16) {
+                CHECK_STRSCPY(strscpy(out_names[out_count], pn[i], sizeof(out_names[out_count])), "out parameter name too long");
+                out_count++;
+            }
+        }
+        if (!check_out_params_assigned(body, out_names, out_count)) {
+            p->had_error = 1;
+        }
+    }
+
     symtab_exit_scope();
 
     symtab_add_func(name.text, ret_type, pc, pn, pt);
