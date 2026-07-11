@@ -681,11 +681,6 @@ static void cleanup_pop_scope(FILE* out, int indent) {
     cleanup_count = saved;
 }
 
-static void cleanup_reset(void) {
-    cleanup_count = 0;
-    cleanup_scope_depth = 0;
-}
-
 static void codegen_stmt(AstNode* node, FILE* out, int indent);
 
 static void indent_line(FILE* out, int indent) {
@@ -783,7 +778,6 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             codegen_expr(ret, out);
             fprintf(out, ");\n");
             cleanup_emit(out, indent);
-            cleanup_reset();
             indent_line(out, indent);
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
@@ -796,7 +790,6 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             codegen_expr(ret, out);
             fprintf(out, ";\n");
             cleanup_emit(out, indent);
-            cleanup_reset();
             indent_line(out, indent);
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
@@ -804,7 +797,6 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
         }
     } else {
         cleanup_emit(out, indent);
-        cleanup_reset();
         indent_line(out, indent);
         fprintf(out, "MY_POP();\n");
         indent_line(out, indent);
