@@ -406,6 +406,10 @@ static const char* cleanup_names[MAX_CLEANUP];
 static int         cleanup_count = 0;
 static int         assign_tmp_id = 0;
 
+#define MAX_SCOPE 64
+static int cleanup_scope_stack[MAX_SCOPE];
+static int cleanup_scope_depth = 0;
+
 static void cleanup_add(const char* name) {
     if (cleanup_count < MAX_CLEANUP) cleanup_names[cleanup_count++] = name;
 }
@@ -433,6 +437,29 @@ static void cleanup_remove(const char* name) {
 
 static void cleanup_clear(void) { cleanup_count = 0; }
 
+static void cleanup_push_scope(void) {
+    if (cleanup_scope_depth < MAX_SCOPE) {
+        cleanup_scope_stack[cleanup_scope_depth++] = cleanup_count;
+    }
+}
+
+static void cleanup_pop_scope(FILE* out, int indent) {
+    if (cleanup_scope_depth == 0) return;
+    int saved = cleanup_scope_stack[--cleanup_scope_depth];
+    int i;
+    for (i = cleanup_count - 1; i >= saved; i--) {
+        indent_line(out, indent);
+        fprintf(out, "mylang_release(%s);\n",
+                strcmp(cleanup_names[i], "this") == 0 ? "thiz" : cleanup_names[i]);
+    }
+    cleanup_count = saved;
+}
+
+static void cleanup_reset(void) {
+    cleanup_count = 0;
+    cleanup_scope_depth = 0;
+}
+
 static void cleanup_remove_from_expr(AstNode* expr) {
     if (!expr) return;
     if (expr->kind == AST_IDENT) {
@@ -458,6 +485,7 @@ static void indent_line(FILE* out, int indent) {
 static void codegen_body(AstNode* body, FILE* out, int indent) {
     indent_line(out, indent);
     fprintf(out, "{\n");
+    cleanup_push_scope();
     if (body->kind == AST_BLOCK) {
         AstNode* s = body->children[0];
         while (s) {
@@ -467,6 +495,7 @@ static void codegen_body(AstNode* body, FILE* out, int indent) {
     } else {
         codegen_stmt(body, out, indent + 1);
     }
+    cleanup_pop_scope(out, indent + 1);
     indent_line(out, indent);
     fprintf(out, "}\n");
 }
@@ -542,7 +571,7 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             codegen_expr(ret, out);
             fprintf(out, ");\n");
             cleanup_emit(out, indent);
-            cleanup_clear();
+            cleanup_reset();
             indent_line(out, indent);
             fprintf(out, "return _r;\n");
         } else {
@@ -553,13 +582,13 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             codegen_expr(ret, out);
             fprintf(out, ";\n");
             cleanup_emit(out, indent);
-            cleanup_clear();
+            cleanup_reset();
             indent_line(out, indent);
             fprintf(out, "return _mylang_ret;\n");
         }
     } else {
         cleanup_emit(out, indent);
-        cleanup_clear();
+        cleanup_reset();
         indent_line(out, indent);
         fprintf(out, "return;\n");
     }
@@ -688,7 +717,7 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
         char pt[128]; c_type_str(&p->resolved_type, pt, sizeof(pt));
         fprintf(out, "%s %s", pt, p->tok.text); p = p->next; } }
     fprintf(out, ")\n{\n");
-    cleanup_clear(); symtab_enter_scope();
+    cleanup_push_scope(); symtab_enter_scope();
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
     thiz_type.kind = TYPE_CLASS; strncpy(thiz_type.class_name, class_name, 63);
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
@@ -696,7 +725,7 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
         p = p->next; } }
     if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
         while (s) { codegen_stmt(s, out, 1); s = s->next; } }
-    cleanup_emit(out, 1);
+    cleanup_pop_scope(out, 1);
     symtab_exit_scope(); fprintf(out, "}\n\n");
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
@@ -733,7 +762,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     fprintf(out, ")\n");
 
     /* body */
-    cleanup_clear();
+    cleanup_push_scope();
     fprintf(out, "{\n");
 
     symtab_enter_scope();
@@ -756,7 +785,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         }
     }
 
-    cleanup_emit(out, 1);
+    cleanup_pop_scope(out, 1);
     symtab_exit_scope();
     fprintf(out, "}\n\n");
 }

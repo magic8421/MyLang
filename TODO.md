@@ -18,12 +18,15 @@
   other nested expression contexts, so the old unsafe codegen path is no
   longer reachable there.
 
-### 2. Cleanup list is function-global, not scope-aware
+### 2. Cleanup list is function-global, not scope-aware  [FIXED]
 
 - Class locals inside `if` / `while` blocks are released at function end
 - Repro: `if (1) { Box b = new Box; }` -> C compile error: `b` undeclared
 - Repro: `while (...) { Box b = new Box; }` -> duplicate cleanup entries -> leak + double free
-- Fix: push/pop cleanup_count per block, emit cleanup at block exit
+- Fix: added `cleanup_push_scope()` / `cleanup_pop_scope()`; every block (function,
+  method, `if`/`while` body) now releases its own class locals on exit.
+- `return` statements use `cleanup_reset()` so early returns still clean up all
+  enclosing scopes correctly.
 
 ### 3. Call guards re-evaluate side-effecting non-local arguments
 
