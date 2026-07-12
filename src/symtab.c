@@ -4,11 +4,12 @@
 #include <stdlib.h>
 #include <stdio.h>
 
-static Scope*       current_scope = NULL;
-static int          scope_counter = 0;
-static ClassInfo*  class_list   = NULL;
-static StructInfo* struct_list  = NULL;
-static FuncInfo*    func_list     = NULL;
+static Scope*         current_scope = NULL;
+static int            scope_counter = 0;
+static ClassInfo*     class_list    = NULL;
+static StructInfo*    struct_list   = NULL;
+InterfaceInfo*        interface_list = NULL;
+static FuncInfo*      func_list     = NULL;
 
 static unsigned hash_string(const char* s) {
     unsigned h = 5381;
@@ -175,4 +176,55 @@ MethodInfo* symtab_find_method(const char* class_name, const char* method_name) 
         m = m->next;
     }
     return NULL;
+}
+
+void symtab_add_interface(const char* name, InterfaceInfo* info) {
+    info->next = interface_list;
+    interface_list = info;
+}
+
+InterfaceInfo* symtab_find_interface(const char* name) {
+    InterfaceInfo* s = interface_list;
+    while (s) {
+        if (strcmp(s->name, name) == 0) return s;
+        s = s->next;
+    }
+    return NULL;
+}
+
+void symtab_add_interface_method(InterfaceInfo* iface, const char* name,
+                                  Type ret_type, int pc,
+                                  const char pn[][64], const Type pt[]) {
+    if (iface->method_count >= MAX_IFACE_METHODS) return;
+    InterfaceMethodInfo* m = &iface->methods[iface->method_count++];
+    CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "interface method name too long");
+    m->return_type = ret_type;
+    m->param_count = pc;
+    int i;
+    for (i = 0; i < pc && i < 16; i++) {
+        CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
+        m->param_types[i] = pt[i];
+    }
+}
+
+InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
+                                                   const char* method_name) {
+    int i;
+    for (i = 0; i < iface->method_count; i++) {
+        if (strcmp(iface->methods[i].name, method_name) == 0) {
+            return &iface->methods[i];
+        }
+    }
+    return NULL;
+}
+
+void symtab_add_class_impl(ClassInfo* cls, const char* iface_name) {
+    if (cls->impl_count >= MAX_IMPL) {
+        fprintf(stderr, "error: class '%s' implements too many interfaces (max %d)\n",
+                cls->name, MAX_IMPL);
+        return;
+    }
+    CHECK_STRSCPY(strscpy(cls->impl_names[cls->impl_count], iface_name,
+                          sizeof(cls->impl_names[0])), "interface name too long");
+    cls->impl_count++;
 }

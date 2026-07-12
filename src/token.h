@@ -27,6 +27,8 @@ typedef enum {
     TOK_KW_NEW,
     TOK_KW_CLASS,
     TOK_KW_THIS,
+    TOK_KW_INTERFACE,
+    TOK_KW_AS,
 
     TOK_PLUS,
     TOK_MINUS,
@@ -53,6 +55,7 @@ typedef enum {
     TOK_SEMI,
     TOK_COMMA,
     TOK_DOT,
+    TOK_COLON,
 } TokenKind;
 
 typedef struct {

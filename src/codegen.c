@@ -6,6 +6,7 @@
 
 static const char* g_source_file = "";
 static char        g_source_file_escaped[1024];
+static Type        g_return_type;
 
 static void escape_source_file(const char* src) {
     size_t i, j;
@@ -32,6 +33,7 @@ static const char* c_base_name(const Type* t) {
         case TYPE_F64:   return "double";
         case TYPE_CLASS: return t->class_name;
         case TYPE_STRUCT: return t->class_name;
+        case TYPE_INTERFACE: return t->class_name;
         case TYPE_VOID:  return "void";
         default:         return "int32_t";
     }
@@ -39,7 +41,9 @@ static const char* c_base_name(const Type* t) {
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
     int n;
-    if (t->array_size > 0) {
+    if (t->kind == TYPE_INTERFACE) {
+        n = snprintf(buf, bufsz, "%s", t->class_name);
+    } else if (t->array_size > 0) {
         /* fixed-size array declared as T name[N] */
         n = snprintf(buf, bufsz, "%s", c_base_name(t));
     } else if (t->kind == TYPE_CLASS && t->is_array && t->is_pointer) {
@@ -156,6 +160,12 @@ static Type resolve_type(AstNode* node) {
                 } else if (obj->resolved_type.kind == TYPE_CLASS) {
                     MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mem->tok.text);
                     if (mi) { t = mi->return_type; }
+                } else if (obj->resolved_type.kind == TYPE_INTERFACE) {
+                    InterfaceInfo* ii = symtab_find_interface(obj->resolved_type.class_name);
+                    if (ii) {
+                        InterfaceMethodInfo* im = symtab_find_interface_method(ii, mem->tok.text);
+                        if (im) { t = im->return_type; }
+                    }
                 }
             } else {
                 FuncInfo* fi = symtab_find_func(node->children[0]->tok.text);
@@ -175,6 +185,11 @@ static Type resolve_type(AstNode* node) {
             break;
 
         case AST_VAR_DECL:
+            t = node->resolved_type;
+            break;
+
+        case AST_AS_CAST:
+            resolve_type(node->children[0]);
             t = node->resolved_type;
             break;
 
@@ -270,6 +285,31 @@ static void codegen_call(AstNode* node, FILE* out) {
                 Type expected;
                 memset(&expected, 0, sizeof(expected));
                 if (mi && idx < mi->param_count) expected = mi->param_types[idx];
+                codegen_call_arg(args, &expected, out);
+                idx++;
+                args = args->next;
+            }
+            fprintf(out, ")");
+            return;
+        }
+        if (obj->resolved_type.kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(obj->resolved_type.class_name);
+            InterfaceMethodInfo* im = NULL;
+            if (ii) im = symtab_find_interface_method(ii, mname);
+
+            fprintf(out, "(");
+            codegen_expr(obj, out);
+            fprintf(out, ").vtable->%s((", mname);
+            codegen_expr(obj, out);
+            fprintf(out, ").data");
+
+            AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+            int idx = 0;
+            while (args) {
+                fprintf(out, ", ");
+                Type expected;
+                memset(&expected, 0, sizeof(expected));
+                if (im && idx < im->param_count) expected = im->param_types[idx];
                 codegen_call_arg(args, &expected, out);
                 idx++;
                 args = args->next;
@@ -492,6 +532,41 @@ static void codegen_expr(AstNode* node, FILE* out) {
                 fprintf(out, " = ");
                 codegen_expr(rhs, out);
                 fprintf(out, ")))");
+            } else if (lt.kind == TYPE_INTERFACE) {
+                resolve_type(rhs);
+                Type rt = rhs->resolved_type;
+                int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+                int rhs_local = (rhs->kind == AST_IDENT && symtab_lookup(rhs->tok.text) != NULL);
+
+                fprintf(out, "((void)");
+                if (rt.kind == TYPE_CLASS) {
+                    if (!rhs_owned && !rhs_local) {
+                        fprintf(out, "mylang_retain(");
+                        codegen_expr(rhs, out);
+                        fprintf(out, "), ");
+                    }
+                    fprintf(out, "mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, ".data), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, ".data = ");
+                    codegen_expr(rhs, out);
+                    fprintf(out, ", ");
+                    codegen_expr(lhs, out);
+                    fprintf(out, ".vtable = &%s_%s_vtable", rt.class_name, lt.class_name);
+                    fprintf(out, "))");
+                } else {
+                    if (!rhs_owned && !rhs_local && rhs->kind == AST_IDENT) {
+                        fprintf(out, "mylang_retain(%s.data), ", rhs->tok.text);
+                    }
+                    fprintf(out, "mylang_release(");
+                    codegen_expr(lhs, out);
+                    fprintf(out, ".data), (");
+                    codegen_expr(lhs, out);
+                    fprintf(out, " = ");
+                    codegen_expr(rhs, out);
+                    fprintf(out, ")))");
+                }
             } else {
                 codegen_expr(lhs, out);
                 fprintf(out, " = ");
@@ -511,6 +586,23 @@ static void codegen_expr(AstNode* node, FILE* out) {
         case AST_NEW:
             codegen_new(node, out);
             break;
+        case AST_AS_CAST: {
+            AstNode* obj = node->children[0];
+            resolve_type(obj);
+            Type target = node->resolved_type;
+            if (target.kind == TYPE_CLASS) {
+                ClassInfo* ci = symtab_find_class(target.class_name);
+                fprintf(out, "((");
+                codegen_expr(obj, out);
+                fprintf(out, ").vtable->concrete_type_id == %u ? (%s*)(",
+                        ci ? (unsigned)ci->type_id : 0, target.class_name);
+                codegen_expr(obj, out);
+                fprintf(out, ").data : NULL)");
+            } else {
+                fprintf(out, "/* as-cast unsupported target */");
+            }
+            break;
+        }
         default:
             fprintf(out, "/* ??? */");
             break;
@@ -556,7 +648,8 @@ static int guard_tmp_id = 0;
 
 static int call_needs_guard(AstNode* arg) {
     resolve_type(arg);
-    if (arg->resolved_type.kind != TYPE_CLASS) return 0;
+    TypeKind k = arg->resolved_type.kind;
+    if (k != TYPE_CLASS && k != TYPE_INTERFACE) return 0;
     if (arg->kind == AST_ASSIGN) return 0;
     if (arg->kind == AST_IDENT && symtab_lookup(arg->tok.text)) return 0;
     return 1;
@@ -661,6 +754,7 @@ static void emit_stmt_call_releases(AstNode* expr, FILE* out, int indent) {
 typedef struct {
     const char* name;
     int         is_weak;
+    int         is_interface;
 } CleanupEntry;
 static CleanupEntry cleanup_entries[MAX_CLEANUP];
 static int          cleanup_count = 0;
@@ -670,10 +764,11 @@ static int          assign_tmp_id = 0;
 static int cleanup_scope_stack[MAX_SCOPE];
 static int cleanup_scope_depth = 0;
 
-static void cleanup_add(const char* name, int is_weak) {
+static void cleanup_add(const char* name, int is_weak, int is_interface) {
     if (cleanup_count < MAX_CLEANUP) {
         cleanup_entries[cleanup_count].name = name;
         cleanup_entries[cleanup_count].is_weak = is_weak;
+        cleanup_entries[cleanup_count].is_interface = is_interface;
         cleanup_count++;
     }
 }
@@ -686,6 +781,8 @@ static void cleanup_emit(FILE* out, int indent) {
         if (cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (cleanup_entries[i].is_interface) {
+            fprintf(out, "mylang_release(%s.data);\n", name);
         } else {
             fprintf(out, "mylang_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
@@ -709,6 +806,8 @@ static void cleanup_pop_scope(FILE* out, int indent) {
         if (cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (cleanup_entries[i].is_interface) {
+            fprintf(out, "mylang_release(%s.data);\n", name);
         } else {
             fprintf(out, "mylang_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
@@ -775,7 +874,51 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
                 fprintf(out, ");\n");
             }
         }
-        cleanup_add(node->tok.text, 1);
+        cleanup_add(node->tok.text, 1, 0);
+        return;
+    }
+
+    if (type.kind == TYPE_INTERFACE) {
+        if (node->child_count > 0) {
+            AstNode* init = node->children[0];
+            resolve_type(init);
+            int rhs_owned = (init->kind == AST_CALL || init->kind == AST_NEW);
+
+            if (init->resolved_type.kind == TYPE_CLASS) {
+                indent_line(out, indent);
+                fprintf(out, "%s %s;\n", type.class_name, node->tok.text);
+                indent_line(out, indent);
+                fprintf(out, "%s.data = (void*)", node->tok.text);
+                if (!rhs_owned) fprintf(out, "mylang_retain(");
+                codegen_expr(init, out);
+                if (!rhs_owned) fprintf(out, ")");
+                fprintf(out, ";\n");
+                indent_line(out, indent);
+                fprintf(out, "%s.vtable = &%s_%s_vtable;\n",
+                        node->tok.text,
+                        init->resolved_type.class_name,
+                        type.class_name);
+            } else if (init->resolved_type.kind == TYPE_INTERFACE) {
+                int tmp_id = assign_tmp_id++;
+                indent_line(out, indent);
+                fprintf(out, "%s _init%d = ", type.class_name, tmp_id);
+                codegen_expr(init, out);
+                fprintf(out, ";\n");
+                if (!rhs_owned) {
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_retain(_init%d.data);\n", tmp_id);
+                }
+                indent_line(out, indent);
+                fprintf(out, "%s %s = _init%d;\n", type.class_name, node->tok.text, tmp_id);
+            } else {
+                indent_line(out, indent);
+                fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->tok.text);
+            }
+        } else {
+            indent_line(out, indent);
+            fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->tok.text);
+        }
+        cleanup_add(node->tok.text, 0, 1);
         return;
     }
 
@@ -806,10 +949,10 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
 
     if ((type.kind == TYPE_CLASS && type.is_pointer && !type.is_array) ||
         (type.is_array && type.array_size == 0)) {
-        cleanup_add(node->tok.text, 0);
+        cleanup_add(node->tok.text, 0, 0);
     }
     if (type.is_weak) {
-        cleanup_add(node->tok.text, 1);
+        cleanup_add(node->tok.text, 1, 0);
     }
 }
 
@@ -843,7 +986,27 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
         emit_bounds_checks(ret, out, indent);
         resolve_type(ret);
 
-        if (ret->resolved_type.kind == TYPE_CLASS) {
+        if (ret->resolved_type.kind == TYPE_CLASS &&
+            g_return_type.kind == TYPE_INTERFACE) {
+            /* implicit class-to-interface conversion in return */
+            int tid = assign_tmp_id++;
+            indent_line(out, indent);
+            fprintf(out, "void* _r = mylang_retain(");
+            codegen_expr(ret, out);
+            fprintf(out, ");\n");
+            indent_line(out, indent);
+            fprintf(out, "%s _iret%d;\n", g_return_type.class_name, tid);
+            indent_line(out, indent);
+            fprintf(out, "_iret%d.data = _r;\n", tid);
+            indent_line(out, indent);
+            fprintf(out, "_iret%d.vtable = &%s_%s_vtable;\n",
+                    tid, ret->resolved_type.class_name, g_return_type.class_name);
+            cleanup_emit(out, indent);
+            indent_line(out, indent);
+            fprintf(out, "MY_POP();\n");
+            indent_line(out, indent);
+            fprintf(out, "return _iret%d;\n", tid);
+        } else if (ret->resolved_type.kind == TYPE_CLASS) {
             indent_line(out, indent);
             fprintf(out, "void* _r = mylang_retain(");
             codegen_expr(ret, out);
@@ -853,6 +1016,21 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
             fprintf(out, "return _r;\n");
+        } else if (ret->resolved_type.kind == TYPE_INTERFACE) {
+            char tbuf[128];
+            c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
+            int tid = assign_tmp_id++;
+            indent_line(out, indent);
+            fprintf(out, "%s _iret%d = ", tbuf, tid);
+            codegen_expr(ret, out);
+            fprintf(out, ";\n");
+            indent_line(out, indent);
+            fprintf(out, "mylang_retain(_iret%d.data);\n", tid);
+            cleanup_emit(out, indent);
+            indent_line(out, indent);
+            fprintf(out, "MY_POP();\n");
+            indent_line(out, indent);
+            fprintf(out, "return _iret%d;\n", tid);
         } else {
             char tbuf[128];
             c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
@@ -956,6 +1134,51 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
             emit_stmt_call_releases(expr, out, indent);
             return;
         }
+
+        if (lhs->kind == AST_IDENT && lt.kind == TYPE_INTERFACE) {
+            emit_stmt_call_retains(expr, out, indent);
+            resolve_type(rhs);
+            Type rt = rhs->resolved_type;
+
+            int id = assign_tmp_id++;
+            int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+
+            if (rt.kind == TYPE_CLASS) {
+                indent_line(out, indent);
+                fprintf(out, "void* _iassign_%d = ", id);
+                if (!rhs_owned) fprintf(out, "mylang_retain(");
+                codegen_expr(rhs, out);
+                if (!rhs_owned) fprintf(out, ")");
+                fprintf(out, ";\n");
+
+                indent_line(out, indent);
+                fprintf(out, "mylang_release(%s.data);\n", lhs->tok.text);
+                indent_line(out, indent);
+                fprintf(out, "%s.data = _iassign_%d;\n", lhs->tok.text, id);
+                indent_line(out, indent);
+                fprintf(out, "%s.vtable = &%s_%s_vtable;\n",
+                        lhs->tok.text, rt.class_name, lt.class_name);
+            } else {
+                indent_line(out, indent);
+                fprintf(out, "%s _iassign_%d = ", c_base_name(&lt), id);
+                codegen_expr(rhs, out);
+                fprintf(out, ";\n");
+
+                if (!rhs_owned) {
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_retain(_iassign_%d.data);\n", id);
+                }
+
+                indent_line(out, indent);
+                fprintf(out, "mylang_release(%s.data);\n", lhs->tok.text);
+                indent_line(out, indent);
+                codegen_expr(lhs, out);
+                fprintf(out, " = _iassign_%d;\n", id);
+            }
+
+            emit_stmt_call_releases(expr, out, indent);
+            return;
+        }
     }
 
     emit_stmt_call_retains(expr, out, indent);
@@ -966,6 +1189,12 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
         fprintf(out, "(void)mylang_release(");
         codegen_expr(expr, out);
         fprintf(out, ")");
+    } else if (expr->kind == AST_CALL && expr->resolved_type.kind == TYPE_INTERFACE) {
+        /* discarded interface return: save to temp, release .data */
+        int dtid = assign_tmp_id++;
+        fprintf(out, "%s _dt%d = ", c_base_name(&expr->resolved_type), dtid);
+        codegen_expr(expr, out);
+        fprintf(out, "; (void)mylang_release(_dt%d.data)", dtid);
     } else {
         codegen_expr(expr, out);
     }
@@ -1006,16 +1235,109 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
 
 static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name);
 
+static void codegen_interface_typedefs(FILE* out) {
+    extern InterfaceInfo* interface_list;
+    InterfaceInfo* ii = interface_list;
+    while (ii) {
+        /* VTable typedef */
+        fprintf(out, "typedef struct %sVTable {\n", ii->name);
+        fprintf(out, "    uint32_t concrete_type_id;\n");
+        int j;
+        for (j = 0; j < ii->method_count; j++) {
+            InterfaceMethodInfo* im = &ii->methods[j];
+            char rbuf[128];
+            c_type_str(&im->return_type, rbuf, sizeof(rbuf));
+            fprintf(out, "    %s (*%s)(void* thiz", rbuf, im->name);
+            int k;
+            for (k = 0; k < im->param_count; k++) {
+                char pbuf[128];
+                c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
+                if (im->param_types[k].is_ref) {
+                    fprintf(out, ", %s*", pbuf);
+                } else {
+                    fprintf(out, ", %s", pbuf);
+                }
+            }
+            fprintf(out, ");\n");
+        }
+        fprintf(out, "} %sVTable;\n\n", ii->name);
+
+        /* Fat pointer typedef */
+        fprintf(out, "typedef struct {\n");
+        fprintf(out, "    void* data;\n");
+        fprintf(out, "    const %sVTable* vtable;\n", ii->name);
+        fprintf(out, "} %s;\n\n", ii->name);
+        ii = ii->next;
+    }
+}
+
+static void codegen_class_interface_vtables(ClassInfo* ci, FILE* out) {
+    int i;
+    for (i = 0; i < ci->impl_count; i++) {
+        const char* iface_name = ci->impl_names[i];
+        InterfaceInfo* ii = symtab_find_interface(iface_name);
+        if (!ii) continue;
+
+        /* emit thunk functions */
+        int j;
+        for (j = 0; j < ii->method_count; j++) {
+            InterfaceMethodInfo* im = &ii->methods[j];
+            char rbuf[128];
+            c_type_str(&im->return_type, rbuf, sizeof(rbuf));
+
+            /* static RetType Class_IFace_method(void* thiz, params...) */
+            fprintf(out, "static %s %s_%s_%s(void* _p", rbuf, ci->name, iface_name, im->name);
+            int k;
+            for (k = 0; k < im->param_count; k++) {
+                char pbuf[128];
+                c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
+                if (im->param_types[k].is_ref) {
+                    fprintf(out, ", %s* _a%d", pbuf, k);
+                } else {
+                    fprintf(out, ", %s _a%d", pbuf, k);
+                }
+            }
+            fprintf(out, ") {\n");
+
+            /* call actual method */
+            fprintf(out, "    ");
+            if (im->return_type.kind != TYPE_VOID) {
+                fprintf(out, "return ");
+            }
+            fprintf(out, "%s_%s((%s*)_p", ci->name, im->name, ci->name);
+            for (k = 0; k < im->param_count; k++) {
+                fprintf(out, ", _a%d", k);
+            }
+            fprintf(out, ");\n");
+            fprintf(out, "}\n\n");
+        }
+
+        /* emit static vtable */
+        fprintf(out, "static const %sVTable %s_%s_vtable = {\n", iface_name, ci->name, iface_name);
+        fprintf(out, "    .concrete_type_id = %u,\n", (unsigned)ci->type_id);
+        for (j = 0; j < ii->method_count; j++) {
+            fprintf(out, "    .%s = %s_%s_%s", ii->methods[j].name, ci->name, iface_name, ii->methods[j].name);
+            if (j < ii->method_count - 1) fprintf(out, ",");
+            fprintf(out, "\n");
+        }
+        fprintf(out, "};\n\n");
+    }
+}
+
 static void codegen_struct_decl(AstNode* node, FILE* out) {
     StructInfo* si = symtab_find_struct(node->tok.text);
     if (!si) return;
 
     fprintf(out, "typedef struct {\n");
     int i;
-    for (i = 0; i < si->field_count; i++) {
-        char ftype_buf[128];
-        c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
-        fprintf(out, "    %s %s;\n", ftype_buf, si->field_names[i]);
+    if (si->field_count == 0) {
+        fprintf(out, "    char _pad;\n");
+    } else {
+        for (i = 0; i < si->field_count; i++) {
+            char ftype_buf[128];
+            c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
+            fprintf(out, "    %s %s;\n", ftype_buf, si->field_names[i]);
+        }
     }
     fprintf(out, "} %s;\n\n", node->tok.text);
 }
@@ -1026,10 +1348,14 @@ static void codegen_class_decl(AstNode* node, FILE* out) {
 
     fprintf(out, "typedef struct {\n");
     int i;
-    for (i = 0; i < ci->field_count; i++) {
-        char ftype_buf[128];
-        c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
-        fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
+    if (ci->field_count == 0) {
+        fprintf(out, "    char _pad;\n");
+    } else {
+        for (i = 0; i < ci->field_count; i++) {
+            char ftype_buf[128];
+            c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
+            fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
+        }
     }
     fprintf(out, "} %s;\n\n", node->tok.text);
 
@@ -1039,6 +1365,9 @@ static void codegen_class_decl(AstNode* node, FILE* out) {
         codegen_method_decl(m, out, node->tok.text);
         m = m->next;
     }
+
+    /* emit interface thunks and vtables */
+    codegen_class_interface_vtables(ci, out);
 }
 
 
@@ -1059,6 +1388,8 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
         p = p->next; } }
     fprintf(out, ")\n{\n");
     cleanup_push_scope(); symtab_enter_scope();
+    Type prev_ret = g_return_type;
+    g_return_type = node->resolved_type;
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
     thiz_type.kind = TYPE_CLASS;
     CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
@@ -1080,6 +1411,7 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     indent_line(out, 1);
     fprintf(out, "MY_POP();\n");
     fprintf(out, "}\n\n");
+    g_return_type = prev_ret;
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
     /* return type */
@@ -1124,6 +1456,9 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
 
     symtab_enter_scope();
 
+    Type prev_ret = g_return_type;
+    g_return_type = node->resolved_type;
+
     /* register parameters in scope */
     {
         AstNode* p = params;
@@ -1155,6 +1490,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     indent_line(out, 1);
     fprintf(out, "MY_POP();\n");
     fprintf(out, "}\n\n");
+    g_return_type = prev_ret;
 }
 
 void codegen_program(AstNode* program, FILE* out, const char* source_file) {
@@ -1353,6 +1689,8 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "    mylang_check_bounds(arr, idx, file, line);\n");
     fprintf(out, "    return (char*)arr + idx * elem_size;\n");
     fprintf(out, "}\n\n");
+
+    codegen_interface_typedefs(out);
 
     AstNode* decl = program->children[0];
     while (decl) {

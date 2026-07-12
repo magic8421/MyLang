@@ -41,7 +41,9 @@ static int expr_is_direct_assignment(AstNode* node) {
 }
 
 static int is_type_name(const char* name) {
-    return symtab_find_class(name) != NULL || symtab_find_struct(name) != NULL;
+    return symtab_find_class(name) != NULL ||
+           symtab_find_struct(name) != NULL ||
+           symtab_find_interface(name) != NULL;
 }
 
 /* ================================================================
@@ -132,6 +134,14 @@ static Type parse_type(Parser* p) {
         StructInfo* si = symtab_find_struct(p->current.text);
         if (si) t.type_id = si->type_id;
         advance(p);
+    } else if (check(p, TOK_IDENT) && symtab_find_interface(p->current.text)) {
+        t.kind = TYPE_INTERFACE;
+        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "interface name too long");
+        t.class_name[63] = '\0';
+        t.is_pointer = 0;
+        InterfaceInfo* ii = symtab_find_interface(p->current.text);
+        if (ii) t.type_id = ii->type_id;
+        advance(p);
     } else {
         t.kind = TYPE_VOID;
     }
@@ -207,9 +217,11 @@ static AstNode* parse_primary(Parser* p) {
             if (si) {
                 base.kind = TYPE_STRUCT;
                 base.type_id = si->type_id;
+            } else if (ci) {
+                base.kind = TYPE_CLASS;
+                base.type_id = ci->type_id;
             } else {
                 base.kind = TYPE_CLASS;
-                (void)ci;
             }
             CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "type name too long");
             base.class_name[63] = '\0';
@@ -288,6 +300,21 @@ static AstNode* parse_postfix(Parser* p) {
             break;
         }
     }
+
+    if (check(p, TOK_KW_AS)) {
+        Token t = p->current; advance(p);
+        Type target = parse_type(p);
+        if (target.kind == TYPE_VOID && !p->had_error) {
+            fprintf(stderr, "error at %d:%d: expected type name after 'as'\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        }
+        AstNode* cast = ast_new_node(AST_AS_CAST, t);
+        ast_add_child(cast, node);
+        cast->resolved_type = target;
+        node = cast;
+    }
+
     return node;
 }
 
@@ -582,7 +609,6 @@ static AstNode* parse_class_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
-    expect(p, TOK_LBRACE);
 
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
@@ -592,7 +618,25 @@ static AstNode* parse_class_decl(Parser* p) {
     /* register early so methods with this return type resolve */
     symtab_add_class(name.text, info);
 
+    /* parse optional interface implementation list */
+    if (check(p, TOK_COLON)) {
+        advance(p);
+        do {
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "error at %d:%d: expected interface name after ':'\n",
+                        p->current.line, p->current.col);
+                p->had_error = 1;
+                break;
+            }
+            Token iface_tok = p->current; advance(p);
+            symtab_add_class_impl(info, iface_tok.text);
+        } while (check(p, TOK_COMMA) && (advance(p), 1));
+    }
+
+    expect(p, TOK_LBRACE);
+
     AstNode* methods = NULL;
+    // ... rest of class parsing (remove old info creation since moved above)
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         Type ft = parse_type(p);
@@ -679,6 +723,94 @@ static AstNode* parse_class_decl(Parser* p) {
     return node;
 }
 
+static AstNode* parse_interface_decl(Parser* p) {
+    advance(p); /* interface */
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "error at %d:%d: expected interface name\n",
+                p->current.line, p->current.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    Token name = p->current; advance(p);
+
+    /* check name conflicts */
+    if (symtab_find_class(name.text) || symtab_find_struct(name.text) ||
+        symtab_find_interface(name.text)) {
+        fprintf(stderr, "error at %d:%d: type '%s' already defined\n",
+                p->current.line, p->current.col, name.text);
+        p->had_error = 1;
+    }
+
+    expect(p, TOK_LBRACE);
+
+    InterfaceInfo* info = calloc(1, sizeof(InterfaceInfo));
+    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
+    info->name[63] = '\0';
+    info->type_id = next_type_id++;
+
+    /* register early for self-referential use (unlikely for interfaces,
+       but consistent with class/struct registration) */
+    symtab_add_interface(name.text, info);
+
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        Type ret_type = parse_type(p);
+        if (ret_type.kind == TYPE_VOID) {
+            /* allow void return type */
+        }
+
+        if (!check(p, TOK_IDENT)) {
+            fprintf(stderr, "error at %d:%d: expected method name in interface\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            break;
+        }
+        Token mname = p->current; advance(p);
+
+        expect(p, TOK_LPAREN);
+
+        int mc = 0;
+        char mpn[16][64];
+        Type mpt[16];
+
+        if (!check(p, TOK_RPAREN)) {
+            do {
+                int is_ref = 0;
+                if (check(p, TOK_KW_REF)) {
+                    is_ref = 1; advance(p);
+                }
+                Type pt = parse_type(p);
+                pt.is_ref = is_ref;
+                if (!check(p, TOK_IDENT)) {
+                    fprintf(stderr, "error at %d:%d: expected parameter name in interface method\n",
+                            p->current.line, p->current.col);
+                    p->had_error = 1;
+                    break;
+                }
+                Token pn = p->current; advance(p);
+                if (mc < 16) {
+                    CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
+                    mpt[mc] = pt;
+                    mc++;
+                }
+            } while (check(p, TOK_COMMA) && (advance(p), 1));
+        }
+        expect(p, TOK_RPAREN);
+        expect(p, TOK_SEMI);
+
+        symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt);
+    }
+
+    expect(p, TOK_RBRACE);
+
+    AstNode* node = ast_new_node(AST_INTERFACE_DECL, name);
+    node->resolved_type.kind = TYPE_INTERFACE;
+    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text,
+                          sizeof(node->resolved_type.class_name)),
+                  "interface name too long");
+    return node;
+}
+
 static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     Token name = p->current; advance(p);
     expect(p, TOK_LPAREN);
@@ -736,6 +868,10 @@ static AstNode* parse_top_level(Parser* p) {
 
     if (check(p, TOK_KW_STRUCT)) {
         return parse_struct_decl(p);
+    }
+
+    if (check(p, TOK_KW_INTERFACE)) {
+        return parse_interface_decl(p);
     }
 
     if (is_primitive_type_token(p) ||

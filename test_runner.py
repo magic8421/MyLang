@@ -815,6 +815,268 @@ i32 main() {
     return read(obj);
 }
 """, 7),
+
+    # ----------- interface tests -----------
+
+    ("iface_basic", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 6;
+    IShape s = sq;
+    return s.area();
+}
+""", 36),
+
+    ("iface_multi_method", """
+interface ICalc {
+    i32 add(i32 x, i32 y);
+    i32 mul(i32 x, i32 y);
+}
+class Op : ICalc {
+    i32 add(i32 x, i32 y) { return x + y; }
+    i32 mul(i32 x, i32 y) { return x * y; }
+}
+i32 main() {
+    Op op = new Op;
+    ICalc c = op;
+    i32 a = c.add(10, 2);
+    i32 b = c.mul(10, 2);
+    return a + b;
+}
+""", 32),
+
+    ("iface_polymorphic", """
+interface IMath {
+    i32 compute(i32 x, i32 y);
+}
+class Adder : IMath {
+    i32 compute(i32 x, i32 y) { return x + y; }
+}
+class Multiplier : IMath {
+    i32 compute(i32 x, i32 y) { return x * y; }
+}
+i32 main() {
+    Adder a = new Adder;
+    Multiplier m = new Multiplier;
+    IMath im = a;
+    i32 r1 = im.compute(3, 4);
+    IMath im2 = m;
+    i32 r2 = im2.compute(3, 4);
+    return r1 + r2;
+}
+""", 19),
+
+    ("iface_as", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 7;
+    IShape s = sq;
+    Square s2 = s as Square;
+    return s2.side;
+}
+""", 7),
+
+    ("iface_as_wrong_type", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    IShape s = sq;
+    Circle c = s as Circle;
+    if (!c) {
+        return 1;
+    }
+    return 0;
+}
+""", 1),
+
+    ("iface_func_param", """
+interface IShape {
+    i32 area();
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 getArea(IShape s) {
+    return s.area();
+}
+i32 main() {
+    Circle c = new Circle;
+    c.radius = 3;
+    IShape s = c;
+    return getArea(s);
+}
+""", 27),
+
+    ("iface_return", """
+interface IShape {
+    i32 area();
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+IShape makeShape(i32 r) {
+    Circle c = new Circle;
+    c.radius = r;
+    return c;
+}
+i32 main() {
+    IShape s = makeShape(4);
+    return s.area();
+}
+""", 48),
+
+    ("iface_multi_impl", """
+interface IArea {
+    i32 area();
+}
+interface IPerim {
+    i32 perim();
+}
+class Rect : IArea, IPerim {
+    i32 w;
+    i32 h;
+    i32 area() { return this.w * this.h; }
+    i32 perim() { return 2 * (this.w + this.h); }
+}
+i32 main() {
+    Rect r = new Rect;
+    r.w = 3;
+    r.h = 5;
+    IArea a = r;
+    IPerim p = r;
+    return a.area() + p.perim();
+}
+""", 31),
+
+    ("iface_assign", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    Box b1 = new Box;
+    b1.v = 10;
+    Box b2 = new Box;
+    b2.v = 20;
+    IVal iv = b1;
+    i32 r1 = iv.get();
+    iv = b2;
+    i32 r2 = iv.get();
+    return r1 + r2;
+}
+""", 30),
+
+    ("iface_ref_param", """
+interface IInc {
+    void inc(ref i32 x);
+}
+class Counter : IInc {
+    void inc(ref i32 x) {
+        x = x + 1;
+    }
+}
+i32 main() {
+    Counter c = new Counter;
+    IInc inc = c;
+    i32 v = 10;
+    inc.inc(v);
+    return v;
+}
+""", 11),
+
+    ("iface_ref_method", """
+interface ISetter {
+    void set(i32 v);
+    i32 get();
+}
+class Holder : ISetter {
+    i32 val;
+    void set(i32 v) { this.val = v; }
+    i32 get() { return this.val; }
+}
+i32 main() {
+    Holder h = new Holder;
+    ISetter is = h;
+    is.set(42);
+    return is.get();
+}
+""", 42),
+
+    ("iface_void_method", """
+interface IDisplay {
+    void show();
+}
+i32 main() {
+    return 99;
+}
+""", 99),
+
+    ("iface_retain_class", """
+interface IFactory {
+    i32 val();
+}
+class Data : IFactory {
+    i32 v;
+    i32 val() { return this.v; }
+}
+Data makeData(i32 n) {
+    Data d = new Data;
+    d.v = n;
+    return d;
+}
+i32 main() {
+    Data d = makeData(13);
+    IFactory f = d;
+    return f.val();
+}
+""", 13),
+
+    ("iface_nested", """
+interface ITransform {
+    i32 apply(i32 x);
+}
+class Doubler : ITransform {
+    i32 apply(i32 x) { return x + x; }
+}
+i32 run(ITransform t, i32 x) {
+    return t.apply(x);
+}
+i32 main() {
+    Doubler d = new Doubler;
+    ITransform t = d;
+    return run(t, 21);
+}
+""", 42),
 ]
 
 # ============================================================

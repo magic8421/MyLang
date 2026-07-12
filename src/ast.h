@@ -7,6 +7,7 @@ typedef enum {
     TYPE_VOID = 0,
     TYPE_CLASS,
     TYPE_STRUCT,
+    TYPE_INTERFACE,
     TYPE_I8,
     TYPE_I16,
     TYPE_I32,
@@ -51,6 +52,7 @@ typedef enum {
     AST_PROGRAM,
     AST_CLASS_DECL,
     AST_STRUCT_DECL,
+    AST_INTERFACE_DECL,
     AST_FUNC_DECL,
     AST_BLOCK,
     AST_VAR_DECL,
@@ -68,6 +70,7 @@ typedef enum {
     AST_IDENT,
     AST_INT_LIT,
     AST_CHAR_LIT,
+    AST_AS_CAST,
     AST_REF_ARG,
     AST_OUT_ARG,
 } AstKind;

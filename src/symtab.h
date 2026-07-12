@@ -4,6 +4,7 @@
 #include "ast.h"
 
 #define MAX_FIELDS 32
+#define MAX_IMPL  8
 #define HASH_SIZE  64
 
 typedef struct MethodInfo {
@@ -15,6 +16,24 @@ typedef struct MethodInfo {
     struct MethodInfo* next;
 } MethodInfo;
 
+typedef struct InterfaceMethodInfo {
+    char name[64];
+    Type return_type;
+    int  param_count;
+    char param_names[16][64];
+    Type param_types[16];
+} InterfaceMethodInfo;
+
+#define MAX_IFACE_METHODS 32
+
+typedef struct InterfaceInfo {
+    char name[64];
+    int  type_id;
+    int  method_count;
+    InterfaceMethodInfo methods[MAX_IFACE_METHODS];
+    struct InterfaceInfo* next;
+} InterfaceInfo;
+
 typedef struct ClassInfo {
     char name[64];
     int  type_id;
@@ -22,6 +41,9 @@ typedef struct ClassInfo {
     char field_names[MAX_FIELDS][64];
     Type field_types[MAX_FIELDS];
     MethodInfo* methods;
+    int  impl_count;
+    char impl_names[MAX_IMPL][64];
+    InterfaceInfo* impl_infos[MAX_IMPL];
     struct ClassInfo* next;
 } ClassInfo;
 
@@ -78,5 +100,15 @@ typedef struct FuncInfo {
 void       symtab_add_func(const char* name, Type ret_type,
                            int pc, const char pn[][64], const Type pt[]);
 FuncInfo*  symtab_find_func(const char* name);
+
+void           symtab_add_interface(const char* name, InterfaceInfo* info);
+InterfaceInfo* symtab_find_interface(const char* name);
+void           symtab_add_interface_method(InterfaceInfo* iface, const char* name,
+                                           Type ret_type, int pc,
+                                           const char pn[][64], const Type pt[]);
+InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
+                                                   const char* method_name);
+
+void symtab_add_class_impl(ClassInfo* cls, const char* iface_name);
 
 #endif

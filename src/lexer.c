@@ -28,9 +28,11 @@ static const KeywordEntry keywords[] = {
     {"while",  TOK_KW_WHILE},
     {"return", TOK_KW_RETURN},
     {"new",    TOK_KW_NEW},
-    {"class",  TOK_KW_CLASS},
-    {"this",   TOK_KW_THIS},
-    {NULL,     0},
+    {"class",     TOK_KW_CLASS},
+    {"this",      TOK_KW_THIS},
+    {"interface", TOK_KW_INTERFACE},
+    {"as",        TOK_KW_AS},
+    {NULL,        0},
 };
 
 void lexer_init(Lexer* lexer, const char* source) {
@@ -244,6 +246,7 @@ Token lexer_next(Lexer* lexer) {
         case ';': return make_token(lexer, TOK_SEMI,     ";", 1, 1);
         case ',': return make_token(lexer, TOK_COMMA,    ",", 1, 1);
         case '.': return make_token(lexer, TOK_DOT,      ".", 1, 1);
+        case ':': return make_token(lexer, TOK_COLON,    ":", 1, 1);
         default: {
             fprintf(stderr, "lexer error at %d:%d: unexpected character '%c' (0x%02X)\n",
                     lexer->line, lexer->col, c, (unsigned char)c);

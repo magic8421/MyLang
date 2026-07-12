@@ -41,6 +41,8 @@ const char* type_name(const Type* t) {
         case TYPE_F64:   return "f64";
         case TYPE_VOID:  return "void";
         case TYPE_CLASS: return t->class_name;
+        case TYPE_STRUCT: return t->class_name;
+        case TYPE_INTERFACE: return t->class_name;
     }
     return "?";
 }
@@ -51,7 +53,7 @@ int type_equal(const Type* a, const Type* b) {
     if (a->is_array != b->is_array) return 0;
     if (a->array_size != b->array_size) return 0;
     if (a->is_ref != b->is_ref) return 0;
-    if (a->kind == TYPE_CLASS || a->kind == TYPE_STRUCT) {
+    if (a->kind == TYPE_CLASS || a->kind == TYPE_STRUCT || a->kind == TYPE_INTERFACE) {
         return strcmp(a->class_name, b->class_name) == 0;
     }
     return 1;

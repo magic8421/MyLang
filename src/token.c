@@ -26,6 +26,8 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_NEW:    return "new";
         case TOK_KW_CLASS:  return "class";
         case TOK_KW_THIS:   return "this";
+        case TOK_KW_INTERFACE: return "interface";
+        case TOK_KW_AS:     return "as";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";
@@ -50,6 +52,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_SEMI:      return ";";
         case TOK_COMMA:     return ",";
         case TOK_DOT:       return ".";
+        case TOK_COLON:     return ":";
         default:            return "?";
     }
 }
