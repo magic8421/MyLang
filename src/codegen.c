@@ -1571,7 +1571,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "#define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)\n\n");
 
     fprintf(out, "typedef struct WeakRef { volatile long refcount; struct ObjHeaderTag* obj; } WeakRef;\n");
-    fprintf(out, "typedef struct ObjHeaderTag { volatile long refcount; uint32_t type_id; size_t length; WeakRef* weak; } ObjHeader;\n");
+    fprintf(out, "typedef struct ObjHeaderTag { volatile long refcount; uint32_t type_id; WeakRef* weak; size_t length; } ObjHeader;\n");
     fprintf(out, "#define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))\n\n");
 
     fprintf(out, "static void* mylang_new_object(size_t sz, uint32_t type_id) {\n");

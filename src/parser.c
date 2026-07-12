@@ -399,8 +399,9 @@ static AstNode* parse_expr_no_assign(Parser* p, const char* where) {
     return e;
 }
 
-/* �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??   STATEMENT PARSING
-   �T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T�T??*/
+/* ================================================================
+   STATEMENT PARSING
+   ================================================================ */
 
 static AstNode* parse_block(Parser* p) {
     Token brace = p->current; advance(p); /* consume { */
