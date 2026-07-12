@@ -111,4 +111,6 @@ InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
 
 void symtab_add_class_impl(ClassInfo* cls, const char* iface_name);
 
+int  symtab_validate_impls(void);
+
 #endif

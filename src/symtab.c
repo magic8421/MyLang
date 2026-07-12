@@ -6,7 +6,7 @@
 
 static Scope*         current_scope = NULL;
 static int            scope_counter = 0;
-static ClassInfo*     class_list    = NULL;
+ClassInfo*            class_list    = NULL;
 static StructInfo*    struct_list   = NULL;
 InterfaceInfo*        interface_list = NULL;
 static FuncInfo*      func_list     = NULL;
@@ -227,4 +227,82 @@ void symtab_add_class_impl(ClassInfo* cls, const char* iface_name) {
     CHECK_STRSCPY(strscpy(cls->impl_names[cls->impl_count], iface_name,
                           sizeof(cls->impl_names[0])), "interface name too long");
     cls->impl_count++;
+}
+
+static int signature_matches(MethodInfo* cls_method, InterfaceMethodInfo* iface_method) {
+    if (!type_equal(&cls_method->return_type, &iface_method->return_type)) {
+        return 0;
+    }
+    if (cls_method->param_count != iface_method->param_count) {
+        return 0;
+    }
+    int i;
+    for (i = 0; i < cls_method->param_count; i++) {
+        if (!type_equal(&cls_method->param_types[i], &iface_method->param_types[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+int symtab_validate_impls(void) {
+    int errors = 0;
+    ClassInfo* ci = class_list;
+    while (ci) {
+        int i;
+        for (i = 0; i < ci->impl_count && i < MAX_IMPL; i++) {
+            const char* iname = ci->impl_names[i];
+            InterfaceInfo* ii = symtab_find_interface(iname);
+            if (!ii) {
+                fprintf(stderr, "error: class '%s' implements unknown interface '%s'\n",
+                        ci->name, iname);
+                errors++;
+                continue;
+            }
+            ci->impl_infos[i] = ii;
+
+            /* check duplicate implementations */
+            int j;
+            for (j = 0; j < i; j++) {
+                if (ci->impl_infos[j] == ii) {
+                    fprintf(stderr, "error: class '%s' implements interface '%s' more than once\n",
+                            ci->name, iname);
+                    errors++;
+                    ci->impl_infos[i] = NULL;
+                    break;
+                }
+            }
+            if (!ci->impl_infos[i]) continue;
+
+            /* check every interface method is implemented */
+            int m;
+            for (m = 0; m < ii->method_count; m++) {
+                InterfaceMethodInfo* im = &ii->methods[m];
+                MethodInfo* cls_m = ci->methods;
+                int found = 0;
+                while (cls_m) {
+                    if (strcmp(cls_m->name, im->name) == 0) {
+                        if (signature_matches(cls_m, im)) {
+                            found = 1;
+                            break;
+                        } else {
+                            fprintf(stderr, "error: method '%s' in class '%s' has wrong signature for interface '%s'\n",
+                                    im->name, ci->name, iname);
+                            errors++;
+                            found = -1;
+                            break;
+                        }
+                    }
+                    cls_m = cls_m->next;
+                }
+                if (found == 0) {
+                    fprintf(stderr, "error: class '%s' does not implement '%s.%s()'\n",
+                            ci->name, iname, im->name);
+                    errors++;
+                }
+            }
+        }
+        ci = ci->next;
+    }
+    return errors;
 }
