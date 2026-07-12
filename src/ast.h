@@ -32,6 +32,7 @@ typedef enum {
 #define TYPE_ID_CLASS_BASE 16
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U
+#define TYPE_IS_WEAK     0x20000000U
 
 typedef struct {
     TypeKind kind;
@@ -40,6 +41,7 @@ typedef struct {
     int      is_array;
     int      array_size;
     int      is_ref;       /* by-reference parameter */
+    int      is_weak;      /* weak reference */
     int      type_id;
 } Type;
 

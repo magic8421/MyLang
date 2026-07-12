@@ -17,6 +17,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_F32:    return "f32";
         case TOK_KW_F64:    return "f64";
         case TOK_KW_REF:    return "ref";
+        case TOK_KW_WEAK:   return "weak";
         case TOK_KW_STRUCT: return "struct";
         case TOK_KW_IF:     return "if";
         case TOK_KW_ELSE:   return "else";

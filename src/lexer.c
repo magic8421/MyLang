@@ -21,6 +21,7 @@ static const KeywordEntry keywords[] = {
     {"f32",    TOK_KW_F32},
     {"f64",    TOK_KW_F64},
     {"ref",    TOK_KW_REF},
+    {"weak",   TOK_KW_WEAK},
     {"struct", TOK_KW_STRUCT},
     {"if",     TOK_KW_IF},
     {"else",   TOK_KW_ELSE},

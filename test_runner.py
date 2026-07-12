@@ -751,6 +751,66 @@ i32 main() {
     return c.box.v;
 }
 """, 42),
+
+    ("weak_basic", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 42;
+    weak Node w = obj;
+    Node s = w.lock();
+    return s.v;
+}
+""", 42),
+
+    ("weak_after_release", """
+class Node {
+    i32 v;
+}
+Node make() {
+    Node n = new Node;
+    n.v = 7;
+    return n;
+}
+i32 main() {
+    weak Node w = make();
+    Node s = w.lock();
+    if (!s) return 1;
+    return 0;
+}
+""", 1),
+
+    ("weak_share", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 10;
+    weak Node w1 = obj;
+    weak Node w2 = w1;
+    Node s = w2.lock();
+    return s.v;
+}
+""", 10),
+
+    ("weak_param", """
+class Node {
+    i32 v;
+}
+i32 read(weak Node n) {
+    Node s = n.lock();
+    if (!s) return 0;
+    return s.v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 7;
+    return read(obj);
+}
+""", 7),
 ]
 
 # ============================================================

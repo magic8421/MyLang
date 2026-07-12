@@ -18,6 +18,7 @@ static void escape_source_file(const char* src) {
 }
 
 static const char* c_base_name(const Type* t) {
+    if (t->is_weak) return "WeakRef";
     switch (t->kind) {
         case TYPE_I8:    return "int8_t";
         case TYPE_I16:   return "int16_t";
@@ -148,7 +149,11 @@ static Type resolve_type(AstNode* node) {
                 AstNode* mem = node->children[0];
                 AstNode* obj = mem->children[0];
                 resolve_type(obj);
-                if (obj->resolved_type.kind == TYPE_CLASS) {
+                if (strcmp(mem->tok.text, "lock") == 0 && obj->resolved_type.is_weak) {
+                    t = obj->resolved_type;
+                    t.is_weak = 0;
+                    t.is_pointer = 1;
+                } else if (obj->resolved_type.kind == TYPE_CLASS) {
                     MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mem->tok.text);
                     if (mi) { t = mi->return_type; }
                 }
@@ -223,6 +228,19 @@ static void codegen_call_arg(AstNode* arg, const Type* param_type, FILE* out) {
         } else {
             fprintf(out, "&%s", arg->tok.text);
         }
+    } else if (param_type->is_weak) {
+        resolve_type(arg);
+        if (arg->resolved_type.kind == TYPE_CLASS && !arg->resolved_type.is_weak) {
+            fprintf(out, "mylang_weak_init(");
+            codegen_expr(arg, out);
+            fprintf(out, ")");
+        } else if (arg->resolved_type.is_weak) {
+            fprintf(out, "mylang_weak_copy(");
+            codegen_expr(arg, out);
+            fprintf(out, ")");
+        } else {
+            codegen_expr(arg, out);
+        }
     } else {
         codegen_expr(arg, out);
     }
@@ -235,6 +253,12 @@ static void codegen_call(AstNode* node, FILE* out) {
         AstNode* obj = mem->children[0];
         const char* mname = mem->tok.text;
         resolve_type(obj);
+        if (strcmp(mname, "lock") == 0 && obj->resolved_type.is_weak) {
+            fprintf(out, "mylang_lock(");
+            codegen_expr(obj, out);
+            fprintf(out, ")");
+            return;
+        }
         if (obj->resolved_type.kind == TYPE_CLASS) {
             MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mname);
             fprintf(out, "%s_%s(", obj->resolved_type.class_name, mname);
@@ -636,6 +660,7 @@ static void emit_stmt_call_releases(AstNode* expr, FILE* out, int indent) {
 #define MAX_CLEANUP 128
 typedef struct {
     const char* name;
+    int         is_weak;
 } CleanupEntry;
 static CleanupEntry cleanup_entries[MAX_CLEANUP];
 static int          cleanup_count = 0;
@@ -645,9 +670,10 @@ static int          assign_tmp_id = 0;
 static int cleanup_scope_stack[MAX_SCOPE];
 static int cleanup_scope_depth = 0;
 
-static void cleanup_add(const char* name) {
+static void cleanup_add(const char* name, int is_weak) {
     if (cleanup_count < MAX_CLEANUP) {
         cleanup_entries[cleanup_count].name = name;
+        cleanup_entries[cleanup_count].is_weak = is_weak;
         cleanup_count++;
     }
 }
@@ -657,8 +683,13 @@ static void cleanup_emit(FILE* out, int indent) {
     for (i = cleanup_count - 1; i >= 0; i--) {
         const char* name = cleanup_entries[i].name;
         indent_line(out, indent);
-        fprintf(out, "mylang_release(%s);\n",
-                strcmp(name, "this") == 0 ? "thiz" : name);
+        if (cleanup_entries[i].is_weak) {
+            fprintf(out, "mylang_weak_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else {
+            fprintf(out, "mylang_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        }
     }
 }
 
@@ -675,8 +706,13 @@ static void cleanup_pop_scope(FILE* out, int indent) {
     for (i = cleanup_count - 1; i >= saved; i--) {
         const char* name = cleanup_entries[i].name;
         indent_line(out, indent);
-        fprintf(out, "mylang_release(%s);\n",
-                strcmp(name, "this") == 0 ? "thiz" : name);
+        if (cleanup_entries[i].is_weak) {
+            fprintf(out, "mylang_weak_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else {
+            fprintf(out, "mylang_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        }
     }
     cleanup_count = saved;
 }
@@ -711,6 +747,38 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
 
     symtab_insert(node->tok.text, type);
 
+    if (type.is_weak && node->child_count > 0) {
+        resolve_type(node->children[0]);
+        if (node->children[0]->resolved_type.is_weak) {
+            indent_line(out, indent);
+            fprintf(out, "WeakRef* %s = mylang_weak_copy(", node->tok.text);
+            codegen_expr(node->children[0], out);
+            fprintf(out, ");\n");
+        } else {
+            int rhs_owned = (node->children[0]->kind == AST_CALL ||
+                             node->children[0]->kind == AST_NEW);
+            if (rhs_owned) {
+                int tmp_id = assign_tmp_id++;
+                indent_line(out, indent);
+                fprintf(out, "void* _w%d = ", tmp_id);
+                codegen_expr(node->children[0], out);
+                fprintf(out, ";\n");
+                indent_line(out, indent);
+                fprintf(out, "WeakRef* %s = mylang_weak_init(_w%d);\n",
+                        node->tok.text, tmp_id);
+                indent_line(out, indent);
+                fprintf(out, "mylang_release(_w%d);\n", tmp_id);
+            } else {
+                indent_line(out, indent);
+                fprintf(out, "WeakRef* %s = mylang_weak_init(", node->tok.text);
+                codegen_expr(node->children[0], out);
+                fprintf(out, ");\n");
+            }
+        }
+        cleanup_add(node->tok.text, 1);
+        return;
+    }
+
     indent_line(out, indent);
 
     if (type.array_size > 0) {
@@ -731,14 +799,17 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
             fprintf(out, " = ");
             codegen_expr(node->children[0], out);
         }
-    } else if (type.is_pointer) {
+    } else if (type.is_pointer || type.is_weak) {
         fprintf(out, " = NULL");
     }
     fprintf(out, ";\n");
 
     if ((type.kind == TYPE_CLASS && type.is_pointer && !type.is_array) ||
         (type.is_array && type.array_size == 0)) {
-        cleanup_add(node->tok.text);
+        cleanup_add(node->tok.text, 0);
+    }
+    if (type.is_weak) {
+        cleanup_add(node->tok.text, 1);
     }
 }
 
@@ -1108,10 +1179,12 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "#include <windows.h>\n");
     fprintf(out, "#define mylang_atomic_inc(p) InterlockedIncrement(p)\n");
     fprintf(out, "#define mylang_atomic_dec(p) InterlockedDecrement(p)\n");
+    fprintf(out, "#define mylang_atomic_cas(p, n, o) InterlockedCompareExchange(p, n, o)\n");
     fprintf(out, "#else\n");
     fprintf(out, "#include <stdatomic.h>\n");
     fprintf(out, "#define mylang_atomic_inc(p) (atomic_fetch_add(p, 1) + 1)\n");
     fprintf(out, "#define mylang_atomic_dec(p) (atomic_fetch_sub(p, 1) - 1)\n");
+    fprintf(out, "#define mylang_atomic_cas(p, n, o) __sync_val_compare_and_swap(p, o, n)\n");
     fprintf(out, "#endif\n\n");
 
     fprintf(out, "#ifdef _MSC_VER\n");
@@ -1161,7 +1234,8 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "}\n\n");
     fprintf(out, "#define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)\n\n");
 
-    fprintf(out, "typedef struct { volatile long refcount; uint32_t type_id; size_t length; } ObjHeader;\n");
+    fprintf(out, "typedef struct WeakRef { volatile long refcount; struct ObjHeaderTag* obj; } WeakRef;\n");
+    fprintf(out, "typedef struct ObjHeaderTag { volatile long refcount; uint32_t type_id; size_t length; WeakRef* weak; } ObjHeader;\n");
     fprintf(out, "#define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))\n\n");
 
     fprintf(out, "static void* mylang_new_object(size_t sz, uint32_t type_id) {\n");
@@ -1189,6 +1263,44 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "    return ptr;\n");
     fprintf(out, "}\n\n");
 
+    fprintf(out, "static WeakRef* mylang_weak_init(void* ptr) {\n");
+    fprintf(out, "    ObjHeader* h = mylang_obj_hdr(ptr);\n");
+    fprintf(out, "    if (h->weak) {\n");
+    fprintf(out, "        mylang_atomic_inc(&h->weak->refcount);\n");
+    fprintf(out, "        return h->weak;\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "    WeakRef* wr = calloc(1, sizeof(WeakRef));\n");
+    fprintf(out, "    wr->refcount = 1;\n");
+    fprintf(out, "    wr->obj = h;\n");
+    fprintf(out, "    h->weak = wr;\n");
+    fprintf(out, "    return wr;\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "static WeakRef* mylang_weak_copy(WeakRef* wr) {\n");
+    fprintf(out, "    if (wr) mylang_atomic_inc(&wr->refcount);\n");
+    fprintf(out, "    return wr;\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "static void* mylang_lock(WeakRef* wr) {\n");
+    fprintf(out, "    if (!wr) return NULL;\n");
+    fprintf(out, "    ObjHeader* h = wr->obj;\n");
+    fprintf(out, "    if (!h) return NULL;\n");
+    fprintf(out, "    for (;;) {\n");
+    fprintf(out, "        LONG old = h->refcount;\n");
+    fprintf(out, "        if (old <= 0) return NULL;\n");
+    fprintf(out, "        if (mylang_atomic_cas(&h->refcount, old + 1, old) == old) {\n");
+    fprintf(out, "            return (void*)(h + 1);\n");
+    fprintf(out, "        }\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "}\n\n");
+
+    fprintf(out, "static void mylang_weak_release(WeakRef* wr) {\n");
+    fprintf(out, "    if (wr && mylang_atomic_dec(&wr->refcount) == 0) {\n");
+    fprintf(out, "        if (wr->obj) wr->obj->weak = NULL;\n");
+    fprintf(out, "        free(wr);\n");
+    fprintf(out, "    }\n");
+    fprintf(out, "}\n\n");
+
     fprintf(out, "static int mylang_release(void* ptr) {\n");
     fprintf(out, "    if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {\n");
     fprintf(out, "        ObjHeader* h = mylang_obj_hdr(ptr);\n");
@@ -1202,6 +1314,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "                }\n");
     fprintf(out, "            }\n");
     fprintf(out, "        }\n");
+    fprintf(out, "        if (h->weak) h->weak->obj = NULL;\n");
     fprintf(out, "        free(h);\n");
     fprintf(out, "    }\n");
     fprintf(out, "    return 0;\n");

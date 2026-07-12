@@ -58,7 +58,22 @@ static Type parse_type(Parser* p) {
     Type t;
     memset(&t, 0, sizeof(t));
 
-    if (check(p, TOK_KW_I32)) {
+    if (check(p, TOK_KW_WEAK)) {
+        advance(p);
+        if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
+            t.kind = TYPE_CLASS;
+            CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
+            t.class_name[63] = '\0';
+            t.is_weak = 1;
+            ClassInfo* ci = symtab_find_class(p->current.text);
+            if (ci) t.type_id = ci->type_id;
+            advance(p);
+        } else {
+            fprintf(stderr, "error at %d:%d: weak requires a class type\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        }
+    } else if (check(p, TOK_KW_I32)) {
         advance(p);
         t.kind = TYPE_I32;
         t.type_id = TYPE_ID_I32;
@@ -383,6 +398,7 @@ static int is_primitive_type_token(Parser* p) {
 }
 
 static int stmt_looks_like_var_decl(Parser* p) {
+    if (check(p, TOK_KW_WEAK)) return 1;
     if (is_primitive_type_token(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
