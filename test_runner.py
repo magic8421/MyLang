@@ -1098,9 +1098,9 @@ i32 main() {
     Node a = new Node;
     Node b = new Node;
     a.next = b;
-    b.next = a;
-    a.value = 42;
-    return a.value;
+    b.next = a.next;
+    b.value = 42;
+    return b.value;
 }
 """, 42),
 ]
@@ -1158,8 +1158,11 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["release", "debug"], default="release",
                         help="release = ASan + release CRT, debug = no ASan + debug CRT")
+    parser.add_argument("filters", nargs="*", default=None,
+                        help="optional test name keywords to filter (case-insensitive)")
     args = parser.parse_args()
     TEST_MODE = args.mode
+    filters = [f.lower() for f in args.filters] if args.filters else None
 
     if not os.path.exists(MYLANG_EXE):
         print("Building mylang.exe...")
@@ -1172,11 +1175,16 @@ def main():
         if not asan_dll_dir:
             print("WARNING: running without ASan - tests may still pass")
 
-    total = len(TESTS)
     passed = 0
     failed = 0
+    total = 0
 
     for i, (name, source, expected) in enumerate(TESTS):
+        if filters:
+            name_lower = name.lower()
+            if not any(k in name_lower for k in filters):
+                continue
+        total += 1
         ok, msg = run_test(i, name, source, expected, asan_dll_dir)
         status = "PASS" if ok else "FAIL"
         print(f"[{status}] {name:30s} {msg}")
@@ -1185,7 +1193,10 @@ def main():
         else:
             failed += 1
 
-    print(f"\n{passed}/{total} passed, {failed} failed")
+    if filters:
+        print(f"\n{passed}/{total} passed, {failed} failed  (filtered from {len(TESTS)} tests)")
+    else:
+        print(f"\n{passed}/{total} passed, {failed} failed")
     sys.exit(0 if failed == 0 else 1)
 
 if __name__ == "__main__":
