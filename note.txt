@@ -109,3 +109,8 @@ inline void array_set_int(IntArray *arr, size_t idx, int val) {
 不检查返回值就报错
 然后 out ref 参数 基本上差不多了 代替了异常
 一切从简
+
+260712-0554
+
+C 绑定 学 java 搞个 native 关键字 生成代码是空的
+到时候只生成一个 骨架 .c 文件， 我自己去填那个文件中 函数的实现就好 

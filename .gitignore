@@ -1,18 +1,4 @@
-*.exe
-*.obj
-*.o
-*.dll
-*.pdb
-*.ilk
-test/out.c
-test/bounds_out.c
-test/bounds_fixed_out.c
-test/refcount_out.c
+build/
 test/_t*.c
-test/_t*.exe
 test/_t*.my
-test/_t*.ilk
-test/_t*.pdb
 __pycache__/
-260711-0216.md
-260711-0226 kimi review.md

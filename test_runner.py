@@ -8,7 +8,7 @@ import tempfile
 import shutil
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MYLANG_EXE = os.path.join(SCRIPT_DIR, "mylang.exe")
+MYLANG_EXE = os.path.join(SCRIPT_DIR, "build", "mylang.exe")
 VSPATH = r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
 if not os.path.exists(VSPATH):
@@ -28,15 +28,17 @@ def find_asan_dll():
     return None
 
 def ensure_asan_dll():
-    """Copy ASan DLL to project root so executables can find it."""
+    """Copy ASan DLL to build/ so executables can find it."""
     dll_path = find_asan_dll()
     if not dll_path:
         print("WARNING: ASan DLL not found, ASan may not activate")
         return ""
-    dest = os.path.join(SCRIPT_DIR, os.path.basename(dll_path))
+    build_dir = os.path.join(SCRIPT_DIR, "build")
+    os.makedirs(build_dir, exist_ok=True)
+    dest = os.path.join(build_dir, os.path.basename(dll_path))
     if not os.path.exists(dest):
         shutil.copy2(dll_path, dest)
-    return os.path.dirname(dll_path)  # return dir for PATH
+    return build_dir
 
 def shell(args, **kw):
     return subprocess.run(args, capture_output=True, text=True, shell=True, **kw)
@@ -51,7 +53,7 @@ def find_python():
 def compile_mylang():
     """Build mylang.exe with MSVC + ASan."""
     srcs = "src\\token.c src\\ast.c src\\lexer.c src\\symtab.c src\\parser.c src\\codegen.c src\\main.c"
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /fsanitize=address /Zi /W3 /Fe:mylang.exe {srcs}'
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /fsanitize=address /Zi /W3 /Fe:build\\mylang.exe /Fo:build\\ {srcs}'
     r = shell(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print("FAIL: mylang compilation failed")
@@ -62,8 +64,10 @@ def compile_mylang():
 
 def compile_c(src, exe):
     """Compile generated C code with MSVC + ASan."""
+    exedir = os.path.dirname(exe)
+    os.makedirs(exedir, exist_ok=True)
     cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /fsanitize=address /Zi /Fe:{exe} {src}'
-    r = shell(cmd, cwd=SCRIPT_DIR)
+    r = shell(cmd, cwd=exedir)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
         print(r.stdout[-500:] if len(r.stdout) > 500 else r.stdout)
@@ -820,10 +824,12 @@ i32 main() {
 def run_test(idx, name, source, expected, asan_dll_dir):
     testdir = os.path.join(SCRIPT_DIR, "test")
     os.makedirs(testdir, exist_ok=True)
+    exedir = os.path.join(SCRIPT_DIR, "build", "test")
+    os.makedirs(exedir, exist_ok=True)
 
     my_file = os.path.join(testdir, f"_t{idx}.my")
     c_file  = os.path.join(testdir, f"_t{idx}.c")
-    exe_file = os.path.join(testdir, f"_t{idx}.exe")
+    exe_file = os.path.join(exedir, f"_t{idx}.exe")
 
     with open(my_file, "w", encoding="utf-8") as f:
         f.write(source.strip() + "\n")
