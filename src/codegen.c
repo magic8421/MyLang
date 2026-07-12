@@ -7,6 +7,8 @@
 static const char* g_source_file = "";
 static char        g_source_file_escaped[1024];
 static Type        g_return_type;
+static int         g_has_main = 0;
+static Type        g_main_return_type;
 
 static void escape_source_file(const char* src) {
     size_t i, j;
@@ -1328,7 +1330,7 @@ static void codegen_struct_decl(AstNode* node, FILE* out) {
     StructInfo* si = symtab_find_struct(node->tok.text);
     if (!si) return;
 
-    fprintf(out, "typedef struct {\n");
+    fprintf(out, "typedef struct %s {\n", node->tok.text);
     int i;
     if (si->field_count == 0) {
         fprintf(out, "    char _pad;\n");
@@ -1346,14 +1348,20 @@ static void codegen_class_decl(AstNode* node, FILE* out) {
     ClassInfo* ci = symtab_find_class(node->tok.text);
     if (!ci) return;
 
-    fprintf(out, "typedef struct {\n");
+    fprintf(out, "typedef struct %s {\n", node->tok.text);
     int i;
     if (ci->field_count == 0) {
         fprintf(out, "    char _pad;\n");
     } else {
         for (i = 0; i < ci->field_count; i++) {
             char ftype_buf[128];
-            c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
+            if (ci->field_types[i].kind == TYPE_CLASS &&
+                strcmp(ci->field_types[i].class_name, node->tok.text) == 0) {
+                int n = snprintf(ftype_buf, sizeof(ftype_buf), "struct %s*", ci->field_types[i].class_name);
+                CHECK_SNPRINTF(n, (size_t)sizeof(ftype_buf), "field type name too long");
+            } else {
+                c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
+            }
             fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
         }
     }
@@ -1414,11 +1422,18 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     g_return_type = prev_ret;
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
+    const char* func_name = node->tok.text;
+    if (strcmp(func_name, "main") == 0) {
+        func_name = "_my_main";
+        g_has_main = 1;
+        g_main_return_type = node->resolved_type;
+    }
+
     /* return type */
     {
         char ret_buf[128];
         c_type_str(&node->resolved_type, ret_buf, sizeof(ret_buf));
-        fprintf(out, "%s %s(", ret_buf, node->tok.text);
+        fprintf(out, "%s %s(", ret_buf, func_name);
     }
 
     /* parameters */
@@ -1469,7 +1484,7 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     }
 
     indent_line(out, 1);
-    fprintf(out, "MY_PUSH(\"%s\", \"%s\", %d);\n", node->tok.text, g_source_file_escaped, node->tok.line);
+    fprintf(out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, g_source_file_escaped, node->tok.line);
 
     fprintf(out, "{\n");
 
@@ -1503,6 +1518,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "#include <stdint.h>\n");
     fprintf(out, "#ifdef _MSC_VER\n");
     fprintf(out, "#include <intrin.h>\n");
+    fprintf(out, "#include <crtdbg.h>\n");
     fprintf(out, "#else\n");
     fprintf(out, "#define __debugbreak() __builtin_trap()\n");
     fprintf(out, "#endif\n\n");
@@ -1714,5 +1730,21 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
             codegen_func_decl(decl, out);
         }
         decl = decl->next;
+    }
+
+    if (g_has_main) {
+        fprintf(out, "int main(void) {\n");
+        fprintf(out, "#ifdef _MSC_VER\n");
+        fprintf(out, "    _set_abort_behavior(0, _WRITE_ABORT_MSG);\n");
+        fprintf(out, "    _CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF);\n");
+        fprintf(out, "#endif\n");
+        if (g_main_return_type.kind == TYPE_VOID) {
+            fprintf(out, "    _my_main();\n");
+            fprintf(out, "    return 0;\n");
+        } else {
+            fprintf(out, "    %s _ret = _my_main();\n", c_base_name(&g_main_return_type));
+            fprintf(out, "    return (int)_ret;\n");
+        }
+        fprintf(out, "}\n");
     }
 }

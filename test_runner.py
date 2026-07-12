@@ -6,10 +6,13 @@ import sys
 import os
 import tempfile
 import shutil
+import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MYLANG_EXE = os.path.join(SCRIPT_DIR, "build", "mylang.exe")
 VSPATH = r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+
+TEST_MODE = "release"  # "release" = ASan + release CRT, "debug" = no ASan + debug CRT
 
 if not os.path.exists(VSPATH):
     VSPATH = r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
@@ -51,9 +54,13 @@ def find_python():
     return sys.executable
 
 def compile_mylang():
-    """Build mylang.exe with MSVC + ASan."""
+    """Build mylang.exe with MSVC + ASan (release) or debug CRT (debug)."""
     srcs = "src\\token.c src\\ast.c src\\lexer.c src\\symtab.c src\\parser.c src\\codegen.c src\\main.c"
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /fsanitize=address /Zi /W3 /Fe:build\\mylang.exe /Fo:build\\ {srcs}'
+    if TEST_MODE == "debug":
+        flags = "/MDd /Zi"
+    else:
+        flags = "/fsanitize=address /Zi"
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /W3 {flags} /Fe:build\\mylang.exe /Fo:build\\ {srcs}'
     r = shell(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print("FAIL: mylang compilation failed")
@@ -63,10 +70,14 @@ def compile_mylang():
     return True
 
 def compile_c(src, exe):
-    """Compile generated C code with MSVC + ASan."""
+    """Compile generated C code with MSVC + ASan (release) or debug CRT (debug)."""
     exedir = os.path.dirname(exe)
     os.makedirs(exedir, exist_ok=True)
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /fsanitize=address /Zi /Fe:{exe} {src}'
+    if TEST_MODE == "debug":
+        flags = "/MDd /Zi"
+    else:
+        flags = "/fsanitize=address /Zi"
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /Fe:{exe} {src}'
     r = shell(cmd, cwd=exedir)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
@@ -1077,6 +1088,21 @@ i32 main() {
     return run(t, 21);
 }
 """, 42),
+
+    ("circular_ref_leak", """
+class Node {
+    Node next;
+    i32 value;
+}
+i32 main() {
+    Node a = new Node;
+    Node b = new Node;
+    a.next = b;
+    b.next = a;
+    a.value = 42;
+    return a.value;
+}
+""", 42),
 ]
 
 # ============================================================
@@ -1127,14 +1153,24 @@ def run_test(idx, name, source, expected, asan_dll_dir):
 
 
 def main():
+    global TEST_MODE
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["release", "debug"], default="release",
+                        help="release = ASan + release CRT, debug = no ASan + debug CRT")
+    args = parser.parse_args()
+    TEST_MODE = args.mode
+
     if not os.path.exists(MYLANG_EXE):
         print("Building mylang.exe...")
         if not compile_mylang():
             sys.exit(1)
 
-    asan_dll_dir = ensure_asan_dll()
-    if not asan_dll_dir:
-        print("WARNING: running without ASan - tests may still pass")
+    asan_dll_dir = ""
+    if TEST_MODE == "release":
+        asan_dll_dir = ensure_asan_dll()
+        if not asan_dll_dir:
+            print("WARNING: running without ASan - tests may still pass")
 
     total = len(TESTS)
     passed = 0

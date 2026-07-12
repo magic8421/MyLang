@@ -114,3 +114,9 @@ inline void array_set_int(IntArray *arr, size_t idx, int val) {
 
 C 绑定 学 java 搞个 native 关键字 生成代码是空的
 到时候只生成一个 骨架 .c 文件， 我自己去填那个文件中 函数的实现就好 
+
+260713-0100
+
+src\symtab.c 这个文件里面没有用 thiz 指针
+就是用的全局变量 不太好 
+src\codegen.c 也是 何解？ 为何要面向对象？ 全局变量不香吗
