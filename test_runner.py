@@ -1109,7 +1109,7 @@ i32 main() {
 # RUNNER
 # ============================================================
 
-def run_test(idx, name, source, expected, asan_dll_dir):
+def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False):
     testdir = os.path.join(SCRIPT_DIR, "test")
     os.makedirs(testdir, exist_ok=True)
     exedir = os.path.join(SCRIPT_DIR, "build", "test")
@@ -1123,7 +1123,8 @@ def run_test(idx, name, source, expected, asan_dll_dir):
         f.write(source.strip() + "\n")
 
     # Compile .my -> .c
-    r = shell(f'"{MYLANG_EXE}" {my_file} {c_file}', cwd=SCRIPT_DIR)
+    leak_arg = " --leak-check" if leak_check else ""
+    r = shell(f'"{MYLANG_EXE}"{leak_arg} {my_file} {c_file}', cwd=SCRIPT_DIR)
     if r.returncode != 0:
         # mylang might crash with ASan detection - capture exit code
         return False, f"mylang exit {r.returncode}: {r.stderr[-200:] if r.stderr else ''}"
@@ -1158,10 +1159,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["release", "debug"], default="release",
                         help="release = ASan + release CRT, debug = no ASan + debug CRT")
+    parser.add_argument("--leak-check", action="store_true",
+                        help="pass --leak-check to mylang.exe to enable memory leak tracking")
     parser.add_argument("filters", nargs="*", default=None,
                         help="optional test name keywords to filter (case-insensitive)")
     args = parser.parse_args()
     TEST_MODE = args.mode
+    leak_check = args.leak_check
     filters = [f.lower() for f in args.filters] if args.filters else None
 
     if not os.path.exists(MYLANG_EXE):
@@ -1185,7 +1189,7 @@ def main():
             if not any(k in name_lower for k in filters):
                 continue
         total += 1
-        ok, msg = run_test(i, name, source, expected, asan_dll_dir)
+        ok, msg = run_test(i, name, source, expected, asan_dll_dir, leak_check)
         status = "PASS" if ok else "FAIL"
         print(f"[{status}] {name:30s} {msg}")
         if ok:
