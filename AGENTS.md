@@ -121,7 +121,7 @@ Source code lives under `src/`:
 - On the first allocation, `atexit(mylang_leak_check)` is registered; at exit, unreleased blocks are printed with address, type_id, refcount, length, and allocation stack trace.
 - Stack traces are hashed into a 512-bucket table so identical call stacks share one `LeakTrace` record.
 - The list and hash table are protected by a global lock: `SRWLOCK` on Windows (`SRWLOCK_INIT`), `pthread_mutex_t` with `PTHREAD_MUTEX_INITIALIZER` on POSIX.
-- In `--mode debug`, the test runner prints captured stdout/stderr so the CRT leak dump (`_CrtDumpMemoryLeaks`) is visible.
+- In `--mode debug` or when `--leak-check` is enabled, the test runner prints captured stdout/stderr so the CRT leak dump (`_CrtDumpMemoryLeaks`) or the MyLang leak report is visible.
 
 ## Lexer Safety
 - `read_char_literal` has EOF guards after opening quote, after backslash, and before closing quote peek.
