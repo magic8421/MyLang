@@ -22,11 +22,28 @@ Source code lives under `src/`:
 
 ## Type System
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `void`.
-- User types: `class` (heap/reference) and `struct` (value/stack).
-- Type IDs: primitives use 0-15; classes and structs share a counter starting at 16.
+- User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
+- Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`.
 - `Type` struct fields: `kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
 - `out` and `in` modifiers were removed (only `ref` remains).
+- Interface types have `kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
+
+## Interface System (Phase 1)
+- Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
+- Multiple interfaces per class are supported via comma-separated `:` list.
+- Interface values are fat pointers: `{void* data, const VTable* vtable}` struct in generated C.
+- Each interface gets a VTable typedef containing `concrete_type_id` and one function-pointer field per method.
+- Each class implementing an interface gets a static `const` vtable instance and a thunk function per method (casts `void*` to `ClassName*`, calls the real method).
+- Dynamic dispatch: `s.area()` emits as `(s).vtable->area((s).data)`.
+- Type assertion: `expr as ClassName` compares `vtable->concrete_type_id` against the class type_id, returns `(ClassName*)data` or `NULL`.
+- Implicit class-to-interface conversion on variable init (`IShape s = obj`), assignment (`s = obj`), and return (`return obj` where return type is interface).
+- Interface refcounting: the `.data` pointer holds a reference count. Create = retain, destroy = release `.data`. Cleanup uses `CleanupEntry.is_interface` flag.
+- Semantic validation (`symtab_validate_impls`): verifies at compile time that a class declares all methods required by declared interfaces with matching signatures. Aborts codegen on error.
+- Empty classes/structs emit `char _pad;` placeholder for MSVC compatibility (C requires at least one struct member).
+- `g_return_type` (static) tracks the enclosing function's return type so `codegen_return_stmt` can emit implicit class-to-interface conversion.
+- Interface parameters pass by value (struct copy). Caller-side guard extraction handles complex expressions.
+- `as` keyword is parsed in `parse_postfix` as a postfix operator.
 
 ## Reference Parameters
 - Only the `ref` keyword is supported.
@@ -110,4 +127,7 @@ Source code lives under `src/`:
 - Weak references cannot be used as class fields (local variables and parameters only).
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
+- Interface variables cannot be class fields (local variables and parameters only).
+- `weak InterfaceName` variables not yet supported (Phase 2).
+- Interface default method implementations not yet supported.
 - No AST deallocation function (one-shot compiler).
