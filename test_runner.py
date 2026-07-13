@@ -1150,7 +1150,7 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False):
         snippet = output[-300:] if len(output) > 300 else output
         return False, f"exit {exit_code}, expected {expected}\n  {snippet}"
 
-    if TEST_MODE == "debug" and output:
+    if (TEST_MODE == "debug" or leak_check) and output:
         return True, f"exit {exit_code}\n{output}"
     return True, f"exit {exit_code}"
 
