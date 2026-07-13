@@ -112,6 +112,17 @@ Source code lives under `src/`:
 - `array_get_struct_ptr` — returns pointer to struct element in dynamic array.
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
+## Memory Leak Debugging
+- Enable at compile time with `mylang --leak-check source.my out.c`.
+- Enable in the test runner with `python test_runner.py --leak-check`.
+- Tracks only `ObjHeader` based allocations (class instances and dynamic arrays). WeakRef control blocks are not tracked.
+- When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
+- `mylang_release` removes the block from the list before freeing it.
+- On the first allocation, `atexit(mylang_leak_check)` is registered; at exit, unreleased blocks are printed with address, type_id, refcount, length, and allocation stack trace.
+- Stack traces are hashed into a 512-bucket table so identical call stacks share one `LeakTrace` record.
+- The list and hash table are protected by a global lock: `SRWLOCK` on Windows (`SRWLOCK_INIT`), `pthread_mutex_t` with `PTHREAD_MUTEX_INITIALIZER` on POSIX.
+- In `--mode debug`, the test runner prints captured stdout/stderr so the CRT leak dump (`_CrtDumpMemoryLeaks`) is visible.
+
 ## Lexer Safety
 - `read_char_literal` has EOF guards after opening quote, after backslash, and before closing quote peek.
 - Truncated or unterminated char literals return a dummy token instead of reading out of bounds.
