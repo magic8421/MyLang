@@ -1,0 +1,195 @@
+Interface Feature Implementation TODO
+====================================
+
+Phase 1: Core Interface (declaration, implementation, dispatch, as-cast)
+Phase 2: weak + Interface interaction
+
+============================================================================
+Phase 1: Core Interface
+============================================================================
+
+[ ] 1. TOKEN & LEXER (src/token.h, src/token.c)
+    [ ] 1a. Add TOK_KW_INTERFACE keyword token
+    [ ] 1b. Add TOK_KW_AS keyword token
+    [ ] 1c. Update keyword registration in token.c
+    [ ] 1d. Update token_kind_name() for new tokens
+
+[ ] 2. AST (src/ast.h, src/ast.c)
+    [ ] 2a. Add TYPE_INTERFACE to TypeKind enum
+    [ ] 2b. Add AST_INTERFACE_DECL to AstKind enum
+    [ ] 2c. Add AST_AS_CAST to AstKind enum
+        children: [0]=expr, resolved_type=target type
+    [ ] 2d. Update c_base_name() / type_name() / type_equal() for TYPE_INTERFACE
+
+[ ] 3. SYMBOL TABLE (src/symtab.h, src/symtab.c)
+    [ ] 3a. Add InterfaceMethodInfo struct
+        {name, return_type, param_count, param_names[16][64], param_types[16]}
+    [ ] 3b. Add InterfaceInfo struct
+        {name[64], type_id, ref_type_id, method_count, methods[], next}
+    [ ] 3c. Add global interface_list linked list
+    [ ] 3d. Implement symtab_add_interface(name, info)
+    [ ] 3e. Implement symtab_find_interface(name)
+    [ ] 3f. Add interface lookup in symtab during type parsing
+    [ ] 3g. Update ClassInfo: add implemented_interface_names (list/array)
+    [ ] 3h. Update ClassInfo: add interface_method_map for checking
+    [ ] 3i. Implement symtab_find_interface_method(iface_name, method_name)
+    [ ] 3j. Implement symtab_validate_class_implements(class_info) for semantic check
+
+[ ] 4. PARSER (src/parser.c)
+    [ ] 4a. Implement parse_interface_decl()
+        - Consume "interface" keyword
+        - Read interface name identifier
+        - Expect '{' ... '}'
+        - Parse method signatures (return_type name(params); )
+        - Create InterfaceInfo, register early
+        - Methods have NO body, just semicolons
+        - Return AST_INTERFACE_DECL node
+    [ ] 4b. Modify parse_class_decl() to accept ": Interface1, Interface2"
+        - After class name token, if TOK_COLON, parse comma-separated interface names
+        - Store implemented interface names in ClassInfo
+        - Validate that class methods include all interface methods
+    [ ] 4c. Update parse_type() to recognize interface names as TYPE_INTERFACE
+        - symtab_find_interface() lookup
+        - Set kind=TYPE_INTERFACE, class_name=interface name
+    [ ] 4d. Implement "as" expression parsing
+        - In parse_postfix() or parse_unary(), handle TOK_KW_AS
+        - Parse: expr "as" TypeName
+        - Create AST_AS_CAST node
+    [ ] 4e. Update parse_top_level() to dispatch TOK_KW_INTERFACE -> parse_interface_decl()
+
+[ ] 5. CODEGEN (src/codegen.c)
+    [ ] 5a. For each interface: emit VTable typedef (before class decls)
+        typedef struct IFooVTable {
+            uint32_t concrete_type_id;
+            RetType1 (*method1)(void* thiz, ...);
+            RetType2 (*method2)(void* thiz, ...);
+        } IFooVTable;
+    [ ] 5b. For each interface: emit fat-pointer typedef
+        typedef struct { void* data; IFooVTable* vtable; } IFoo;
+    [ ] 5c. For each class implementing an interface: emit thunk functions
+        static RetType ClassName_IFoo_method1(void* p, ...) {
+            return ClassName_method1((ClassName*)p, ...);
+        }
+    [ ] 5d. For each class implementing an interface: emit static vtable
+        static const IFooVTable ClassName_IFoo_vtable = {
+            .concrete_type_id = CLASS_TYPE_ID,
+            .method1 = ClassName_IFoo_method1,
+            .method2 = ClassName_IFoo_method2,
+        };
+    [ ] 5e. Implement implicit conversion: class -> interface (assign/init/return)
+        MyClass* obj = ...;
+        IShape iface;
+        iface.data = (void*)obj;
+        iface.vtable = &MyClass_IShape_vtable;
+        // + mylang_retain(obj) for refcounting
+    [ ] 5f. Implement dynamic dispatch: iface.method(args)
+        iface.vtable->method(iface.data, args...);
+    [ ] 5g. Implement type assertion: expr as Type
+        // ClassName* c = s as ClassName;
+        char* _r = (s.vtable->concrete_type_id == CLASS_TYPE_ID) ? s.data : NULL;
+    [ ] 5h. Handle TYPE_INTERFACE in c_base_name() -> emit "IFooName" (fat ptr struct name)
+    [ ] 5i. Handle TYPE_INTERFACE in c_type_str()
+        - Fat pointer is a struct type, not a pointer
+        - IFooName (no *, not is_pointer)
+    [ ] 5j. Handle cleanup for interface-typed local variables
+        - Interface value holds a reference (retained on creation)
+        - Add to cleanup_entries on var decl: if TYPE_INTERFACE and data holds class ref
+        - cleanup_pop_scope emits mylang_release(var.data)
+    [ ] 5k. Handle interface parameter passing in calls
+        - Pass fat pointer by value (struct copy)
+        - Caller retains guarded args same as class params
+        - Emit retain before call, release after call
+    [ ] 5l. Handle interface return values
+        - Callee retains intermediate, stores in _ret struct
+        - Caller receives +1 refcount
+    [ ] 5m. Handle interface assignment
+        - lhs release old .data, lhs = rhs struct copy, retain new .data
+    [x] 5n. Handle interface == comparison special case
+        - TYPE_INTERFACE on both sides -> compare .data pointers
+    [ ] 5o. Type resolution: resolve_type for AST_AS_CAST
+    [ ] 5p. Type resolution: resolve_type for interface calls
+        - Callee is MEMBER_ACCESS on TYPE_INTERFACE obj
+        - Look up method in InterfaceInfo by name
+        - Return method's return_type
+    [ ] 5q. Handle interface methods with ref parameters
+        - Thunk function receives C pointer (already ref), passes through
+    [ ] 5r. Handle "this" in interface vtable methods
+        - NOT needed: this is only used inside class method bodies, not in interface dispatch
+
+[ ] 6. SEMANTIC CHECKS
+    [ ] 6a. Class implements all interface methods (name + signature match)
+    [ ] 6b. Error if class declares ': Interface' but doesn't implement methods
+    [x] 6c. Error on interface instance creation (can't "new InterfaceName")
+    [ ] 6d. Error if both interfaces have method with same name but different signature
+    [x] 6e. Error if "as Type" where Type is not a class (or class not implementing the interface)
+    [x] 6f. Error if interface variable assigned from non-implementing type
+    [x] 6g. Error on "new InterfaceName[N]" (interface arrays)
+    [x] 6h. Error on interface field declarations (interfaces not allowed as class fields)
+
+[ ] 7. FIXED-SIZE ARRAY OF INTERFACES
+    [ ] 7a. Allow "InterfaceName[N]" syntax for fixed-size interface arrays
+    [ ] 7b. C typedef: IFooName array[N]
+    [ ] 7c. Cleanup: iterate and release each element's .data
+
+[ ] 8. TESTS (test_runner.py + standalone .my files)
+    [ ] 8a. Basic interface declaration (no implementation)
+    [ ] 8b. Single interface implementation by class
+    [ ] 8c. Multiple interfaces on one class
+    [ ] 8d. Interface variable declaration and assignment
+    [ ] 8e. Method call through interface (dynamic dispatch)
+    [ ] 8f. Two classes implementing same interface, called polymorphically
+    [ ] 8g. Interface as function parameter
+    [ ] 8h. Interface as function return type
+    [ ] 8i. "as" type assertion success
+    [ ] 8j. "as" type assertion failure (returns null)
+    [x] 8k. "as" used in if condition
+    [~] 8l. Interface refcounting correctness (no leaks) — covered for scalar interface lifecycle; chained interface calls still leak temporaries
+    [x] 8m. Interface method with primitive params
+    [x] 8n. Interface method with ref params
+    [x] 8o. Interface method returning class type
+    [x] 8p. Interface method returning interface type
+    [ ] 8q. Chained calls through interface (currently leaks temporary objects)
+    [x] 8r. Self-assignment of interface variables (iface = iface)
+    [ ] 8s. Interface method with multiple params
+    [ ] 8t. Error: class missing interface method
+    [x] 8u. Error: "new InterfaceName"
+    [ ] 8v. Error: interface method signature mismatch between two interfaces
+
+============================================================================
+Phase 2: weak + Interface
+============================================================================
+
+[ ] 9. WEAK INTERFACE TYPES
+    [ ] 9a. For each interface: emit WeakIFoo struct typedef
+        typedef struct { WeakRef* wr; IFooVTable* vt; } WeakIFoo;
+    [ ] 9b. weak InterfaceName var declaration codegen
+        WeakIFoo var;
+        var.wr = mylang_weak_init(obj.data);
+        var.vt = obj.vtable;
+        cleanup: mylang_weak_release(var.wr);
+    [ ] 9c. weak interface from class variable (implicit conversion)
+        WeakIFoo var;
+        var.wr = mylang_weak_init(classObj);
+        var.vt = &ClassName_IFoo_vtable;
+    [ ] 9d. obj.lock() on weak interface variable
+        void* _p = mylang_lock(var.wr);
+        IFoo iface;
+        iface.data = _p;    // _p is already retained (+1) by lock()
+        iface.vtable = var.vt;
+    [ ] 9e. Handle lock() returning NULL (object was freed)
+        IFoo iface;
+        iface.data = NULL;
+        iface.vtable = NULL;    // or keep vt? safer to null it
+        // Caller checks: if (var.lock()) { ... }
+    [ ] 9f. "as" on locked interface: work on iface.data (same as Phase 1)
+    [ ] 9g. Fixed-size arrays of WeakIFoo: cleanup iterates and calls mylang_weak_release
+    [ ] 9h. Error: weak interface as class field (same as weak class field restriction)
+
+[ ] 10. PHASE 2 TESTS
+    [ ] 10a. weak IShape declaration and assignment from class
+    [ ] 10b. weak IShape assignment from interface variable
+    [ ] 10c. lock() on weak interface returns valid fat pointer
+    [ ] 10d. lock() on freed object returns null interface
+    [ ] 10e. Weak interface cleanup (no leak of WeakRef)
+    [ ] 10f. Weak interface copy (weak var = weak var)
+    [ ] 10g. "as" on locked interface object

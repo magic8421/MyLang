@@ -214,12 +214,16 @@ static AstNode* parse_primary(Parser* p) {
         else if (check(p, TOK_IDENT))   {
             ClassInfo* ci = symtab_find_class(p->current.text);
             StructInfo* si = symtab_find_struct(p->current.text);
+            InterfaceInfo* ii = symtab_find_interface(p->current.text);
             if (si) {
                 base.kind = TYPE_STRUCT;
                 base.type_id = si->type_id;
             } else if (ci) {
                 base.kind = TYPE_CLASS;
                 base.type_id = ci->type_id;
+            } else if (ii) {
+                base.kind = TYPE_INTERFACE;
+                base.type_id = ii->type_id;
             } else {
                 base.kind = TYPE_CLASS;
             }
@@ -235,6 +239,12 @@ static AstNode* parse_primary(Parser* p) {
 
         AstNode* node = ast_new_node(AST_NEW, new_tok);
         node->resolved_type = base;
+
+        if (base.kind == TYPE_INTERFACE) {
+            fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
+                    new_tok.line, new_tok.col, base.class_name);
+            p->had_error = 1;
+        }
 
         if (check(p, TOK_LBRACKET)) {
             advance(p);
@@ -710,6 +720,11 @@ static AstNode* parse_class_decl(Parser* p) {
 
         } else {
             /* FIELD */
+            if (ft.kind == TYPE_INTERFACE) {
+                fprintf(stderr, "error at %d:%d: class fields cannot have interface type '%s'\n",
+                        fname.line, fname.col, ft.class_name);
+                p->had_error = 1;
+            }
             expect(p, TOK_SEMI);
             symtab_add_field(info, fname.text, ft);
         }

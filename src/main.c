@@ -74,6 +74,11 @@ int main(int argc, char** argv) {
     codegen_program(ast, out, src_path, leak_check);
     fclose(out);
 
+    if (codegen_had_error()) {
+        free(source);
+        return 1;
+    }
+
     printf("compiled '%s' -> '%s'\n", src_path, out_path);
 
     free(source);

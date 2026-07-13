@@ -9,6 +9,13 @@ static char        g_source_file_escaped[1024];
 static Type        g_return_type;
 static int         g_has_main = 0;
 static Type        g_main_return_type;
+static int         g_codegen_error = 0;
+
+int codegen_had_error(void) {
+    return g_codegen_error;
+}
+
+extern ClassInfo* class_list;
 
 static void escape_source_file(const char* src) {
     size_t i, j;
@@ -206,6 +213,19 @@ static Type resolve_type(AstNode* node) {
 static void codegen_expr(AstNode* node, FILE* out);
 
 static void codegen_binary(AstNode* node, FILE* out) {
+    TokenKind op = node->tok.kind;
+    if (op == TOK_EQ || op == TOK_NE) {
+        Type lt = resolve_type(node->children[0]);
+        Type rt = resolve_type(node->children[1]);
+        if (lt.kind == TYPE_INTERFACE && rt.kind == TYPE_INTERFACE) {
+            fprintf(out, "(");
+            codegen_expr(node->children[0], out);
+            fprintf(out, ".data %s ", node->tok.text);
+            codegen_expr(node->children[1], out);
+            fprintf(out, ".data)");
+            return;
+        }
+    }
     fprintf(out, "(");
     codegen_expr(node->children[0], out);
     fprintf(out, " %s ", node->tok.text);
@@ -601,6 +621,9 @@ static void codegen_expr(AstNode* node, FILE* out) {
                 codegen_expr(obj, out);
                 fprintf(out, ").data : NULL)");
             } else {
+                fprintf(stderr, "error at %d:%d: 'as' target must be a class type\n",
+                        node->tok.line, node->tok.col);
+                g_codegen_error = 1;
                 fprintf(out, "/* as-cast unsupported target */");
             }
             break;
@@ -913,6 +936,9 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
                 indent_line(out, indent);
                 fprintf(out, "%s %s = _init%d;\n", type.class_name, node->tok.text, tmp_id);
             } else {
+                fprintf(stderr, "error at %d:%d: cannot initialize interface '%s' with non-class value\n",
+                        node->tok.line, node->tok.col, type.class_name);
+                g_codegen_error = 1;
                 indent_line(out, indent);
                 fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->tok.text);
             }
@@ -1160,7 +1186,7 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 indent_line(out, indent);
                 fprintf(out, "%s.vtable = &%s_%s_vtable;\n",
                         lhs->tok.text, rt.class_name, lt.class_name);
-            } else {
+            } else if (rt.kind == TYPE_INTERFACE) {
                 indent_line(out, indent);
                 fprintf(out, "%s _iassign_%d = ", c_base_name(&lt), id);
                 codegen_expr(rhs, out);
@@ -1176,6 +1202,10 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 indent_line(out, indent);
                 codegen_expr(lhs, out);
                 fprintf(out, " = _iassign_%d;\n", id);
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot assign non-class value to interface '%s'\n",
+                        rhs->tok.line, rhs->tok.col, lt.class_name);
+                g_codegen_error = 1;
             }
 
             emit_stmt_call_releases(expr, out, indent);
@@ -1264,8 +1294,8 @@ static void codegen_interface_typedefs(FILE* out) {
         }
         fprintf(out, "} %sVTable;\n\n", ii->name);
 
-        /* Fat pointer typedef */
-        fprintf(out, "typedef struct {\n");
+        /* Fat pointer typedef (tagged so it can be forward-declared) */
+        fprintf(out, "typedef struct %s {\n", ii->name);
         fprintf(out, "    void* data;\n");
         fprintf(out, "    const %sVTable* vtable;\n", ii->name);
         fprintf(out, "} %s;\n\n", ii->name);
@@ -1886,6 +1916,24 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
     fprintf(out, "    mylang_check_bounds(arr, idx, file, line);\n");
     fprintf(out, "    return (char*)arr + idx * elem_size;\n");
     fprintf(out, "}\n\n");
+
+    /* Forward-declare class and interface types so that interface vtables
+       can reference class/interface return/parameter types regardless of
+       declaration order. */
+    {
+        ClassInfo* ci = class_list;
+        while (ci) {
+            fprintf(out, "typedef struct %s %s;\n", ci->name, ci->name);
+            ci = ci->next;
+        }
+        extern InterfaceInfo* interface_list;
+        InterfaceInfo* ii = interface_list;
+        while (ii) {
+            fprintf(out, "typedef struct %s %s;\n", ii->name, ii->name);
+            ii = ii->next;
+        }
+        fprintf(out, "\n");
+    }
 
     codegen_interface_typedefs(out);
 

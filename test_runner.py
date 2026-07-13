@@ -1089,6 +1089,147 @@ i32 main() {
 }
 """, 42),
 
+    ("iface_as_if", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square s = new Square;
+    s.side = 4;
+    IShape is = s;
+    Square p = is as Square;
+    if (p) {
+        return p.area();
+    }
+    return 0;
+}
+""", 16),
+
+    ("iface_return_class", """
+class Box {
+    i32 v;
+}
+interface IFactory {
+    Box make(i32 v);
+}
+class Factory : IFactory {
+    Box make(i32 v) {
+        Box b = new Box;
+        b.v = v;
+        return b;
+    }
+}
+i32 main() {
+    Factory f = new Factory;
+    IFactory ifact = f;
+    Box b = ifact.make(7);
+    return b.v;
+}
+""", 7),
+
+    ("iface_return_iface", """
+interface IInner {
+    i32 val();
+}
+interface IOuter {
+    IInner getInner();
+}
+class Inner : IInner {
+    i32 val() { return 99; }
+}
+class Outer : IOuter {
+    IInner getInner() {
+        Inner i = new Inner;
+        return i;
+    }
+}
+i32 main() {
+    Outer o = new Outer;
+    IOuter io = o;
+    IInner ii = io.getInner();
+    return ii.val();
+}
+""", 99),
+
+    ("iface_self_assign", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    Box b = new Box;
+    b.v = 3;
+    IVal iv = b;
+    iv = iv;
+    return iv.get();
+}
+""", 3),
+
+    ("iface_assign_from_iface", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    Box b = new Box;
+    b.v = 7;
+    IVal a = b;
+    IVal c = a;
+    return c.get();
+}
+""", 7),
+
+    ("iface_leak", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 use() {
+    Box b = new Box;
+    b.v = 123;
+    IVal iv = b;
+    return iv.get();
+}
+i32 main() {
+    return use();
+}
+""", 123),
+
+    ("iface_compare", """
+interface IVal {
+    i32 get();
+}
+class A : IVal {
+    i32 get() { return 1; }
+}
+class B : IVal {
+    i32 get() { return 2; }
+}
+i32 main() {
+    A a = new A;
+    B b = new B;
+    IVal ia = a;
+    IVal ib = b;
+    IVal ia2 = a;
+    if (ia == ib) { return 0; }
+    if (ia != ia2) { return 0; }
+    return 99;
+}
+""", 99),
+
     ("circular_ref_leak", """
 class Node {
     Node next;
@@ -1106,8 +1247,98 @@ i32 main() {
 ]
 
 # ============================================================
+# NEGATIVE TEST CASES: (name, source, expected_error_substring)
+# mylang.exe compilation is expected to fail.
+# ============================================================
+
+NEGATIVE_TESTS = [
+    ("bad_new_interface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 area() { return 1; }
+}
+i32 main() {
+    IShape s = new IShape;
+    return 0;
+}
+""", "cannot create instance of interface"),
+
+    ("bad_new_interface_array", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 area() { return 1; }
+}
+i32 main() {
+    IShape[] arr = new IShape[5];
+    return 0;
+}
+""", "cannot create instance of interface"),
+
+    ("bad_interface_field", """
+interface IShape {
+    i32 area();
+}
+class Foo {
+    IShape s;
+}
+i32 main() {
+    return 0;
+}
+""", "class fields cannot have interface type"),
+
+    ("bad_assign_to_iface", """
+interface IShape {
+    i32 area();
+}
+i32 main() {
+    IShape s = 123;
+    return 0;
+}
+""", "cannot initialize interface"),
+
+    ("bad_as_to_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 area() { return 1; }
+}
+i32 main() {
+    Square sq = new Square;
+    IShape s = sq;
+    IShape s2 = s as IShape;
+    return 0;
+}
+""", "'as' target must be a class type"),
+]
+
+# ============================================================
 # RUNNER
 # ============================================================
+
+def run_negative_test(idx, name, source, expected_substring):
+    testdir = os.path.join(SCRIPT_DIR, "test")
+    os.makedirs(testdir, exist_ok=True)
+
+    my_file = os.path.join(testdir, f"_n{idx}.my")
+
+    with open(my_file, "w", encoding="utf-8") as f:
+        f.write(source.strip() + "\n")
+
+    r = shell(f'"{MYLANG_EXE}" {my_file} nul', cwd=SCRIPT_DIR)
+    if r.returncode == 0:
+        return False, "mylang exited 0, expected compile failure"
+
+    if expected_substring and expected_substring not in (r.stderr or ""):
+        snippet = (r.stderr or "")[-200:]
+        return False, f"mylang failed but did not report '{expected_substring}'\n  {snippet}"
+
+    return True, f"mylang exit {r.returncode}"
+
 
 def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False):
     testdir = os.path.join(SCRIPT_DIR, "test")
@@ -1199,8 +1430,23 @@ def main():
         else:
             failed += 1
 
+    for i, (name, source, expected) in enumerate(NEGATIVE_TESTS):
+        if filters:
+            name_lower = name.lower()
+            if not any(k in name_lower for k in filters):
+                continue
+        total += 1
+        ok, msg = run_negative_test(i, name, source, expected)
+        status = "PASS" if ok else "FAIL"
+        print(f"[{status}] {name:30s} {msg}")
+        if ok:
+            passed += 1
+        else:
+            failed += 1
+
     if filters:
-        print(f"\n{passed}/{total} passed, {failed} failed  (filtered from {len(TESTS)} tests)")
+        all_tests = len(TESTS) + len(NEGATIVE_TESTS)
+        print(f"\n{passed}/{total} passed, {failed} failed  (filtered from {all_tests} tests)")
     else:
         print(f"\n{passed}/{total} passed, {failed} failed")
     sys.exit(0 if failed == 0 else 1)
