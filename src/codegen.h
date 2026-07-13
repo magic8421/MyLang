@@ -4,6 +4,6 @@
 #include "ast.h"
 #include <stdio.h>
 
-void codegen_program(AstNode* program, FILE* out, const char* source_file);
+void codegen_program(AstNode* program, FILE* out, const char* source_file, int leak_check);
 
 #endif

@@ -24,12 +24,29 @@ static char* read_file(const char* path) {
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        fprintf(stderr, "usage: mylang <source.my> [output.c]\n");
+        fprintf(stderr, "usage: mylang [--leak-check] <source.my> [output.c]\n");
         return 1;
     }
 
-    const char* src_path = argv[1];
-    const char* out_path = (argc >= 3) ? argv[2] : "out.c";
+    const char* src_path = NULL;
+    const char* out_path = "out.c";
+    int leak_check = 0;
+
+    int argi;
+    for (argi = 1; argi < argc; argi++) {
+        if (strcmp(argv[argi], "--leak-check") == 0) {
+            leak_check = 1;
+        } else if (!src_path) {
+            src_path = argv[argi];
+        } else {
+            out_path = argv[argi];
+        }
+    }
+
+    if (!src_path) {
+        fprintf(stderr, "usage: mylang [--leak-check] <source.my> [output.c]\n");
+        return 1;
+    }
 
     char* source = read_file(src_path);
     if (!source) return 1;
@@ -54,7 +71,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    codegen_program(ast, out, src_path);
+    codegen_program(ast, out, src_path, leak_check);
     fclose(out);
 
     printf("compiled '%s' -> '%s'\n", src_path, out_path);

@@ -1508,7 +1508,160 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     g_return_type = prev_ret;
 }
 
-void codegen_program(AstNode* program, FILE* out, const char* source_file) {
+static void emit_leak_check_runtime(FILE* out) {
+    fprintf(out,
+        "#ifdef MYLANG_LEAK_CHECK\n"
+        "\n"
+        "#ifdef _MSC_VER\n"
+        "static SRWLOCK mylang_leak_lock = SRWLOCK_INIT;\n"
+        "#define MYLANG_LEAK_LOCK() AcquireSRWLockExclusive(&mylang_leak_lock)\n"
+        "#define MYLANG_LEAK_UNLOCK() ReleaseSRWLockExclusive(&mylang_leak_lock)\n"
+        "#else\n"
+        "#include <pthread.h>\n"
+        "static pthread_mutex_t mylang_leak_mutex = PTHREAD_MUTEX_INITIALIZER;\n"
+        "#define MYLANG_LEAK_LOCK() pthread_mutex_lock(&mylang_leak_mutex)\n"
+        "#define MYLANG_LEAK_UNLOCK() pthread_mutex_unlock(&mylang_leak_mutex)\n"
+        "#endif\n"
+        "\n"
+        "static int mylang_leak_atexit_done = 0;\n"
+        "\n"
+        "#define LEAK_HASH_SIZE 512\n"
+        "\n"
+        "typedef struct LeakTraceTag {\n"
+        "    uint32_t hash;\n"
+        "    int depth;\n"
+        "    struct LeakTraceTag* next;\n"
+        "    MyFrame frames[1];\n"
+        "} LeakTrace;\n"
+        "\n"
+        "static LeakTrace* mylang_leak_traces[LEAK_HASH_SIZE];\n"
+        "\n"
+        "static uint32_t mylang_leak_hash_frames(const MyFrame* frames, int depth) {\n"
+        "    uint32_t h = 5381;\n"
+        "    int i;\n"
+        "    for (i = 0; i < depth; i++) {\n"
+        "        const char* s;\n"
+        "        s = frames[i].func ? frames[i].func : \"\";\n"
+        "        while (*s) h = ((h << 5) + h) + (unsigned char)*s++;\n"
+        "        s = frames[i].file ? frames[i].file : \"\";\n"
+        "        while (*s) h = ((h << 5) + h) + (unsigned char)*s++;\n"
+        "        h = ((h << 5) + h) + (unsigned)(frames[i].line);\n"
+        "    }\n"
+        "    return h;\n"
+        "}\n"
+        "\n"
+        "static LeakTrace* mylang_leak_capture(void) {\n"
+        "    int depth = __my_depth;\n"
+        "    int i;\n"
+        "    if (depth > MY_STACK_MAX) depth = MY_STACK_MAX;\n"
+        "    if (depth < 0) depth = 0;\n"
+        "    uint32_t h = mylang_leak_hash_frames(__my_stack, depth);\n"
+        "    uint32_t bucket = h %% LEAK_HASH_SIZE;\n"
+        "    LeakTrace* t = mylang_leak_traces[bucket];\n"
+        "    while (t) {\n"
+        "        if (t->hash == h && t->depth == depth) {\n"
+        "            int match = 1;\n"
+        "            for (i = 0; i < depth; i++) {\n"
+        "                if (t->frames[i].func != __my_stack[i].func ||\n"
+        "                    t->frames[i].file != __my_stack[i].file ||\n"
+        "                    t->frames[i].line != __my_stack[i].line) {\n"
+        "                    match = 0;\n"
+        "                    break;\n"
+        "                }\n"
+        "            }\n"
+        "            if (match) return t;\n"
+        "        }\n"
+        "        t = t->next;\n"
+        "    }\n"
+        "    t = calloc(1, sizeof(LeakTrace) + (depth > 0 ? depth - 1 : 0) * sizeof(MyFrame));\n"
+        "    if (!t) return NULL;\n"
+        "    t->hash = h;\n"
+        "    t->depth = depth;\n"
+        "    for (i = 0; i < depth; i++) t->frames[i] = __my_stack[i];\n"
+        "    t->next = mylang_leak_traces[bucket];\n"
+        "    mylang_leak_traces[bucket] = t;\n"
+        "    return t;\n"
+        "}\n"
+        "\n"
+        "static ObjHeader* mylang_leak_head = NULL;\n"
+        "\n"
+        "static void mylang_leak_check(void);\n"
+        "\n"
+        "static void mylang_leak_insert(ObjHeader* h) {\n"
+        "    MYLANG_LEAK_LOCK();\n"
+        "    if (!mylang_leak_atexit_done) {\n"
+        "        atexit(mylang_leak_check);\n"
+        "        mylang_leak_atexit_done = 1;\n"
+        "    }\n"
+        "    h->alloc_trace = mylang_leak_capture();\n"
+        "    if (mylang_leak_head) {\n"
+        "        h->next = mylang_leak_head;\n"
+        "        h->prev = mylang_leak_head->prev;\n"
+        "        mylang_leak_head->prev->next = h;\n"
+        "        mylang_leak_head->prev = h;\n"
+        "    } else {\n"
+        "        mylang_leak_head = h;\n"
+        "        h->next = h;\n"
+        "        h->prev = h;\n"
+        "    }\n"
+        "    MYLANG_LEAK_UNLOCK();\n"
+        "}\n"
+        "\n"
+        "static void mylang_leak_remove(ObjHeader* h) {\n"
+        "    MYLANG_LEAK_LOCK();\n"
+        "    if (h->next == h) {\n"
+        "        mylang_leak_head = NULL;\n"
+        "    } else {\n"
+        "        if (mylang_leak_head == h) mylang_leak_head = h->next;\n"
+        "        h->prev->next = h->next;\n"
+        "        h->next->prev = h->prev;\n"
+        "    }\n"
+        "    h->next = NULL;\n"
+        "    h->prev = NULL;\n"
+        "    MYLANG_LEAK_UNLOCK();\n"
+        "}\n"
+        "\n"
+        "static void mylang_leak_check(void) {\n"
+        "    MYLANG_LEAK_LOCK();\n"
+        "    if (mylang_leak_head) {\n"
+        "        int count = 0;\n"
+        "        ObjHeader* h = mylang_leak_head;\n"
+        "        fprintf(stderr, \"\\n========== Memory Leak Report ==========\\n\");\n"
+        "        do {\n"
+        "            count++;\n"
+        "            fprintf(stderr, \"LEAK[%%d]: ptr=%%p type_id=0x%%08X refcount=%%ld length=%%zu\\n\",\n"
+        "                    count, (void*)(h + 1), (unsigned)h->type_id, (long)h->refcount, h->length);\n"
+        "            if (h->alloc_trace) {\n"
+        "                LeakTrace* tr = h->alloc_trace;\n"
+        "                int i;\n"
+        "                for (i = tr->depth - 1; i >= 0; i--) {\n"
+        "                    fprintf(stderr, \"  #%%d %%s at %%s:%%d\\n\",\n"
+        "                            tr->depth - 1 - i,\n"
+        "                            tr->frames[i].func ? tr->frames[i].func : \"???\",\n"
+        "                            tr->frames[i].file ? tr->frames[i].file : \"???\",\n"
+        "                            tr->frames[i].line);\n"
+        "                }\n"
+        "            }\n"
+        "            h = h->next;\n"
+        "        } while (h != mylang_leak_head);\n"
+        "        fprintf(stderr, \"Total leaked blocks: %%d\\n\", count);\n"
+        "    }\n"
+        "    { int b; for (b = 0; b < LEAK_HASH_SIZE; b++) {\n"
+        "        LeakTrace* t = mylang_leak_traces[b];\n"
+        "        while (t) {\n"
+        "            LeakTrace* next = t->next;\n"
+        "            free(t);\n"
+        "            t = next;\n"
+        "        }\n"
+        "    } }\n"
+        "    MYLANG_LEAK_UNLOCK();\n"
+        "}\n"
+        "\n"
+        "#endif\n"
+    );
+}
+
+void codegen_program(AstNode* program, FILE* out, const char* source_file, int leak_check) {
     g_source_file = source_file ? source_file : "";
     escape_source_file(g_source_file);
 
@@ -1532,7 +1685,11 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
 
     fprintf(out, "#define MYLANG_TYPE_IS_ARRAY   0x80000000U\n");
     fprintf(out, "#define MYLANG_TYPE_IS_STRUCT  0x40000000U\n");
-    fprintf(out, "#define MYLANG_TYPE_ID_CLASS_BASE 16\n\n");
+    fprintf(out, "#define MYLANG_TYPE_ID_CLASS_BASE 16\n");
+    if (leak_check) {
+        fprintf(out, "#define MYLANG_LEAK_CHECK\n");
+    }
+    fprintf(out, "\n");
 
     fprintf(out, "#ifdef _MSC_VER\n");
     fprintf(out, "#include <windows.h>\n");
@@ -1594,13 +1751,24 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "#define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)\n\n");
 
     fprintf(out, "typedef struct WeakRef { volatile long refcount; struct ObjHeaderTag* obj; } WeakRef;\n");
-    fprintf(out, "typedef struct ObjHeaderTag { volatile long refcount; uint32_t type_id; WeakRef* weak; size_t length; } ObjHeader;\n");
+    fprintf(out, "typedef struct ObjHeaderTag { volatile long refcount; uint32_t type_id; WeakRef* weak; size_t length;");
+    if (leak_check) {
+        fprintf(out, " struct ObjHeaderTag* next; struct ObjHeaderTag* prev; struct LeakTraceTag* alloc_trace;");
+    }
+    fprintf(out, " } ObjHeader;\n");
     fprintf(out, "#define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))\n\n");
+
+    if (leak_check) {
+        emit_leak_check_runtime(out);
+    }
 
     fprintf(out, "static void* mylang_new_object(size_t sz, uint32_t type_id) {\n");
     fprintf(out, "    ObjHeader* h = calloc(1, sizeof(ObjHeader) + sz);\n");
     fprintf(out, "    h->refcount = 1;\n");
     fprintf(out, "    h->type_id = type_id;\n");
+    if (leak_check) {
+        fprintf(out, "    mylang_leak_insert(h);\n");
+    }
     fprintf(out, "    return h + 1;\n");
     fprintf(out, "}\n\n");
 
@@ -1609,6 +1777,9 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "    h->refcount = 1;\n");
     fprintf(out, "    h->type_id = type_id;\n");
     fprintf(out, "    h->length = count;\n");
+    if (leak_check) {
+        fprintf(out, "    mylang_leak_insert(h);\n");
+    }
     fprintf(out, "    return h + 1;\n");
     fprintf(out, "}\n\n");
 
@@ -1674,6 +1845,9 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file) {
     fprintf(out, "            }\n");
     fprintf(out, "        }\n");
     fprintf(out, "        if (h->weak) h->weak->obj = NULL;\n");
+    if (leak_check) {
+        fprintf(out, "        mylang_leak_remove(h);\n");
+    }
     fprintf(out, "        free(h);\n");
     fprintf(out, "    }\n");
     fprintf(out, "    return 0;\n");
