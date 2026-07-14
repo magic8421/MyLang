@@ -54,7 +54,7 @@ static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
-static int next_type_id = TYPE_ID_CLASS_BASE;
+
 
 static Type parse_type(Parser* p) {
     Type t;
@@ -582,7 +582,7 @@ static AstNode* parse_struct_decl(Parser* p) {
     StructInfo* info = calloc(1, sizeof(StructInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
     info->name[63] = '\0';
-    info->type_id = next_type_id++ | TYPE_IS_STRUCT;
+    info->type_id = symtab_next_type_id() | TYPE_IS_STRUCT;
 
     /* register early so later types can refer to it */
     symtab_add_struct(name.text, info);
@@ -633,7 +633,7 @@ static AstNode* parse_class_decl(Parser* p) {
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
     info->name[63] = '\0';
-    info->type_id = next_type_id++;
+    info->type_id = symtab_next_type_id();
 
     /* register early so methods with this return type resolve */
     symtab_add_class(name.text, info);
@@ -772,7 +772,7 @@ static AstNode* parse_interface_decl(Parser* p) {
     InterfaceInfo* info = calloc(1, sizeof(InterfaceInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
     info->name[63] = '\0';
-    info->type_id = next_type_id++;
+    info->type_id = symtab_next_type_id();
 
     /* register early for self-referential use (unlikely for interfaces,
        but consistent with class/struct registration) */

@@ -10,6 +10,7 @@ ClassInfo*            class_list    = NULL;
 static StructInfo*    struct_list   = NULL;
 InterfaceInfo*        interface_list = NULL;
 static FuncInfo*      func_list     = NULL;
+static int            next_type_id  = TYPE_ID_CLASS_BASE;
 
 static unsigned hash_string(const char* s) {
     unsigned h = 5381;
@@ -24,6 +25,7 @@ void symtab_init(void) {
     scope_counter = 0;
     current_scope = calloc(1, sizeof(Scope));
     current_scope->level = scope_counter++;
+    next_type_id = TYPE_ID_CLASS_BASE;
 }
 
 void symtab_enter_scope(void) {
@@ -341,4 +343,72 @@ int symtab_validate_impls(void) {
         ci = ci->next;
     }
     return errors;
+}
+
+int symtab_next_type_id(void) {
+    return next_type_id++;
+}
+
+void symtab_mark_class_generic(ClassInfo* info, AstNode* ast, int param_count, const char* params[]) {
+    int i;
+    info->is_generic = 1;
+    info->generic_ast = ast;
+    info->generic_param_count = param_count;
+    for (i = 0; i < param_count && i < MAX_GENERIC_PARAMS; i++) {
+        CHECK_STRSCPY(strscpy(info->generic_params[i], params[i], sizeof(info->generic_params[i])),
+                      "generic parameter name too long");
+    }
+}
+
+ClassInfo* symtab_find_class_by_mangled(const char* mangled_name) {
+    ClassInfo* s = class_list;
+    while (s) {
+        if (s->is_instantiation && strcmp(s->mangled_name, mangled_name) == 0) {
+            return s;
+        }
+        s = s->next;
+    }
+    return NULL;
+}
+
+ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* args, int arg_count) {
+    if (arg_count != generic_def->generic_param_count) {
+        fprintf(stderr, "error: generic class '%s' expects %d type arguments, got %d\n",
+                generic_def->name, generic_def->generic_param_count, arg_count);
+        return NULL;
+    }
+
+    Type inst_type = type_make_user(TYPE_CLASS, generic_def->name);
+    int i;
+    for (i = 0; i < arg_count && i < MAX_TYPE_ARGS; i++) {
+        type_set_arg(&inst_type, i, &args[i]);
+    }
+    const char* mangled = type_mangled_name(&inst_type);
+
+    ClassInfo* existing = symtab_find_class_by_mangled(mangled);
+    if (existing) {
+        for (i = 0; i < inst_type.type_arg_count && i < MAX_TYPE_ARGS; i++) {
+            type_free(inst_type.type_args[i]);
+        }
+        return existing;
+    }
+
+    ClassInfo* ci = calloc(1, sizeof(ClassInfo));
+    CHECK_STRSCPY(strscpy(ci->name, generic_def->name, sizeof(ci->name)), "class name too long");
+    CHECK_STRSCPY(strscpy(ci->mangled_name, mangled, sizeof(ci->mangled_name)), "mangled class name too long");
+    ci->type_id = symtab_next_type_id();
+    ci->is_instantiation = 1;
+    ci->generic_def = generic_def;
+    ci->instantiation_arg_count = arg_count;
+    for (i = 0; i < arg_count && i < MAX_GENERIC_PARAMS; i++) {
+        ci->instantiation_args[i] = *type_new(&args[i]);
+    }
+
+    for (i = 0; i < inst_type.type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        type_free(inst_type.type_args[i]);
+    }
+
+    ci->next = class_list;
+    class_list = ci;
+    return ci;
 }

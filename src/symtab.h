@@ -6,6 +6,8 @@
 #define MAX_FIELDS 32
 #define MAX_IMPL  8
 #define HASH_SIZE  64
+#define MAX_GENERIC_PARAMS 8
+#define MAX_CONSTRAINTS_PER_PARAM 4
 
 typedef struct MethodInfo {
     char name[64];
@@ -44,6 +46,21 @@ typedef struct ClassInfo {
     int  impl_count;
     char impl_names[MAX_IMPL][64];
     InterfaceInfo* impl_infos[MAX_IMPL];
+
+    int  is_generic;
+    int  generic_param_count;
+    char generic_params[MAX_GENERIC_PARAMS][64];
+    int  generic_constraint_count[MAX_GENERIC_PARAMS];
+    char generic_constraints[MAX_GENERIC_PARAMS][MAX_CONSTRAINTS_PER_PARAM][64];
+    int  generic_has_new[MAX_GENERIC_PARAMS];
+    AstNode* generic_ast;
+
+    int  is_instantiation;
+    struct ClassInfo* generic_def;
+    int  instantiation_arg_count;
+    Type instantiation_args[MAX_GENERIC_PARAMS];
+    char mangled_name[128];
+
     struct ClassInfo* next;
 } ClassInfo;
 
@@ -112,5 +129,10 @@ InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
 void symtab_add_class_impl(ClassInfo* cls, const char* iface_name);
 
 int  symtab_validate_impls(void);
+
+int  symtab_next_type_id(void);
+void symtab_mark_class_generic(ClassInfo* info, AstNode* ast, int param_count, const char* params[]);
+ClassInfo* symtab_find_class_by_mangled(const char* mangled_name);
+ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* args, int arg_count);
 
 #endif

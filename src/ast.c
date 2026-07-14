@@ -1,4 +1,6 @@
 #include "ast.h"
+#include "mangle.h"
+#include "util.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -27,7 +29,6 @@ AstNode* ast_append_list(AstNode* head, AstNode* item) {
 }
 
 const char* type_name(const Type* t) {
-    static char buf[128];
     switch (t->type_kind) {
         case TYPE_I8:    return "i8";
         case TYPE_I16:   return "i16";
@@ -40,9 +41,12 @@ const char* type_name(const Type* t) {
         case TYPE_F32:   return "f32";
         case TYPE_F64:   return "f64";
         case TYPE_VOID:  return "void";
-        case TYPE_CLASS: return t->class_name;
-        case TYPE_STRUCT: return t->class_name;
-        case TYPE_INTERFACE: return t->class_name;
+        case TYPE_TYPE_PARAM: return t->class_name;
+        case TYPE_CLASS:
+        case TYPE_STRUCT:
+        case TYPE_INTERFACE:
+            if (t->type_arg_count > 0) return type_mangled_name((Type*)t);
+            return t->class_name;
     }
     return "?";
 }
@@ -53,8 +57,112 @@ int type_equal(const Type* a, const Type* b) {
     if (a->is_array != b->is_array) return 0;
     if (a->array_size != b->array_size) return 0;
     if (a->is_ref != b->is_ref) return 0;
-    if (a->type_kind == TYPE_CLASS || a->type_kind == TYPE_STRUCT || a->type_kind == TYPE_INTERFACE) {
-        return strcmp(a->class_name, b->class_name) == 0;
+    if (a->is_weak != b->is_weak) return 0;
+    if (a->type_arg_count != b->type_arg_count) return 0;
+    if (a->type_kind == TYPE_CLASS || a->type_kind == TYPE_STRUCT ||
+        a->type_kind == TYPE_INTERFACE || a->type_kind == TYPE_TYPE_PARAM) {
+        if (strcmp(a->class_name, b->class_name) != 0) return 0;
+    }
+    int i;
+    for (i = 0; i < a->type_arg_count; i++) {
+        if (!a->type_args[i] || !b->type_args[i]) return 0;
+        if (!type_equal(a->type_args[i], b->type_args[i])) return 0;
     }
     return 1;
+}
+
+Type type_make_primitive(TypeKind kind) {
+    Type t = {0};
+    t.type_kind = kind;
+    switch (kind) {
+        case TYPE_I8:  t.type_id = TYPE_ID_I8;  break;
+        case TYPE_I16: t.type_id = TYPE_ID_I16; break;
+        case TYPE_I32: t.type_id = TYPE_ID_I32; break;
+        case TYPE_I64: t.type_id = TYPE_ID_I64; break;
+        case TYPE_U8:  t.type_id = TYPE_ID_U8;  break;
+        case TYPE_U16: t.type_id = TYPE_ID_U16; break;
+        case TYPE_U32: t.type_id = TYPE_ID_U32; break;
+        case TYPE_U64: t.type_id = TYPE_ID_U64; break;
+        case TYPE_F32: t.type_id = TYPE_ID_F32; break;
+        case TYPE_F64: t.type_id = TYPE_ID_F64; break;
+        default: break;
+    }
+    return t;
+}
+
+Type type_make_user(TypeKind kind, const char* name) {
+    Type t = {0};
+    t.type_kind = kind;
+    CHECK_STRSCPY(strscpy(t.class_name, name, sizeof(t.class_name)), "user type name too long");
+    return t;
+}
+
+Type type_make_param(const char* name) {
+    Type t = {0};
+    t.type_kind = TYPE_TYPE_PARAM;
+    CHECK_STRSCPY(strscpy(t.class_name, name, sizeof(t.class_name)), "type param name too long");
+    return t;
+}
+
+Type* type_new(const Type* src) {
+    Type* p = malloc(sizeof(Type));
+    *p = *src;
+    p->mangled_name[0] = '\0';
+    int i;
+    for (i = 0; i < MAX_TYPE_ARGS; i++) p->type_args[i] = NULL;
+    p->type_arg_count = 0;
+    for (i = 0; i < src->type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        p->type_args[i] = type_new(src->type_args[i]);
+        p->type_arg_count++;
+    }
+    return p;
+}
+
+void type_free(Type* t) {
+    if (!t) return;
+    int i;
+    for (i = 0; i < t->type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        type_free(t->type_args[i]);
+    }
+    free(t);
+}
+
+int type_is_param(const Type* t) {
+    return t->type_kind == TYPE_TYPE_PARAM;
+}
+
+int type_is_generic(const Type* t) {
+    return t->type_arg_count > 0;
+}
+
+const char* type_mangled_name(Type* t) {
+    return mangle_type(t);
+}
+
+Type* type_substitute(const Type* t, const char* params[], const Type* args[], int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        if (t->type_kind == TYPE_TYPE_PARAM && strcmp(t->class_name, params[i]) == 0) {
+            return type_new(args[i]);
+        }
+    }
+    Type* r = type_new(t);
+    for (i = 0; i < r->type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        Type* sub = type_substitute(r->type_args[i], params, args, count);
+        type_free(r->type_args[i]);
+        r->type_args[i] = sub;
+    }
+    r->mangled_name[0] = '\0';
+    return r;
+}
+
+void type_set_arg(Type* t, int idx, const Type* arg) {
+    if (idx < 0 || idx >= MAX_TYPE_ARGS) return;
+    if (t->type_args[idx]) {
+        type_free(t->type_args[idx]);
+    }
+    t->type_args[idx] = type_new(arg);
+    if (idx >= t->type_arg_count) {
+        t->type_arg_count = idx + 1;
+    }
 }

@@ -8,6 +8,7 @@ typedef enum {
     TYPE_CLASS,
     TYPE_STRUCT,
     TYPE_INTERFACE,
+    TYPE_TYPE_PARAM,
     TYPE_I8,
     TYPE_I16,
     TYPE_I32,
@@ -36,7 +37,9 @@ typedef enum {
 #define TYPE_IS_WEAK     0x20000000U
 #define TYPE_IS_INTERFACE 0x10000000U
 
-typedef struct {
+#define MAX_TYPE_ARGS 4
+
+typedef struct Type {
     TypeKind type_kind;
     char     class_name[64];
     int      is_pointer;
@@ -45,6 +48,10 @@ typedef struct {
     int      is_ref;       /* by-reference parameter */
     int      is_weak;      /* weak reference */
     int      type_id;
+
+    int      type_arg_count;
+    struct Type* type_args[MAX_TYPE_ARGS];
+    char     mangled_name[128];
 } Type;
 
 typedef struct AstNode AstNode;
@@ -95,5 +102,17 @@ AstNode* ast_append_list(AstNode* head, AstNode* item);
 
 const char* type_name(const Type* t);
 int         type_equal(const Type* a, const Type* b);
+
+/* Type construction helpers */
+Type        type_make_primitive(TypeKind kind);
+Type        type_make_user(TypeKind kind, const char* name);
+Type        type_make_param(const char* name);
+Type*       type_new(const Type* src);
+void        type_free(Type* t);
+int         type_is_param(const Type* t);
+int         type_is_generic(const Type* t);
+const char* type_mangled_name(Type* t);
+Type*       type_substitute(const Type* t, const char* params[], const Type* args[], int count);
+void        type_set_arg(Type* t, int idx, const Type* arg);
 
 #endif
