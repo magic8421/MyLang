@@ -128,8 +128,8 @@ Source code lives under `src/`:
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging
-- Enable at compile time with `mylang --leak-check source.my out.c`.
-- Enable in the test runner with `python test_runner.py --leak-check`.
+- During compiler development, when need verify no memory leak, run the test suite in debug mode: `python test_runner.py --mode debug`.
+- For mylang end users, enable leak tracking at compile time with `mylang --leak-check source.my out.c`.
 - Tracks only `ObjHeader` based allocations (class instances and dynamic arrays). WeakRef control blocks are not tracked.
 - When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
 - `mylang_release` removes the block from the list before freeing it.

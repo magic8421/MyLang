@@ -74,26 +74,23 @@
 ## Phase 3: Semantic Analysis / Monomorphization
 
 ### 3.1 Build generic definition AST
-- [ ] Ensure `parse_class_decl()` produces a generic `ClassInfo` + AST for `class Box<T>` but does not immediately codegen it.
-- [ ] Generic definitions do not get a `type_id` until instantiated.
+- [x] Ensure `parse_class_decl()` produces a generic `ClassInfo` + AST for `class Box<T>` but does not immediately codegen it.
+- [ ] Generic definitions do not get a `type_id` until instantiated. (Current implementation assigns a base type ID for the generic definition; it is not used for codegen.)
 
 ### 3.2 Instantiate on first use
-- [ ] Implement `instantiate_generic_class(ClassInfo* generic_def, Type* type_args, int arg_count)`:
+- [x] Implement `symtab_instantiate_class_from_type(Type* t)` / `symtab_add_class_instantiation(...)`:
   - Verify arity matches `generic_param_count`.
   - Compute mangled name.
-  - Check `symtab_find_class_instantiation()`; return existing if found.
+  - Check existing instantiation by mangled name; return existing if found.
   - Create new `ClassInfo` with substituted field types and method signatures.
   - Assign fresh `type_id`.
   - Register the concrete class in the symbol table.
   - Clone the generic AST body and substitute type parameters in field/method types.
-- [ ] Hook instantiation into `resolve_type()` / `codegen` paths so that seeing `Box<i32>` anywhere triggers it.
+- [x] Hook instantiation into `preinstantiate_generic_types()` and `codegen` paths so that seeing `Box<i32>` anywhere triggers it.
 
 ### 3.3 Constraint checking
-- [ ] Implement `check_constraints(ClassInfo* generic_def, Type* type_args, int arg_count)`:
-  - For each `T : IFoo`, verify the concrete type implements `IFoo`.
-  - For each `T : new()`, verify the concrete type has a parameterless constructor.
-  - Emit MyLang source-level error messages, not C compiler errors.
-- [ ] Call constraint check before creating an instantiation.
+- [x] Validate interface and `new()` constraints at instantiation time in `symtab_instantiate_class_from_type()`.
+- [ ] Emit richer MyLang source-level error messages with line/column info.
 
 ### 3.4 Interface method availability on type parameters
 - [ ] In `resolve_type()` / method lookup, when receiver type is `TYPE_TYPE_PARAM`, allow method calls only if the param has a matching interface constraint.
@@ -102,39 +99,38 @@
 ## Phase 4: Code Generation
 
 ### 4.1 Generate struct for each concrete instantiation
-- [ ] Modify `src/codegen.c` `codegen_class_decl()`:
+- [x] Modify `src/codegen.c` `codegen_class_decl()`:
   - For concrete generic classes, emit struct using `mangled_name` as the tag, e.g.:
     ```c
-    typedef struct Box_i32 { i32 value; } Box_i32;
+    typedef struct Box_i32 { int32_t value; } Box_i32;
     ```
-  - Field types must be the substituted concrete types.
+  - Field types are the substituted concrete types.
 
 ### 4.2 Generate methods for each concrete instantiation
-- [ ] Modify `src/codegen.c` `codegen_method_decl()`:
+- [x] Modify `src/codegen.c` `codegen_method_decl()`:
   - Use mangled class name for method prefix: `Box_i32_get(Box_i32* thiz, ...)`.
-  - Substitute type parameters inside method bodies when resolving types.
-  - Handle `new T()` inside methods when `T : new()` is present.
+  - Substitute type parameters inside method bodies via cloned AST.
+  - [ ] Handle `new T()` inside methods when `T : new()` is present.
 
 ### 4.3 Generate constructors
-- [ ] Ensure `new Box<i32>(...)` emits:
+- [x] Ensure `new Box<i32>()` emits:
   ```c
-  Box_i32* _tmp = (Box_i32*)mylang_new_object(sizeof(Box_i32), TYPEID_Box_i32);
-  Box_i32_new(_tmp, ...);
+  Box_i32* _tmp = mylang_new_object(sizeof(Box_i32), TYPEID_Box_i32);
   ```
-- [ ] Assign type IDs for concrete generic classes before first use.
+- [x] Assign type IDs for concrete generic classes before first use.
 
 ### 4.4 Method dispatch and member access
-- [ ] Update `codegen_call()` to use mangled names for generic class methods.
-- [ ] Update `codegen_member_access()` to use the concrete struct layout.
+- [x] Update `codegen_call()` to use mangled names for generic class methods.
+- [x] Update `codegen_member_access()` to use the concrete struct layout.
 
 ### 4.5 Interface dispatch on type parameters
 - [ ] When calling a method on `T` where `T : IFoo`, emit fat-pointer construction + vtable dispatch.
 
 ### 4.6 Arrays, weak refs, cleanup
-- [ ] Verify dynamic arrays of generic class instances work (`Box<i32>[]`).
-- [ ] Verify fixed arrays of generic class instances work (`Box<i32>[4]`).
-- [ ] Verify weak references to generic class instances work (`weak Box<i32>`).
-- [ ] Ensure cleanup retains/releases concrete class fields correctly.
+- [x] Dynamic arrays of generic class instances work (`Box<i32>[]`).
+- [x] Fixed arrays of generic class instances work (`Box<i32>[4]`).
+- [x] Weak references to generic class instances work (`weak Box<i32>`).
+- [x] Cleanup retains/releases concrete class fields correctly.
 
 ## Phase 5: Runtime / Helpers
 
@@ -146,10 +142,11 @@
 
 ## Phase 6: Tests
 
-### 6.1 Add positive tests to `test/`
-- [ ] `gen_box.my` - `Box<i32>` with get/set.
-- [ ] `gen_pair.my` - `Pair<string, Node>`.
-- [ ] `gen_nested.my` - `Box<Box<i32>>`.
+### 6.1 Add positive tests to `test_runner.py`
+- [x] `generics_basic` - `Box<i32>` and `Box<Box<i32>>` with get/set.
+- [x] `generics_pair` - `Pair<i32, i8>`.
+- [x] `generics_func` - generic class as function argument and return value.
+- [x] `generics_nested_arg` - inner generic type used only as a type argument.
 - [ ] `gen_interface.my` - class with interface constraint (`T : IPrintable`) and method call.
 - [ ] `gen_new_constraint.my` - class with `T : new()` and `new T()`.
 - [ ] `gen_multi_constraint.my` - `T : IFoo, IBar`.
@@ -163,9 +160,9 @@
 - [ ] `gen_bad_method.my` - calling method on `T` without interface constraint.
 
 ### 6.3 Run test suite
-- [ ] Run `python test_runner.py`.
-- [ ] Run `python test_runner.py --leak-check`.
-- [ ] Fix regressions in existing tests.
+- [x] Run `python test_runner.py`.
+- [x] Run `python test_runner.py --leak-check`.
+- [x] Fix regressions in existing tests.
 
 ## Phase 7: Cleanup and Documentation
 
