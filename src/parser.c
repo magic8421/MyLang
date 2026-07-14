@@ -70,8 +70,17 @@ static Type parse_type(Parser* p) {
             ClassInfo* ci = symtab_find_class(p->current.text);
             if (ci) t.type_id = ci->type_id;
             advance(p);
+        } else if (check(p, TOK_IDENT) && symtab_find_interface(p->current.text)) {
+            t.type_kind = TYPE_INTERFACE;
+            CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "interface name too long");
+            t.class_name[63] = '\0';
+            t.is_weak = 1;
+            t.is_pointer = 0;
+            InterfaceInfo* ii = symtab_find_interface(p->current.text);
+            if (ii) t.type_id = ii->type_id;
+            advance(p);
         } else {
-            fprintf(stderr, "error at %d:%d: weak requires a class type\n",
+            fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
                     p->current.line, p->current.col);
             p->had_error = 1;
         }

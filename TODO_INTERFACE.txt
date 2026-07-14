@@ -168,37 +168,37 @@ Phase 1: Core Interface
 Phase 2: weak + Interface
 ============================================================================
 
-[ ] 9. WEAK INTERFACE TYPES
-    [ ] 9a. For each interface: emit WeakIFoo struct typedef
+[x] 9. WEAK INTERFACE TYPES
+    [x] 9a. For each interface: emit WeakIFoo struct typedef
         typedef struct { WeakRef* wr; IFooVTable* vt; } WeakIFoo;
-    [ ] 9b. weak InterfaceName var declaration codegen
+    [x] 9b. weak InterfaceName var declaration codegen
         WeakIFoo var;
         var.wr = mylang_weak_init(obj.data);
         var.vt = obj.vtable;
         cleanup: mylang_weak_release(var.wr);
-    [ ] 9c. weak interface from class variable (implicit conversion)
+    [x] 9c. weak interface from class variable (implicit conversion)
         WeakIFoo var;
         var.wr = mylang_weak_init(classObj);
         var.vt = &ClassName_IFoo_vtable;
-    [ ] 9d. obj.lock() on weak interface variable
+    [x] 9d. obj.lock() on weak interface variable
         void* _p = mylang_lock(var.wr);
         IFoo iface;
         iface.data = _p;    // _p is already retained (+1) by lock()
         iface.vtable = var.vt;
-    [ ] 9e. Handle lock() returning NULL (object was freed)
+    [x] 9e. Handle lock() returning NULL (object was freed)
         IFoo iface;
         iface.data = NULL;
         iface.vtable = NULL;    // or keep vt? safer to null it
         // Caller checks: if (var.lock()) { ... }
-    [ ] 9f. "as" on locked interface: work on iface.data (same as Phase 1)
-    [ ] 9g. Fixed-size arrays of WeakIFoo: cleanup iterates and calls mylang_weak_release
-    [ ] 9h. Error: weak interface as class field (same as weak class field restriction)
+    [x] 9f. "as" on locked interface: work on iface.data (same as Phase 1)
+    [x] 9g. Fixed-size arrays of WeakIFoo: cleanup iterates and calls mylang_weak_release
+    [x] 9h. Error: weak interface as class field (same as weak class field restriction)
 
-[ ] 10. PHASE 2 TESTS
-    [ ] 10a. weak IShape declaration and assignment from class
-    [ ] 10b. weak IShape assignment from interface variable
-    [ ] 10c. lock() on weak interface returns valid fat pointer
-    [ ] 10d. lock() on freed object returns null interface
-    [ ] 10e. Weak interface cleanup (no leak of WeakRef)
-    [ ] 10f. Weak interface copy (weak var = weak var)
-    [ ] 10g. "as" on locked interface object
+[x] 10. PHASE 2 TESTS
+    [x] 10a. weak IShape declaration and assignment from class
+    [x] 10b. weak IShape assignment from interface variable
+    [x] 10c. lock() on weak interface returns valid fat pointer
+    [x] 10d. lock() on freed object returns null interface
+    [x] 10e. Weak interface cleanup (no leak of WeakRef)
+    [x] 10f. Weak interface copy (weak var = weak var)
+    [x] 10g. "as" on locked interface object

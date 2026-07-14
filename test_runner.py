@@ -91,7 +91,7 @@ def compile_c(src, exe):
         flags = "/MDd /Zi"
     else:
         flags = "/fsanitize=address /Zi"
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /Fe:{exe} {src}'
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Fe:{exe} {src}'
     r = shell(cmd, cwd=exedir)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
@@ -1243,6 +1243,183 @@ i32 main() {
     return 99;
 }
 """, 99),
+
+    ("weak_iface_basic", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 6;
+    weak IShape w = sq;
+    IShape s = w.lock();
+    return s.area();
+}
+""", 36),
+
+    ("weak_iface_from_strong_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    IShape strong = sq;
+    weak IShape w = strong;
+    IShape s = w.lock();
+    return s.area();
+}
+""", 25),
+
+    ("weak_iface_dead_after_release", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+IShape make() {
+    Square sq = new Square;
+    sq.side = 9;
+    return sq;
+}
+i32 main() {
+    weak IShape w = make();
+    IShape s = w.lock();
+    if (s.data) return 1;
+    return 0;
+}
+""", 0),
+
+    ("weak_iface_param_from_class", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 read(weak IShape w) {
+    IShape s = w.lock();
+    if (!s.data) return 0;
+    return s.area();
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 7;
+    return read(sq);
+}
+""", 49),
+
+    ("weak_iface_param_from_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 read(weak IShape w) {
+    IShape s = w.lock();
+    if (!s.data) return 0;
+    return s.area();
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 4;
+    IShape strong = sq;
+    return read(strong);
+}
+""", 16),
+
+    ("weak_iface_param_owned_dead", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+IShape make() {
+    Square sq = new Square;
+    sq.side = 3;
+    return sq;
+}
+i32 read(weak IShape w) {
+    IShape s = w.lock();
+    if (!s.data) return 0;
+    return s.area();
+}
+i32 main() {
+    return read(make());
+}
+""", 0),
+
+    ("weak_iface_fixed_array", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    weak IShape[2] arr;
+    Square sq = new Square;
+    sq.side = 2;
+    arr[0] = sq;
+    IShape s = arr[0].lock();
+    return s.area() + 1;
+}
+""", 5),
+
+    ("weak_iface_assign", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 8;
+    IShape strong = sq;
+    weak IShape w;
+    w = strong;
+    weak IShape w2 = w;
+    IShape s = w2.lock();
+    return s.area();
+}
+""", 64),
+
+    ("weak_iface_as_locked", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    weak IShape w = sq;
+    IShape locked = w.lock();
+    Square p = locked as Square;
+    if (p) return p.area();
+    return 0;
+}
+""", 25),
 
     ("iface_dyn_array_basic", """
 interface IShape {

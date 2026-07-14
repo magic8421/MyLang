@@ -13,6 +13,9 @@ typedef struct {
     int         is_interface;
     int         is_interface_array;
     int         interface_array_size;
+    int         is_weak_interface;
+    int         is_weak_interface_array;
+    int         weak_interface_array_size;
 } CleanupEntry;
 
 typedef struct {
@@ -69,9 +72,17 @@ static const char* c_base_name(const Type* t) {
     }
 }
 
+static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
+    snprintf(buf, bufsz, "Weak%s", t->class_name);
+}
+
 static void c_type_str(const Type* t, char* buf, int bufsz) {
     int n;
-    if (t->array_size > 0) {
+    if (t->is_weak && t->type_kind == TYPE_INTERFACE) {
+        char winame[128];
+        c_weak_interface_name(t, winame, sizeof(winame));
+        n = snprintf(buf, bufsz, "%s", winame);
+    } else if (t->array_size > 0) {
         /* fixed-size array declared as T name[N] */
         n = snprintf(buf, bufsz, "%s", c_base_name(t));
     } else if (t->type_kind == TYPE_INTERFACE && t->is_array) {
@@ -190,7 +201,11 @@ static Type resolve_type(AstNode* node) {
                 if (strcmp(mem->ast_token.text, "lock") == 0 && obj->ast_resolved_type.is_weak) {
                     t = obj->ast_resolved_type;
                     t.is_weak = 0;
-                    t.is_pointer = 1;
+                    if (t.type_kind == TYPE_INTERFACE) {
+                        t.is_pointer = 0;
+                    } else {
+                        t.is_pointer = 1;
+                    }
                 } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
                     MethodInfo* mi = symtab_find_method(obj->ast_resolved_type.class_name, mem->ast_token.text);
                     if (mi) { t = mi->return_type; }
@@ -290,6 +305,39 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
         } else {
             fprintf(out, "&%s", arg->ast_token.text);
         }
+    } else if (param_type->is_weak && param_type->type_kind == TYPE_INTERFACE) {
+        resolve_type(arg);
+        Type rt = arg->ast_resolved_type;
+        if (rt.is_weak && rt.type_kind == TYPE_INTERFACE) {
+            /* weak interface -> weak interface: struct copy */
+            codegen_expr(ctx, arg, out);
+        } else if (rt.type_kind == TYPE_INTERFACE) {
+            /* strong interface -> weak interface */
+            if (arg->ast_kind == AST_CALL || arg->ast_kind == AST_NEW) {
+                fprintf(out, "mylang_weakify_%s_owned(", param_type->class_name);
+                codegen_expr(ctx, arg, out);
+                fprintf(out, ")");
+            } else {
+                fprintf(out, "mylang_weakify_%s(", param_type->class_name);
+                codegen_expr(ctx, arg, out);
+                fprintf(out, ")");
+            }
+        } else if (rt.type_kind == TYPE_CLASS) {
+            /* class -> weak interface */
+            if (arg->ast_kind == AST_CALL || arg->ast_kind == AST_NEW) {
+                fprintf(out, "mylang_weakify_%s_from_ptr_owned(", param_type->class_name);
+                codegen_expr(ctx, arg, out);
+                fprintf(out, ", &%s_%s_vtable)", rt.class_name, param_type->class_name);
+            } else {
+                fprintf(out, "mylang_weakify_%s_from_ptr(", param_type->class_name);
+                codegen_expr(ctx, arg, out);
+                fprintf(out, ", &%s_%s_vtable)", rt.class_name, param_type->class_name);
+            }
+        } else {
+            fprintf(stderr, "error at %d:%d: cannot pass this argument to weak interface parameter\n",
+                    arg->ast_token.line, arg->ast_token.col);
+            fprintf(out, "/* invalid weak interface arg */");
+        }
     } else if (param_type->is_weak) {
         resolve_type(arg);
         if (arg->ast_resolved_type.type_kind == TYPE_CLASS && !arg->ast_resolved_type.is_weak) {
@@ -316,9 +364,17 @@ static void codegen_call(CodegenContext* ctx, AstNode* node, FILE* out) {
         const char* mname = mem->ast_token.text;
         resolve_type(obj);
         if (strcmp(mname, "lock") == 0 && obj->ast_resolved_type.is_weak) {
-            fprintf(out, "mylang_lock(");
-            codegen_expr(ctx, obj, out);
-            fprintf(out, ")");
+            if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+                fprintf(out, "mylang_lock_%s(", obj->ast_resolved_type.class_name);
+                codegen_expr(ctx, obj, out);
+                fprintf(out, ".wr, ");
+                codegen_expr(ctx, obj, out);
+                fprintf(out, ".vt)");
+            } else {
+                fprintf(out, "mylang_lock(");
+                codegen_expr(ctx, obj, out);
+                fprintf(out, ")");
+            }
             return;
         }
         if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
@@ -527,6 +583,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
         case AST_ASSIGN: {
             AstNode* lhs = node->ast_children[0];
             AstNode* rhs = node->ast_children[1];
+            resolve_type(lhs);
             Type lt = lhs->ast_resolved_type;
 
             if (lhs->ast_kind == AST_ARRAY_ACCESS) {
@@ -590,6 +647,75 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
                 fprintf(out, " = ");
                 codegen_expr(ctx, rhs, out);
                 fprintf(out, ")))");
+            } else if (lt.is_weak && lt.type_kind == TYPE_INTERFACE) {
+                resolve_type(rhs);
+                Type rt = rhs->ast_resolved_type;
+                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+
+                /* release old weak ref first */
+                fprintf(out, "((void)mylang_weak_release(");
+                codegen_expr(ctx, lhs, out);
+                fprintf(out, ".wr), ");
+
+                if (rt.is_weak && rt.type_kind == TYPE_INTERFACE) {
+                    /* weak -> weak copy */
+                    fprintf(out, "(");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, ".wr = mylang_weak_copy(");
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ".wr), ");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, ".vt = ");
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ".vt))");
+                } else if (rt.type_kind == TYPE_INTERFACE) {
+                    if (rhs_owned) {
+                        int tmp_id = ctx->assign_tmp_id++;
+                        fprintf(out, "(%s _wassign%d = ", lt.class_name, tmp_id);
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ", ");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".wr = mylang_weak_init(_wassign%d.data), ", tmp_id);
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".vt = _wassign%d.vtable, mylang_release(_wassign%d.data))", tmp_id, tmp_id);
+                    } else {
+                        fprintf(out, "(");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".wr = mylang_weak_init(");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ".data), ");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".vt = ");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ".vtable))");
+                    }
+                } else if (rt.type_kind == TYPE_CLASS) {
+                    if (rhs_owned) {
+                        int tmp_id = ctx->assign_tmp_id++;
+                        fprintf(out, "(void* _wassign%d = ", tmp_id);
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ", ");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".wr = mylang_weak_init(_wassign%d), ", tmp_id);
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".vt = &%s_%s_vtable, mylang_release(_wassign%d))",
+                                rt.class_name, lt.class_name, tmp_id);
+                    } else {
+                        fprintf(out, "(");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".wr = mylang_weak_init(");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, "), ");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".vt = &%s_%s_vtable))",
+                                rt.class_name, lt.class_name);
+                    }
+                } else {
+                    fprintf(stderr, "error at %d:%d: cannot assign to weak interface from this type\n",
+                            node->ast_token.line, node->ast_token.col);
+                    ctx->codegen_error = 1;
+                    fprintf(out, "0)");
+                }
             } else if (lt.type_kind == TYPE_INTERFACE) {
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
@@ -820,6 +946,9 @@ static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int 
         ctx->cleanup_entries[ctx->cleanup_count].is_interface = is_interface;
         ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 0;
         ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].weak_interface_array_size = 0;
         ctx->cleanup_count++;
     }
 }
@@ -831,6 +960,37 @@ static void cleanup_add_interface_array(CodegenContext* ctx, const char* name, i
         ctx->cleanup_entries[ctx->cleanup_count].is_interface = 0;
         ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 1;
         ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = size;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].weak_interface_array_size = 0;
+        ctx->cleanup_count++;
+    }
+}
+
+static void cleanup_add_weak_interface(CodegenContext* ctx, const char* name) {
+    if (ctx->cleanup_count < MAX_CLEANUP) {
+        ctx->cleanup_entries[ctx->cleanup_count].name = name;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface = 1;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].weak_interface_array_size = 0;
+        ctx->cleanup_count++;
+    }
+}
+
+static void cleanup_add_weak_interface_array(CodegenContext* ctx, const char* name, int size) {
+    if (ctx->cleanup_count < MAX_CLEANUP) {
+        ctx->cleanup_entries[ctx->cleanup_count].name = name;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak_interface_array = 1;
+        ctx->cleanup_entries[ctx->cleanup_count].weak_interface_array_size = size;
         ctx->cleanup_count++;
     }
 }
@@ -843,6 +1003,14 @@ static void cleanup_emit(CodegenContext* ctx, FILE* out, int indent) {
         if (ctx->cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface) {
+            fprintf(out, "mylang_weak_release(%s.wr);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].weak_interface_array_size; j++) {
+                fprintf(out, "mylang_weak_release(%s[%d].wr);\n", name, j);
+            }
         } else if (ctx->cleanup_entries[i].is_interface_array) {
             int j;
             for (j = 0; j < ctx->cleanup_entries[i].interface_array_size; j++) {
@@ -873,6 +1041,14 @@ static void cleanup_pop_scope(CodegenContext* ctx, FILE* out, int indent) {
         if (ctx->cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface) {
+            fprintf(out, "mylang_weak_release(%s.wr);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].weak_interface_array_size; j++) {
+                fprintf(out, "mylang_weak_release(%s[%d].wr);\n", name, j);
+            }
         } else if (ctx->cleanup_entries[i].is_interface_array) {
             int j;
             for (j = 0; j < ctx->cleanup_entries[i].interface_array_size; j++) {
@@ -917,6 +1093,115 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int 
     Type type = node->ast_resolved_type;
 
     symtab_insert(node->ast_token.text, type);
+
+    if (type.is_weak && type.type_kind == TYPE_INTERFACE) {
+        char winame[128];
+        c_weak_interface_name(&type, winame, sizeof(winame));
+
+        if (type.is_array && type.array_size == 0) {
+            fprintf(stderr, "error at %d:%d: dynamic weak interface arrays are not supported\n",
+                    node->ast_token.line, node->ast_token.col);
+            ctx->codegen_error = 1;
+            indent_line(out, indent);
+            fprintf(out, "%s* %s = NULL; /* unsupported */\n", winame, node->ast_token.text);
+            return;
+        } else if (type.array_size > 0) {
+            /* Fixed-size array of weak interface fat pointers. */
+            indent_line(out, indent);
+            fprintf(out, "%s %s[%d] = {0};\n", winame,
+                    node->ast_token.text, type.array_size);
+            cleanup_add_weak_interface_array(ctx, node->ast_token.text, type.array_size);
+            return;
+        }
+
+        if (node->ast_child_count > 0) {
+            AstNode* init = node->ast_children[0];
+            resolve_type(init);
+            Type rhs_type = init->ast_resolved_type;
+            int rhs_owned = (init->ast_kind == AST_CALL || init->ast_kind == AST_NEW);
+
+            indent_line(out, indent);
+            fprintf(out, "%s %s;\n", winame, node->ast_token.text);
+
+            if (rhs_type.is_weak && rhs_type.type_kind == TYPE_INTERFACE) {
+                /* weak-to-weak copy */
+                indent_line(out, indent);
+                fprintf(out, "%s.wr = mylang_weak_copy(", node->ast_token.text);
+                codegen_expr(ctx, init, out);
+                fprintf(out, ".wr);\n");
+                indent_line(out, indent);
+                fprintf(out, "%s.vt = ", node->ast_token.text);
+                codegen_expr(ctx, init, out);
+                fprintf(out, ".vt;\n");
+            } else if (rhs_type.type_kind == TYPE_INTERFACE) {
+                /* strong interface -> weak interface */
+                if (rhs_owned) {
+                    int tmp_id = ctx->assign_tmp_id++;
+                    indent_line(out, indent);
+                    fprintf(out, "%s _winit%d = ", type.class_name, tmp_id);
+                    codegen_expr(ctx, init, out);
+                    fprintf(out, ";\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(_winit%d.data);\n",
+                            node->ast_token.text, tmp_id);
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = _winit%d.vtable;\n",
+                            node->ast_token.text, tmp_id);
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_release(_winit%d.data);\n", tmp_id);
+                } else {
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(", node->ast_token.text);
+                    codegen_expr(ctx, init, out);
+                    fprintf(out, ".data);\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = ", node->ast_token.text);
+                    codegen_expr(ctx, init, out);
+                    fprintf(out, ".vtable;\n");
+                }
+            } else if (rhs_type.type_kind == TYPE_CLASS) {
+                /* class -> weak interface */
+                if (rhs_owned) {
+                    int tmp_id = ctx->assign_tmp_id++;
+                    indent_line(out, indent);
+                    fprintf(out, "void* _winit%d = ", tmp_id);
+                    codegen_expr(ctx, init, out);
+                    fprintf(out, ";\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(_winit%d);\n",
+                            node->ast_token.text, tmp_id);
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = &%s_%s_vtable;\n",
+                            node->ast_token.text,
+                            rhs_type.class_name,
+                            type.class_name);
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_release(_winit%d);\n", tmp_id);
+                } else {
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(", node->ast_token.text);
+                    codegen_expr(ctx, init, out);
+                    fprintf(out, ");\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = &%s_%s_vtable;\n",
+                            node->ast_token.text,
+                            rhs_type.class_name,
+                            type.class_name);
+                }
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot initialize weak interface '%s' with this value\n",
+                        node->ast_token.line, node->ast_token.col, type.class_name);
+                ctx->codegen_error = 1;
+                indent_line(out, indent);
+                fprintf(out, "%s %s = { NULL, NULL };\n", winame, node->ast_token.text);
+            }
+        } else {
+            indent_line(out, indent);
+            fprintf(out, "%s %s = { NULL, NULL };\n", winame, node->ast_token.text);
+        }
+        cleanup_add_weak_interface(ctx, node->ast_token.text);
+        return;
+    }
 
     if (type.is_weak && node->ast_child_count > 0) {
         resolve_type(node->ast_children[0]);
@@ -1292,6 +1577,84 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
             return;
         }
 
+        if (lhs->ast_kind == AST_IDENT && lt.is_weak && lt.type_kind == TYPE_INTERFACE) {
+            emit_stmt_call_retains(ctx, expr, out, indent);
+            resolve_type(rhs);
+            Type rt = rhs->ast_resolved_type;
+            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+
+            /* release old weak ref first */
+            indent_line(out, indent);
+            fprintf(out, "mylang_weak_release(%s.wr);\n", lhs->ast_token.text);
+
+            if (rt.is_weak && rt.type_kind == TYPE_INTERFACE) {
+                indent_line(out, indent);
+                fprintf(out, "%s.wr = mylang_weak_copy(", lhs->ast_token.text);
+                codegen_expr(ctx, rhs, out);
+                fprintf(out, ".wr);\n");
+                indent_line(out, indent);
+                fprintf(out, "%s.vt = ", lhs->ast_token.text);
+                codegen_expr(ctx, rhs, out);
+                fprintf(out, ".vt;\n");
+            } else if (rt.type_kind == TYPE_INTERFACE) {
+                if (rhs_owned) {
+                    int id = ctx->assign_tmp_id++;
+                    indent_line(out, indent);
+                    fprintf(out, "%s _wassign%d = ", lt.class_name, id);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ";\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(_wassign%d.data);\n",
+                            lhs->ast_token.text, id);
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = _wassign%d.vtable;\n",
+                            lhs->ast_token.text, id);
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_release(_wassign%d.data);\n", id);
+                } else {
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(", lhs->ast_token.text);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ".data);\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = ", lhs->ast_token.text);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ".vtable;\n");
+                }
+            } else if (rt.type_kind == TYPE_CLASS) {
+                if (rhs_owned) {
+                    int id = ctx->assign_tmp_id++;
+                    indent_line(out, indent);
+                    fprintf(out, "void* _wassign%d = ", id);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ";\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(_wassign%d);\n",
+                            lhs->ast_token.text, id);
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = &%s_%s_vtable;\n",
+                            lhs->ast_token.text, rt.class_name, lt.class_name);
+                    indent_line(out, indent);
+                    fprintf(out, "mylang_release(_wassign%d);\n", id);
+                } else {
+                    indent_line(out, indent);
+                    fprintf(out, "%s.wr = mylang_weak_init(", lhs->ast_token.text);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ");\n");
+                    indent_line(out, indent);
+                    fprintf(out, "%s.vt = &%s_%s_vtable;\n",
+                            lhs->ast_token.text, rt.class_name, lt.class_name);
+                }
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot assign to weak interface '%s' from this type\n",
+                        rhs->ast_token.line, rhs->ast_token.col, lt.class_name);
+                ctx->codegen_error = 1;
+            }
+
+            emit_stmt_call_releases(ctx, expr, out, indent);
+            return;
+        }
+
         if (lhs->ast_kind == AST_IDENT && lt.type_kind == TYPE_INTERFACE) {
             emit_stmt_call_retains(ctx, expr, out, indent);
             resolve_type(rhs);
@@ -1428,6 +1791,57 @@ static void codegen_interface_typedefs(CodegenContext* ctx, FILE* out) {
         fprintf(out, "    void* data;\n");
         fprintf(out, "    const %sVTable* vtable;\n", ii->name);
         fprintf(out, "} %s;\n\n", ii->name);
+
+        /* Weak fat pointer typedef */
+        fprintf(out, "typedef struct Weak%s {\n", ii->name);
+        fprintf(out, "    WeakRef* wr;\n");
+        fprintf(out, "    %sVTable* vt;\n", ii->name);
+        fprintf(out, "} Weak%s;\n\n", ii->name);
+
+        /* Weak interface lock helper returns a strong fat pointer */
+        fprintf(out, "static %s mylang_lock_%s(WeakRef* wr, %sVTable* vt) {\n",
+                ii->name, ii->name, ii->name);
+        fprintf(out, "    void* _p = mylang_lock(wr);\n");
+        fprintf(out, "    %s _r;\n", ii->name);
+        fprintf(out, "    _r.data = _p;\n");
+        fprintf(out, "    _r.vtable = vt;\n");
+        fprintf(out, "    return _r;\n");
+        fprintf(out, "}\n\n");
+
+        /* Weak interface conversion helpers */
+        fprintf(out, "static Weak%s mylang_weakify_%s(%s s) {\n",
+                ii->name, ii->name, ii->name);
+        fprintf(out, "    Weak%s w;\n", ii->name);
+        fprintf(out, "    w.wr = mylang_weak_init(s.data);\n");
+        fprintf(out, "    w.vt = s.vtable;\n");
+        fprintf(out, "    return w;\n");
+        fprintf(out, "}\n\n");
+
+        fprintf(out, "static Weak%s mylang_weakify_%s_owned(%s s) {\n",
+                ii->name, ii->name, ii->name);
+        fprintf(out, "    Weak%s w;\n", ii->name);
+        fprintf(out, "    w.wr = mylang_weak_init(s.data);\n");
+        fprintf(out, "    w.vt = s.vtable;\n");
+        fprintf(out, "    mylang_release(s.data);\n");
+        fprintf(out, "    return w;\n");
+        fprintf(out, "}\n\n");
+
+        fprintf(out, "static Weak%s mylang_weakify_%s_from_ptr(void* p, %sVTable* vt) {\n",
+                ii->name, ii->name, ii->name);
+        fprintf(out, "    Weak%s w;\n", ii->name);
+        fprintf(out, "    w.wr = mylang_weak_init(p);\n");
+        fprintf(out, "    w.vt = vt;\n");
+        fprintf(out, "    return w;\n");
+        fprintf(out, "}\n\n");
+
+        fprintf(out, "static Weak%s mylang_weakify_%s_from_ptr_owned(void* p, %sVTable* vt) {\n",
+                ii->name, ii->name, ii->name);
+        fprintf(out, "    Weak%s w;\n", ii->name);
+        fprintf(out, "    w.wr = mylang_weak_init(p);\n");
+        fprintf(out, "    w.vt = vt;\n");
+        fprintf(out, "    mylang_release(p);\n");
+        fprintf(out, "    return w;\n");
+        fprintf(out, "}\n\n");
         ii = ii->next;
     }
 }
@@ -1562,6 +1976,11 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, FILE* out, c
     CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
     { AstNode* p = params; while (p) { symtab_insert(p->ast_token.text, p->ast_resolved_type);
+        if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+            cleanup_add_weak_interface(ctx, p->ast_token.text);
+        } else if (p->ast_resolved_type.is_weak) {
+            cleanup_add(ctx, p->ast_token.text, 1, 0);
+        }
         p = p->next; } }
 
     indent_line(out, 1);
@@ -1638,6 +2057,11 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
         AstNode* p = params;
         while (p) {
             symtab_insert(p->ast_token.text, p->ast_resolved_type);
+            if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+                cleanup_add_weak_interface(ctx, p->ast_token.text);
+            } else if (p->ast_resolved_type.is_weak) {
+                cleanup_add(ctx, p->ast_token.text, 1, 0);
+            }
             p = p->next;
         }
     }

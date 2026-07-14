@@ -34,7 +34,7 @@ Source code lives under `src/`:
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
 
-## Interface System (Phase 1)
+## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.
 - Interface values are fat pointers: `{void* data, const VTable* vtable}` struct in generated C.
@@ -49,6 +49,16 @@ Source code lives under `src/`:
 - `g_return_type` (static) tracks the enclosing function's return type so `codegen_return_stmt` can emit implicit class-to-interface conversion.
 - Interface parameters pass by value (struct copy). Caller-side guard extraction handles complex expressions.
 - `as` keyword is parsed in `parse_postfix` as a postfix operator.
+
+## Weak Interface Types (Phase 2)
+- Syntax: `weak InterfaceName v = obj;` to declare; `v.lock()` returns a strong interface fat pointer.
+- Generated C type is `WeakIFoo { WeakRef* wr; IFooVTable* vt; }` per interface.
+- Conversion helpers are emitted per interface: `mylang_lock_IFoo`, `mylang_weakify_IFoo`, `mylang_weakify_IFoo_owned`, `mylang_weakify_IFoo_from_ptr`, `mylang_weakify_IFoo_from_ptr_owned`.
+- Initialization supports class instance, strong interface, and weak-to-weak copy.
+- `lock()` returns `{ NULL, NULL }` if the object is dead; callers can check `result.data`.
+- Fixed-size arrays of weak interfaces (`weak IFoo[N] arr;`) are supported; cleanup releases each element's `.wr`.
+- `weak IFoo[]` dynamic arrays are not supported.
+- Weak interface parameters pass by value and are released via cleanup on function exit.
 
 ## Reference Parameters
 - Only the `ref` keyword is supported.
@@ -144,6 +154,6 @@ Source code lives under `src/`:
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
 - Interface variables cannot be class fields (local variables and parameters only).
-- `weak InterfaceName` variables not yet supported (Phase 2).
+- `weak InterfaceName` variables cannot be class fields (same restriction as weak class fields).
 - Interface default method implementations not yet supported.
 - No AST deallocation function (one-shot compiler).
