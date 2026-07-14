@@ -6,6 +6,15 @@ if not exist "%VSPATH%" (
     set "VSPATH=C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
 )
 if not exist "%VSPATH%" (
+    set "VSPATH=C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+)
+if not exist "%VSPATH%" (
+    set "VSPATH=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+)
+if not exist "%VSPATH%" (
+    set "VSPATH=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
+)
+if not exist "%VSPATH%" (
     echo ERROR: Cannot find vcvars64.bat
     exit /b 1
 )

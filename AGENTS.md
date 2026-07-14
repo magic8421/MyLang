@@ -5,6 +5,11 @@ All source comments must be written in plain English.
 Do not use emojis or non-ASCII characters in comments or identifiers.
 Keep everything ASCII.
 
+## Naming Conventions
+- Struct member names should be descriptive and include an abbreviation of the struct name as a prefix.
+- Example: `Type.type_kind`, `AstNode.ast_kind`, `AstNode.ast_resolved_type`, `AstNode.ast_token`, `AstNode.ast_children`, `AstNode.ast_child_count`, `AstNode.ast_temp_name`.
+- Avoid one-word member names like `kind`, `tok`, or `children` on public structs.
+
 ## Build & Test
 - Windows MSVC build: run `build.bat` (it calls `vcvars64.bat`).
 - The compiler itself is built with AddressSanitizer (`/fsanitize=address`).
@@ -25,9 +30,9 @@ Source code lives under `src/`:
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
 - Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`.
-- `Type` struct fields: `kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
+- `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
 - `out` and `in` modifiers were removed (only `ref` remains).
-- Interface types have `kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
+- Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
 
 ## Interface System (Phase 1)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.

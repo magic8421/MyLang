@@ -10,18 +10,32 @@ import argparse
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 MYLANG_EXE = os.path.join(SCRIPT_DIR, "build", "mylang.exe")
-VSPATH = r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 
 TEST_MODE = "release"  # "release" = ASan + release CRT, "debug" = no ASan + debug CRT
 
-if not os.path.exists(VSPATH):
-    VSPATH = r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat"
+_VSPATH_CANDIDATES = [
+    r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat",
+    r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Auxiliary\Build\vcvars64.bat",
+    r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat",
+    r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+    r"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat",
+]
+VSPATH = None
+for _vc_candidate in _VSPATH_CANDIDATES:
+    if os.path.exists(_vc_candidate):
+        VSPATH = _vc_candidate
+        break
+if not VSPATH:
+    raise RuntimeError("Cannot find vcvars64.bat")
 
 def find_asan_dll():
     """Find the ASan runtime DLL and return its directory."""
     search_roots = [
         r"C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC",
         r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC",
     ]
     dll_name = "clang_rt.asan_dynamic-x86_64.dll"
     for root in search_roots:

@@ -36,7 +36,7 @@ typedef enum {
 #define TYPE_IS_WEAK     0x20000000U
 
 typedef struct {
-    TypeKind kind;
+    TypeKind type_kind;
     char     class_name[64];
     int      is_pointer;
     int      is_array;
@@ -76,12 +76,12 @@ typedef enum {
 } AstKind;
 
 struct AstNode {
-    AstKind  kind;
-    Type     resolved_type;
-    Token    tok;
-    AstNode* children[4];
-    int      child_count;
-    char     temp_name[64];
+    AstKind  ast_kind;
+    Type     ast_resolved_type;
+    Token    ast_token;
+    AstNode* ast_children[4];
+    int      ast_child_count;
+    char     ast_temp_name[64];
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
     /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */

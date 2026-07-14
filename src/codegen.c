@@ -29,7 +29,7 @@ static void escape_source_file(const char* src) {
 
 static const char* c_base_name(const Type* t) {
     if (t->is_weak) return "WeakRef";
-    switch (t->kind) {
+    switch (t->type_kind) {
         case TYPE_I8:    return "int8_t";
         case TYPE_I16:   return "int16_t";
         case TYPE_I32:   return "int32_t";
@@ -50,18 +50,18 @@ static const char* c_base_name(const Type* t) {
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
     int n;
-    if (t->kind == TYPE_INTERFACE) {
+    if (t->type_kind == TYPE_INTERFACE) {
         n = snprintf(buf, bufsz, "%s", t->class_name);
     } else if (t->array_size > 0) {
         /* fixed-size array declared as T name[N] */
         n = snprintf(buf, bufsz, "%s", c_base_name(t));
-    } else if (t->kind == TYPE_CLASS && t->is_array && t->is_pointer) {
+    } else if (t->type_kind == TYPE_CLASS && t->is_array && t->is_pointer) {
         /* dynamic array of class references: Box** */
         n = snprintf(buf, bufsz, "%s**", c_base_name(t));
     } else if (t->is_array && t->array_size == 0) {
         /* dynamic array of primitives: T* */
         n = snprintf(buf, bufsz, "%s*", c_base_name(t));
-    } else if (t->kind == TYPE_CLASS || t->is_pointer) {
+    } else if (t->type_kind == TYPE_CLASS || t->is_pointer) {
         n = snprintf(buf, bufsz, "%s*", c_base_name(t));
     } else {
         n = snprintf(buf, bufsz, "%s", c_base_name(t));
@@ -76,19 +76,19 @@ static Type resolve_type(AstNode* node) {
     Type t;
     memset(&t, 0, sizeof(t));
 
-    switch (node->kind) {
+    switch (node->ast_kind) {
         case AST_INT_LIT:
-            t.kind = TYPE_I32;
+            t.type_kind = TYPE_I32;
             t.type_id = TYPE_ID_I32;
             break;
 
         case AST_CHAR_LIT:
-            t.kind = TYPE_I8;
+            t.type_kind = TYPE_I8;
             t.type_id = TYPE_ID_I8;
             break;
 
         case AST_IDENT: {
-            SymEntry* e = symtab_lookup(node->tok.text);
+            SymEntry* e = symtab_lookup(node->ast_token.text);
             if (e) {
                 t = e->type;
                 /* A ref parameter is a pointer in C, but its value type
@@ -99,30 +99,30 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_BINARY: {
-            TokenKind op = node->tok.kind;
+            TokenKind op = node->ast_token.kind;
             if (op == TOK_EQ || op == TOK_NE ||
                 op == TOK_LT || op == TOK_LE ||
                 op == TOK_GT || op == TOK_GE ||
                 op == TOK_AND || op == TOK_OR) {
-                t.kind = TYPE_I32;
+                t.type_kind = TYPE_I32;
                 t.type_id = TYPE_ID_I32;
             } else {
-                t = resolve_type(node->children[0]);
+                t = resolve_type(node->ast_children[0]);
             }
             break;
         }
 
         case AST_UNARY:
-            t = resolve_type(node->children[0]);
+            t = resolve_type(node->ast_children[0]);
             break;
 
         case AST_ARRAY_ACCESS: {
-            Type arr = resolve_type(node->children[0]);
+            Type arr = resolve_type(node->ast_children[0]);
             t = arr;
             /* An element is never itself an array. */
             t.is_array = 0;
             t.array_size = 0;
-            if (arr.kind == TYPE_CLASS && arr.is_array && arr.is_pointer) {
+            if (arr.type_kind == TYPE_CLASS && arr.is_array && arr.is_pointer) {
                 /* dynamic class array element is a class pointer */
                 t.is_pointer = 1;
             } else {
@@ -132,12 +132,12 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_MEMBER_ACCESS: {
-            Type obj = resolve_type(node->children[0]);
+            Type obj = resolve_type(node->ast_children[0]);
             ClassInfo* ci = symtab_find_class(obj.class_name);
             if (ci) {
                 int i;
                 for (i = 0; i < ci->field_count; i++) {
-                    if (strcmp(ci->field_names[i], node->tok.text) == 0) {
+                    if (strcmp(ci->field_names[i], node->ast_token.text) == 0) {
                         t = ci->field_types[i];
                         break;
                     }
@@ -147,7 +147,7 @@ static Type resolve_type(AstNode* node) {
                 if (si) {
                     int i;
                     for (i = 0; i < si->field_count; i++) {
-                        if (strcmp(si->field_names[i], node->tok.text) == 0) {
+                        if (strcmp(si->field_names[i], node->ast_token.text) == 0) {
                             t = si->field_types[i];
                             break;
                         }
@@ -158,84 +158,84 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_CALL: {
-            if (node->children[0]->kind == AST_MEMBER_ACCESS) {
-                AstNode* mem = node->children[0];
-                AstNode* obj = mem->children[0];
+            if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
+                AstNode* mem = node->ast_children[0];
+                AstNode* obj = mem->ast_children[0];
                 resolve_type(obj);
-                if (strcmp(mem->tok.text, "lock") == 0 && obj->resolved_type.is_weak) {
-                    t = obj->resolved_type;
+                if (strcmp(mem->ast_token.text, "lock") == 0 && obj->ast_resolved_type.is_weak) {
+                    t = obj->ast_resolved_type;
                     t.is_weak = 0;
                     t.is_pointer = 1;
-                } else if (obj->resolved_type.kind == TYPE_CLASS) {
-                    MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mem->tok.text);
+                } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
+                    MethodInfo* mi = symtab_find_method(obj->ast_resolved_type.class_name, mem->ast_token.text);
                     if (mi) { t = mi->return_type; }
-                } else if (obj->resolved_type.kind == TYPE_INTERFACE) {
-                    InterfaceInfo* ii = symtab_find_interface(obj->resolved_type.class_name);
+                } else if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+                    InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
                     if (ii) {
-                        InterfaceMethodInfo* im = symtab_find_interface_method(ii, mem->tok.text);
+                        InterfaceMethodInfo* im = symtab_find_interface_method(ii, mem->ast_token.text);
                         if (im) { t = im->return_type; }
                     }
                 }
             } else {
-                FuncInfo* fi = symtab_find_func(node->children[0]->tok.text);
+                FuncInfo* fi = symtab_find_func(node->ast_children[0]->ast_token.text);
                 if (fi) { t = fi->return_type; }
             }
             break;
         }
 
         case AST_NEW: {
-            t = node->resolved_type;
+            t = node->ast_resolved_type;
             t.is_pointer = 1;
             break;
         }
 
         case AST_ASSIGN:
-            t = resolve_type(node->children[0]);
+            t = resolve_type(node->ast_children[0]);
             break;
 
         case AST_VAR_DECL:
-            t = node->resolved_type;
+            t = node->ast_resolved_type;
             break;
 
         case AST_AS_CAST:
-            resolve_type(node->children[0]);
-            t = node->resolved_type;
+            resolve_type(node->ast_children[0]);
+            t = node->ast_resolved_type;
             break;
 
         default:
             break;
     }
 
-    node->resolved_type = t;
+    node->ast_resolved_type = t;
     return t;
 }
 
 static void codegen_expr(AstNode* node, FILE* out);
 
 static void codegen_binary(AstNode* node, FILE* out) {
-    TokenKind op = node->tok.kind;
+    TokenKind op = node->ast_token.kind;
     if (op == TOK_EQ || op == TOK_NE) {
-        Type lt = resolve_type(node->children[0]);
-        Type rt = resolve_type(node->children[1]);
-        if (lt.kind == TYPE_INTERFACE && rt.kind == TYPE_INTERFACE) {
+        Type lt = resolve_type(node->ast_children[0]);
+        Type rt = resolve_type(node->ast_children[1]);
+        if (lt.type_kind == TYPE_INTERFACE && rt.type_kind == TYPE_INTERFACE) {
             fprintf(out, "(");
-            codegen_expr(node->children[0], out);
-            fprintf(out, ".data %s ", node->tok.text);
-            codegen_expr(node->children[1], out);
+            codegen_expr(node->ast_children[0], out);
+            fprintf(out, ".data %s ", node->ast_token.text);
+            codegen_expr(node->ast_children[1], out);
             fprintf(out, ".data)");
             return;
         }
     }
     fprintf(out, "(");
-    codegen_expr(node->children[0], out);
-    fprintf(out, " %s ", node->tok.text);
-    codegen_expr(node->children[1], out);
+    codegen_expr(node->ast_children[0], out);
+    fprintf(out, " %s ", node->ast_token.text);
+    codegen_expr(node->ast_children[1], out);
     fprintf(out, ")");
 }
 
 static void codegen_unary(AstNode* node, FILE* out) {
-    fprintf(out, "%s", node->tok.text);
-    codegen_expr(node->children[0], out);
+    fprintf(out, "%s", node->ast_token.text);
+    codegen_expr(node->ast_children[0], out);
 }
 
 static int type_is_ref(const Type* t) {
@@ -247,31 +247,31 @@ static int type_is_ref(const Type* t) {
    pointer if var itself is already a ref parameter. */
 static void codegen_call_arg(AstNode* arg, const Type* param_type, FILE* out) {
     if (type_is_ref(param_type)) {
-        if (arg->kind != AST_IDENT) {
+        if (arg->ast_kind != AST_IDENT) {
             fprintf(stderr, "error at %d:%d: ref argument must be a local variable\n",
-                    arg->tok.line, arg->tok.col);
+                    arg->ast_token.line, arg->ast_token.col);
             fprintf(out, "0 /* invalid ref argument */");
             return;
         }
-        SymEntry* e = symtab_lookup(arg->tok.text);
+        SymEntry* e = symtab_lookup(arg->ast_token.text);
         if (!e) {
             fprintf(stderr, "error at %d:%d: ref argument must be a local variable\n",
-                    arg->tok.line, arg->tok.col);
+                    arg->ast_token.line, arg->ast_token.col);
             fprintf(out, "0 /* invalid ref argument */");
             return;
         }
         if (type_is_ref(&e->type)) {
-            fprintf(out, "%s", arg->tok.text);
+            fprintf(out, "%s", arg->ast_token.text);
         } else {
-            fprintf(out, "&%s", arg->tok.text);
+            fprintf(out, "&%s", arg->ast_token.text);
         }
     } else if (param_type->is_weak) {
         resolve_type(arg);
-        if (arg->resolved_type.kind == TYPE_CLASS && !arg->resolved_type.is_weak) {
+        if (arg->ast_resolved_type.type_kind == TYPE_CLASS && !arg->ast_resolved_type.is_weak) {
             fprintf(out, "mylang_weak_init(");
             codegen_expr(arg, out);
             fprintf(out, ")");
-        } else if (arg->resolved_type.is_weak) {
+        } else if (arg->ast_resolved_type.is_weak) {
             fprintf(out, "mylang_weak_copy(");
             codegen_expr(arg, out);
             fprintf(out, ")");
@@ -285,22 +285,22 @@ static void codegen_call_arg(AstNode* arg, const Type* param_type, FILE* out) {
 
 static void codegen_call(AstNode* node, FILE* out) {
     /* method call: p.foo(...) ClassName_foo(p, ...) */
-    if (node->children[0]->kind == AST_MEMBER_ACCESS) {
-        AstNode* mem = node->children[0];
-        AstNode* obj = mem->children[0];
-        const char* mname = mem->tok.text;
+    if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
+        AstNode* mem = node->ast_children[0];
+        AstNode* obj = mem->ast_children[0];
+        const char* mname = mem->ast_token.text;
         resolve_type(obj);
-        if (strcmp(mname, "lock") == 0 && obj->resolved_type.is_weak) {
+        if (strcmp(mname, "lock") == 0 && obj->ast_resolved_type.is_weak) {
             fprintf(out, "mylang_lock(");
             codegen_expr(obj, out);
             fprintf(out, ")");
             return;
         }
-        if (obj->resolved_type.kind == TYPE_CLASS) {
-            MethodInfo* mi = symtab_find_method(obj->resolved_type.class_name, mname);
-            fprintf(out, "%s_%s(", obj->resolved_type.class_name, mname);
+        if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
+            MethodInfo* mi = symtab_find_method(obj->ast_resolved_type.class_name, mname);
+            fprintf(out, "%s_%s(", obj->ast_resolved_type.class_name, mname);
             codegen_expr(obj, out);
-            AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+            AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
             int idx = 0;
             while (args) {
                 fprintf(out, ", ");
@@ -314,8 +314,8 @@ static void codegen_call(AstNode* node, FILE* out) {
             fprintf(out, ")");
             return;
         }
-        if (obj->resolved_type.kind == TYPE_INTERFACE) {
-            InterfaceInfo* ii = symtab_find_interface(obj->resolved_type.class_name);
+        if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
             InterfaceMethodInfo* im = NULL;
             if (ii) im = symtab_find_interface_method(ii, mname);
 
@@ -325,7 +325,7 @@ static void codegen_call(AstNode* node, FILE* out) {
             codegen_expr(obj, out);
             fprintf(out, ").data");
 
-            AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+            AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
             int idx = 0;
             while (args) {
                 fprintf(out, ", ");
@@ -341,14 +341,14 @@ static void codegen_call(AstNode* node, FILE* out) {
         }
     }
     /* normal function call */
-    AstNode* callee = node->children[0];
+    AstNode* callee = node->ast_children[0];
     FuncInfo* fi = NULL;
-    if (callee->kind == AST_IDENT) {
-        fi = symtab_find_func(callee->tok.text);
+    if (callee->ast_kind == AST_IDENT) {
+        fi = symtab_find_func(callee->ast_token.text);
     }
     codegen_expr(callee, out);
     fprintf(out, "(");
-    AstNode* args = (node->child_count > 1) ? node->children[1] : NULL;
+    AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
     int first = 1;
     int idx = 0;
     while (args) {
@@ -365,31 +365,31 @@ static void codegen_call(AstNode* node, FILE* out) {
 }
 
 static void codegen_array_access(AstNode* node, FILE* out) {
-    AstNode* arr = node->children[0];
-    AstNode* idx = node->children[1];
+    AstNode* arr = node->ast_children[0];
+    AstNode* idx = node->ast_children[1];
     resolve_type(arr);
-    Type at = arr->resolved_type;
+    Type at = arr->ast_resolved_type;
     if (at.is_array && at.array_size == 0) {
         /* dynamic array: use bounds-checked getter */
         Type et = resolve_type(node);
-        if (et.kind == TYPE_CLASS) {
+        if (et.type_kind == TYPE_CLASS) {
             fprintf(out, "array_get_class(");
             codegen_expr(arr, out);
             fprintf(out, ", ");
             codegen_expr(idx, out);
-            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
-        } else if (et.kind == TYPE_STRUCT) {
+            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->ast_token.line);
+        } else if (et.type_kind == TYPE_STRUCT) {
             fprintf(out, "(*(%s*)array_get_struct_ptr(", c_base_name(&et));
             codegen_expr(arr, out);
             fprintf(out, ", ");
             codegen_expr(idx, out);
-            fprintf(out, ", sizeof(%s), \"%s\", %d))", c_base_name(&et), g_source_file_escaped, node->tok.line);
+            fprintf(out, ", sizeof(%s), \"%s\", %d))", c_base_name(&et), g_source_file_escaped, node->ast_token.line);
         } else {
             fprintf(out, "array_get_%s(", c_base_name(&et));
             codegen_expr(arr, out);
             fprintf(out, ", ");
             codegen_expr(idx, out);
-            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
+            fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->ast_token.line);
         }
     } else {
         codegen_expr(arr, out);
@@ -400,29 +400,29 @@ static void codegen_array_access(AstNode* node, FILE* out) {
 }
 
 static void codegen_member_access(AstNode* node, FILE* out) {
-    AstNode* obj = node->children[0];
+    AstNode* obj = node->ast_children[0];
     resolve_type(obj);
-    if (obj->resolved_type.kind == TYPE_CLASS) {
+    if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
         /* Class references may come from void* getters (e.g. dynamic arrays),
            so cast to the concrete struct pointer before using ->. */
-        fprintf(out, "((%s*)", obj->resolved_type.class_name);
+        fprintf(out, "((%s*)", obj->ast_resolved_type.class_name);
         codegen_expr(obj, out);
-        fprintf(out, ")->%s", node->tok.text);
-    } else if (obj->resolved_type.is_pointer) {
+        fprintf(out, ")->%s", node->ast_token.text);
+    } else if (obj->ast_resolved_type.is_pointer) {
         codegen_expr(obj, out);
-        fprintf(out, "->%s", node->tok.text);
+        fprintf(out, "->%s", node->ast_token.text);
     } else {
         codegen_expr(obj, out);
-        fprintf(out, ".%s", node->tok.text);
+        fprintf(out, ".%s", node->ast_token.text);
     }
 }
 
 static void codegen_new(AstNode* node, FILE* out) {
-    Type base = node->resolved_type;
-    if (node->child_count > 0) {
-        int is_class = (base.kind == TYPE_CLASS) ? 1 : 0;
+    Type base = node->ast_resolved_type;
+    if (node->ast_child_count > 0) {
+        int is_class = (base.type_kind == TYPE_CLASS) ? 1 : 0;
         fprintf(out, "mylang_new_array(");
-        codegen_expr(node->children[0], out);
+        codegen_expr(node->ast_children[0], out);
         fprintf(out, ", ");
         if (is_class) {
             fprintf(out, "sizeof(void*)");
@@ -432,17 +432,17 @@ static void codegen_new(AstNode* node, FILE* out) {
         fprintf(out, ", 0x%08XU)", (unsigned)(base.type_id | TYPE_IS_ARRAY));
         base.is_pointer = 1;
     } else {
-        if (base.kind == TYPE_CLASS) {
+        if (base.type_kind == TYPE_CLASS) {
             fprintf(out, "mylang_new_object(sizeof(%s), %u)", c_base_name(&base), (unsigned)base.type_id);
         } else {
             fprintf(out, "calloc(1, sizeof(%s))", c_base_name(&base));
         }
     }
-    node->resolved_type = base;
+    node->ast_resolved_type = base;
 }
 
 static void codegen_char_lit(AstNode* node, FILE* out) {
-    char c = node->tok.char_val;
+    char c = node->ast_token.char_val;
     switch (c) {
         case '\n': fprintf(out, "'\\n'"); break;
         case '\t': fprintf(out, "'\\t'"); break;
@@ -457,27 +457,27 @@ static void codegen_expr(AstNode* node, FILE* out) {
     if (!node) return;
     resolve_type(node);
 
-    if (node->temp_name[0] != '\0') {
-        fprintf(out, "%s", node->temp_name);
+    if (node->ast_temp_name[0] != '\0') {
+        fprintf(out, "%s", node->ast_temp_name);
         return;
     }
 
-    switch (node->kind) {
+    switch (node->ast_kind) {
         case AST_INT_LIT:
-            fprintf(out, "%d", node->tok.int_val);
+            fprintf(out, "%d", node->ast_token.int_val);
             break;
         case AST_CHAR_LIT:
             codegen_char_lit(node, out);
             break;
         case AST_IDENT: {
-            if (strcmp(node->tok.text, "this") == 0) {
+            if (strcmp(node->ast_token.text, "this") == 0) {
                 fprintf(out, "thiz");
             } else {
-                SymEntry* e = symtab_lookup(node->tok.text);
+                SymEntry* e = symtab_lookup(node->ast_token.text);
                 if (e && type_is_ref(&e->type)) {
-                    fprintf(out, "(*%s)", node->tok.text);
+                    fprintf(out, "(*%s)", node->ast_token.text);
                 } else {
-                    fprintf(out, "%s", node->tok.text);
+                    fprintf(out, "%s", node->ast_token.text);
                 }
             }
             break;
@@ -489,26 +489,26 @@ static void codegen_expr(AstNode* node, FILE* out) {
             codegen_unary(node, out);
             break;
         case AST_ASSIGN: {
-            AstNode* lhs = node->children[0];
-            AstNode* rhs = node->children[1];
-            Type lt = lhs->resolved_type;
+            AstNode* lhs = node->ast_children[0];
+            AstNode* rhs = node->ast_children[1];
+            Type lt = lhs->ast_resolved_type;
 
-            if (lhs->kind == AST_ARRAY_ACCESS) {
-                Type at = lhs->children[0]->resolved_type;
+            if (lhs->ast_kind == AST_ARRAY_ACCESS) {
+                Type at = lhs->ast_children[0]->ast_resolved_type;
                 if (at.is_array && at.array_size == 0) {
                     /* dynamic array element assignment */
-                    AstNode* arr = lhs->children[0];
-                    AstNode* idx = lhs->children[1];
-                    int is_class_elem = (lt.kind == TYPE_CLASS && lt.is_pointer);
-                    int is_struct_elem = (lt.kind == TYPE_STRUCT);
-                    int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+                    AstNode* arr = lhs->ast_children[0];
+                    AstNode* idx = lhs->ast_children[1];
+                    int is_class_elem = (lt.type_kind == TYPE_CLASS && lt.is_pointer);
+                    int is_struct_elem = (lt.type_kind == TYPE_STRUCT);
+                    int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
 
                     if (is_struct_elem) {
                         fprintf(out, "(*(%s*)array_get_struct_ptr(", c_base_name(&lt));
                         codegen_expr(arr, out);
                         fprintf(out, ", ");
                         codegen_expr(idx, out);
-                        fprintf(out, ", sizeof(%s), \"%s\", %d)) = ", c_base_name(&lt), g_source_file_escaped, node->tok.line);
+                        fprintf(out, ", sizeof(%s), \"%s\", %d)) = ", c_base_name(&lt), g_source_file_escaped, node->ast_token.line);
                         codegen_expr(rhs, out);
                     } else if (is_class_elem) {
                         fprintf(out, "array_replace_class(");
@@ -523,7 +523,7 @@ static void codegen_expr(AstNode* node, FILE* out) {
                         } else {
                             codegen_expr(rhs, out);
                         }
-                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
+                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->ast_token.line);
                     } else {
                         fprintf(out, "array_set_%s(", c_base_name(&lt));
                         codegen_expr(arr, out);
@@ -531,15 +531,15 @@ static void codegen_expr(AstNode* node, FILE* out) {
                         codegen_expr(idx, out);
                         fprintf(out, ", ");
                         codegen_expr(rhs, out);
-                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->tok.line);
+                        fprintf(out, ", \"%s\", %d)", g_source_file_escaped, node->ast_token.line);
                     }
                     break;
                 }
             }
 
-            if (lt.kind == TYPE_CLASS) {
-                int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
-                int rhs_local = (rhs->kind == AST_IDENT && symtab_lookup(rhs->tok.text) != NULL);
+            if (lt.type_kind == TYPE_CLASS) {
+                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
 
                 fprintf(out, "((");
                 if (!rhs_owned && !rhs_local) {
@@ -554,14 +554,14 @@ static void codegen_expr(AstNode* node, FILE* out) {
                 fprintf(out, " = ");
                 codegen_expr(rhs, out);
                 fprintf(out, ")))");
-            } else if (lt.kind == TYPE_INTERFACE) {
+            } else if (lt.type_kind == TYPE_INTERFACE) {
                 resolve_type(rhs);
-                Type rt = rhs->resolved_type;
-                int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
-                int rhs_local = (rhs->kind == AST_IDENT && symtab_lookup(rhs->tok.text) != NULL);
+                Type rt = rhs->ast_resolved_type;
+                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
 
                 fprintf(out, "((void)");
-                if (rt.kind == TYPE_CLASS) {
+                if (rt.type_kind == TYPE_CLASS) {
                     if (!rhs_owned && !rhs_local) {
                         fprintf(out, "mylang_retain(");
                         codegen_expr(rhs, out);
@@ -578,8 +578,8 @@ static void codegen_expr(AstNode* node, FILE* out) {
                     fprintf(out, ".vtable = &%s_%s_vtable", rt.class_name, lt.class_name);
                     fprintf(out, "))");
                 } else {
-                    if (!rhs_owned && !rhs_local && rhs->kind == AST_IDENT) {
-                        fprintf(out, "mylang_retain(%s.data), ", rhs->tok.text);
+                    if (!rhs_owned && !rhs_local && rhs->ast_kind == AST_IDENT) {
+                        fprintf(out, "mylang_retain(%s.data), ", rhs->ast_token.text);
                     }
                     fprintf(out, "mylang_release(");
                     codegen_expr(lhs, out);
@@ -609,10 +609,10 @@ static void codegen_expr(AstNode* node, FILE* out) {
             codegen_new(node, out);
             break;
         case AST_AS_CAST: {
-            AstNode* obj = node->children[0];
+            AstNode* obj = node->ast_children[0];
             resolve_type(obj);
-            Type target = node->resolved_type;
-            if (target.kind == TYPE_CLASS) {
+            Type target = node->ast_resolved_type;
+            if (target.type_kind == TYPE_CLASS) {
                 ClassInfo* ci = symtab_find_class(target.class_name);
                 fprintf(out, "((");
                 codegen_expr(obj, out);
@@ -622,7 +622,7 @@ static void codegen_expr(AstNode* node, FILE* out) {
                 fprintf(out, ").data : NULL)");
             } else {
                 fprintf(stderr, "error at %d:%d: 'as' target must be a class type\n",
-                        node->tok.line, node->tok.col);
+                        node->ast_token.line, node->ast_token.col);
                 g_codegen_error = 1;
                 fprintf(out, "/* as-cast unsupported target */");
             }
@@ -641,27 +641,27 @@ static void indent_line(FILE* out, int indent);
 static void emit_bounds_checks(AstNode* expr, FILE* out, int indent) {
     if (!expr) return;
 
-    if (expr->kind == AST_ARRAY_ACCESS) {
-        AstNode* arr = expr->children[0];
-        AstNode* idx = expr->children[1];
+    if (expr->ast_kind == AST_ARRAY_ACCESS) {
+        AstNode* arr = expr->ast_children[0];
+        AstNode* idx = expr->ast_children[1];
 
         emit_bounds_checks(arr, out, indent);
         emit_bounds_checks(idx, out, indent);
 
         resolve_type(arr);
-        Type at = arr->resolved_type;
+        Type at = arr->ast_resolved_type;
 
         /* Dynamic arrays use runtime bounds inside getter/setter helpers. */
         if (at.array_size > 0) {
             indent_line(out, indent);
-            fprintf(out, "MY_LOC(\"%s\", %d); MY_CHECK((size_t)(", g_source_file_escaped, expr->tok.line);
+            fprintf(out, "MY_LOC(\"%s\", %d); MY_CHECK((size_t)(", g_source_file_escaped, expr->ast_token.line);
             codegen_expr(idx, out);
             fprintf(out, ") < %d, \"index out of bounds\");\n", at.array_size);
         }
     } else {
         int i;
-        for (i = 0; i < expr->child_count; i++) {
-            emit_bounds_checks(expr->children[i], out, indent);
+        for (i = 0; i < expr->ast_child_count; i++) {
+            emit_bounds_checks(expr->ast_children[i], out, indent);
         }
     }
     emit_bounds_checks(expr->next, out, indent);
@@ -673,16 +673,16 @@ static int guard_tmp_id = 0;
 
 static int call_needs_guard(AstNode* arg) {
     resolve_type(arg);
-    TypeKind k = arg->resolved_type.kind;
+    TypeKind k = arg->ast_resolved_type.type_kind;
     if (k != TYPE_CLASS && k != TYPE_INTERFACE) return 0;
-    if (arg->kind == AST_ASSIGN) return 0;
-    if (arg->kind == AST_IDENT && symtab_lookup(arg->tok.text)) return 0;
+    if (arg->ast_kind == AST_ASSIGN) return 0;
+    if (arg->ast_kind == AST_IDENT && symtab_lookup(arg->ast_token.text)) return 0;
     return 1;
 }
 
 static int guard_needs_retain(AstNode* node) {
     /* Calls/new already return an owned (+1) reference. */
-    return node->kind != AST_CALL && node->kind != AST_NEW;
+    return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
 }
 
 /* Evaluate each guarded class subexpression into a temporary once, so we do
@@ -693,35 +693,35 @@ static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
 
     /* Do not extract the LHS of an assignment into a temporary; it must remain
        an lvalue so the assignment writes to the real location. */
-    if (expr->kind == AST_ASSIGN) {
-        emit_guarded_temp_decls(expr->children[1], out, indent);
+    if (expr->ast_kind == AST_ASSIGN) {
+        emit_guarded_temp_decls(expr->ast_children[1], out, indent);
         emit_guarded_temp_decls(expr->next, out, indent);
         return;
     }
 
     int i;
-    for (i = 0; i < expr->child_count; i++) {
-        emit_guarded_temp_decls(expr->children[i], out, indent);
+    for (i = 0; i < expr->ast_child_count; i++) {
+        emit_guarded_temp_decls(expr->ast_children[i], out, indent);
     }
     emit_guarded_temp_decls(expr->next, out, indent);
 
-    if (call_needs_guard(expr) && expr->temp_name[0] == '\0') {
+    if (call_needs_guard(expr) && expr->ast_temp_name[0] == '\0') {
         int id = guard_tmp_id++;
-        int n = snprintf(expr->temp_name, sizeof(expr->temp_name), "_g%d", id);
-        CHECK_SNPRINTF(n, sizeof(expr->temp_name), "guard temporary name too long");
+        int n = snprintf(expr->ast_temp_name, sizeof(expr->ast_temp_name), "_g%d", id);
+        CHECK_SNPRINTF(n, sizeof(expr->ast_temp_name), "guard temporary name too long");
 
         char tbuf[128];
-        c_type_str(&expr->resolved_type, tbuf, sizeof(tbuf));
+        c_type_str(&expr->ast_resolved_type, tbuf, sizeof(tbuf));
         indent_line(out, indent);
-        fprintf(out, "%s %s = ", tbuf, expr->temp_name);
+        fprintf(out, "%s %s = ", tbuf, expr->ast_temp_name);
 
         /* Evaluate the original expression without using its own temp name. */
         char saved[64];
-        CHECK_STRSCPY(strscpy(saved, expr->temp_name, sizeof(saved)),
+        CHECK_STRSCPY(strscpy(saved, expr->ast_temp_name, sizeof(saved)),
                       "guard temporary name too long");
-        expr->temp_name[0] = '\0';
+        expr->ast_temp_name[0] = '\0';
         codegen_expr(expr, out);
-        CHECK_STRSCPY(strscpy(expr->temp_name, saved, sizeof(expr->temp_name)),
+        CHECK_STRSCPY(strscpy(expr->ast_temp_name, saved, sizeof(expr->ast_temp_name)),
                       "guard temporary name too long");
 
         fprintf(out, ";\n");
@@ -730,17 +730,17 @@ static void emit_guarded_temp_decls(AstNode* expr, FILE* out, int indent) {
 
 static void emit_call_guards(AstNode* expr, FILE* out, int is_retain) {
     if (!expr) return;
-    if (expr->kind == AST_CALL) {
-        AstNode* callee = expr->children[0];
-        AstNode* args  = (expr->child_count > 1) ? expr->children[1] : NULL;
+    if (expr->ast_kind == AST_CALL) {
+        AstNode* callee = expr->ast_children[0];
+        AstNode* args  = (expr->ast_child_count > 1) ? expr->ast_children[1] : NULL;
 
-        if (callee->kind == AST_MEMBER_ACCESS) {
-            AstNode* obj = callee->children[0];
+        if (callee->ast_kind == AST_MEMBER_ACCESS) {
+            AstNode* obj = callee->ast_children[0];
             if (call_needs_guard(obj)) {
                 if (is_retain) {
-                    if (guard_needs_retain(obj)) fprintf(out, "mylang_retain(%s); ", obj->temp_name);
+                    if (guard_needs_retain(obj)) fprintf(out, "mylang_retain(%s); ", obj->ast_temp_name);
                 } else {
-                    fprintf(out, "mylang_release(%s); ", obj->temp_name);
+                    fprintf(out, "mylang_release(%s); ", obj->ast_temp_name);
                 }
             }
         }
@@ -748,16 +748,16 @@ static void emit_call_guards(AstNode* expr, FILE* out, int is_retain) {
         while (a) {
             if (call_needs_guard(a)) {
                 if (is_retain) {
-                    if (guard_needs_retain(a)) fprintf(out, "mylang_retain(%s); ", a->temp_name);
+                    if (guard_needs_retain(a)) fprintf(out, "mylang_retain(%s); ", a->ast_temp_name);
                 } else {
-                    fprintf(out, "mylang_release(%s); ", a->temp_name);
+                    fprintf(out, "mylang_release(%s); ", a->ast_temp_name);
                 }
             }
             a = a->next;
         }
     }
     int i;
-    for (i = 0; i < expr->child_count; i++) emit_call_guards(expr->children[i], out, is_retain);
+    for (i = 0; i < expr->ast_child_count; i++) emit_call_guards(expr->ast_children[i], out, is_retain);
 }
 
 static void emit_stmt_call_retains(AstNode* expr, FILE* out, int indent) {
@@ -852,8 +852,8 @@ static void codegen_body(AstNode* body, FILE* out, int indent) {
     indent_line(out, indent);
     fprintf(out, "{\n");
     cleanup_push_scope();
-    if (body->kind == AST_BLOCK) {
-        AstNode* s = body->children[0];
+    if (body->ast_kind == AST_BLOCK) {
+        AstNode* s = body->ast_children[0];
         while (s) {
             codegen_stmt(s, out, indent + 1);
             s = s->next;
@@ -867,63 +867,63 @@ static void codegen_body(AstNode* body, FILE* out, int indent) {
 }
 
 static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
-    Type type = node->resolved_type;
+    Type type = node->ast_resolved_type;
 
-    symtab_insert(node->tok.text, type);
+    symtab_insert(node->ast_token.text, type);
 
-    if (type.is_weak && node->child_count > 0) {
-        resolve_type(node->children[0]);
-        if (node->children[0]->resolved_type.is_weak) {
+    if (type.is_weak && node->ast_child_count > 0) {
+        resolve_type(node->ast_children[0]);
+        if (node->ast_children[0]->ast_resolved_type.is_weak) {
             indent_line(out, indent);
-            fprintf(out, "WeakRef* %s = mylang_weak_copy(", node->tok.text);
-            codegen_expr(node->children[0], out);
+            fprintf(out, "WeakRef* %s = mylang_weak_copy(", node->ast_token.text);
+            codegen_expr(node->ast_children[0], out);
             fprintf(out, ");\n");
         } else {
-            int rhs_owned = (node->children[0]->kind == AST_CALL ||
-                             node->children[0]->kind == AST_NEW);
+            int rhs_owned = (node->ast_children[0]->ast_kind == AST_CALL ||
+                             node->ast_children[0]->ast_kind == AST_NEW);
             if (rhs_owned) {
                 int tmp_id = assign_tmp_id++;
                 indent_line(out, indent);
                 fprintf(out, "void* _w%d = ", tmp_id);
-                codegen_expr(node->children[0], out);
+                codegen_expr(node->ast_children[0], out);
                 fprintf(out, ";\n");
                 indent_line(out, indent);
                 fprintf(out, "WeakRef* %s = mylang_weak_init(_w%d);\n",
-                        node->tok.text, tmp_id);
+                        node->ast_token.text, tmp_id);
                 indent_line(out, indent);
                 fprintf(out, "mylang_release(_w%d);\n", tmp_id);
             } else {
                 indent_line(out, indent);
-                fprintf(out, "WeakRef* %s = mylang_weak_init(", node->tok.text);
-                codegen_expr(node->children[0], out);
+                fprintf(out, "WeakRef* %s = mylang_weak_init(", node->ast_token.text);
+                codegen_expr(node->ast_children[0], out);
                 fprintf(out, ");\n");
             }
         }
-        cleanup_add(node->tok.text, 1, 0);
+        cleanup_add(node->ast_token.text, 1, 0);
         return;
     }
 
-    if (type.kind == TYPE_INTERFACE) {
-        if (node->child_count > 0) {
-            AstNode* init = node->children[0];
+    if (type.type_kind == TYPE_INTERFACE) {
+        if (node->ast_child_count > 0) {
+            AstNode* init = node->ast_children[0];
             resolve_type(init);
-            int rhs_owned = (init->kind == AST_CALL || init->kind == AST_NEW);
+            int rhs_owned = (init->ast_kind == AST_CALL || init->ast_kind == AST_NEW);
 
-            if (init->resolved_type.kind == TYPE_CLASS) {
+            if (init->ast_resolved_type.type_kind == TYPE_CLASS) {
                 indent_line(out, indent);
-                fprintf(out, "%s %s;\n", type.class_name, node->tok.text);
+                fprintf(out, "%s %s;\n", type.class_name, node->ast_token.text);
                 indent_line(out, indent);
-                fprintf(out, "%s.data = (void*)", node->tok.text);
+                fprintf(out, "%s.data = (void*)", node->ast_token.text);
                 if (!rhs_owned) fprintf(out, "mylang_retain(");
                 codegen_expr(init, out);
                 if (!rhs_owned) fprintf(out, ")");
                 fprintf(out, ";\n");
                 indent_line(out, indent);
                 fprintf(out, "%s.vtable = &%s_%s_vtable;\n",
-                        node->tok.text,
-                        init->resolved_type.class_name,
+                        node->ast_token.text,
+                        init->ast_resolved_type.class_name,
                         type.class_name);
-            } else if (init->resolved_type.kind == TYPE_INTERFACE) {
+            } else if (init->ast_resolved_type.type_kind == TYPE_INTERFACE) {
                 int tmp_id = assign_tmp_id++;
                 indent_line(out, indent);
                 fprintf(out, "%s _init%d = ", type.class_name, tmp_id);
@@ -934,88 +934,88 @@ static void codegen_var_decl(AstNode* node, FILE* out, int indent) {
                     fprintf(out, "mylang_retain(_init%d.data);\n", tmp_id);
                 }
                 indent_line(out, indent);
-                fprintf(out, "%s %s = _init%d;\n", type.class_name, node->tok.text, tmp_id);
+                fprintf(out, "%s %s = _init%d;\n", type.class_name, node->ast_token.text, tmp_id);
             } else {
                 fprintf(stderr, "error at %d:%d: cannot initialize interface '%s' with non-class value\n",
-                        node->tok.line, node->tok.col, type.class_name);
+                        node->ast_token.line, node->ast_token.col, type.class_name);
                 g_codegen_error = 1;
                 indent_line(out, indent);
-                fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->tok.text);
+                fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->ast_token.text);
             }
         } else {
             indent_line(out, indent);
-            fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->tok.text);
+            fprintf(out, "%s %s = { NULL, NULL };\n", type.class_name, node->ast_token.text);
         }
-        cleanup_add(node->tok.text, 0, 1);
+        cleanup_add(node->ast_token.text, 0, 1);
         return;
     }
 
     indent_line(out, indent);
 
     if (type.array_size > 0) {
-        fprintf(out, "%s %s[%d]", c_base_name(&type), node->tok.text, type.array_size);
+        fprintf(out, "%s %s[%d]", c_base_name(&type), node->ast_token.text, type.array_size);
     } else {
         char typename_buf[128];
         c_type_str(&type, typename_buf, sizeof(typename_buf));
-        fprintf(out, "%s %s", typename_buf, node->tok.text);
+        fprintf(out, "%s %s", typename_buf, node->ast_token.text);
     }
 
-    if (node->child_count > 0) {
-        if (type.kind == TYPE_CLASS && node->children[0]->kind != AST_NEW
-            && node->children[0]->kind != AST_CALL) {
+    if (node->ast_child_count > 0) {
+        if (type.type_kind == TYPE_CLASS && node->ast_children[0]->ast_kind != AST_NEW
+            && node->ast_children[0]->ast_kind != AST_CALL) {
             fprintf(out, " = mylang_retain(");
-            codegen_expr(node->children[0], out);
+            codegen_expr(node->ast_children[0], out);
             fprintf(out, ")");
         } else {
             fprintf(out, " = ");
-            codegen_expr(node->children[0], out);
+            codegen_expr(node->ast_children[0], out);
         }
     } else if (type.is_pointer || type.is_weak) {
         fprintf(out, " = NULL");
     }
     fprintf(out, ";\n");
 
-    if ((type.kind == TYPE_CLASS && type.is_pointer && !type.is_array) ||
+    if ((type.type_kind == TYPE_CLASS && type.is_pointer && !type.is_array) ||
         (type.is_array && type.array_size == 0)) {
-        cleanup_add(node->tok.text, 0, 0);
+        cleanup_add(node->ast_token.text, 0, 0);
     }
     if (type.is_weak) {
-        cleanup_add(node->tok.text, 1, 0);
+        cleanup_add(node->ast_token.text, 1, 0);
     }
 }
 
 static void codegen_if_stmt(AstNode* node, FILE* out, int indent) {
-    emit_bounds_checks(node->children[0], out, indent);
+    emit_bounds_checks(node->ast_children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "if (");
-    codegen_expr(node->children[0], out);
+    codegen_expr(node->ast_children[0], out);
     fprintf(out, ")\n");
-    codegen_body(node->children[1], out, indent);
+    codegen_body(node->ast_children[1], out, indent);
 
-    if (node->child_count > 2) {
+    if (node->ast_child_count > 2) {
         indent_line(out, indent);
         fprintf(out, "else\n");
-        codegen_body(node->children[2], out, indent);
+        codegen_body(node->ast_children[2], out, indent);
     }
 }
 
 static void codegen_while_stmt(AstNode* node, FILE* out, int indent) {
-    emit_bounds_checks(node->children[0], out, indent);
+    emit_bounds_checks(node->ast_children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "while (");
-    codegen_expr(node->children[0], out);
+    codegen_expr(node->ast_children[0], out);
     fprintf(out, ")\n");
-    codegen_body(node->children[1], out, indent);
+    codegen_body(node->ast_children[1], out, indent);
 }
 
 static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
-    if (node->child_count > 0) {
-        AstNode* ret = node->children[0];
+    if (node->ast_child_count > 0) {
+        AstNode* ret = node->ast_children[0];
         emit_bounds_checks(ret, out, indent);
         resolve_type(ret);
 
-        if (ret->resolved_type.kind == TYPE_CLASS &&
-            g_return_type.kind == TYPE_INTERFACE) {
+        if (ret->ast_resolved_type.type_kind == TYPE_CLASS &&
+            g_return_type.type_kind == TYPE_INTERFACE) {
             /* implicit class-to-interface conversion in return */
             int tid = assign_tmp_id++;
             indent_line(out, indent);
@@ -1028,13 +1028,13 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             fprintf(out, "_iret%d.data = _r;\n", tid);
             indent_line(out, indent);
             fprintf(out, "_iret%d.vtable = &%s_%s_vtable;\n",
-                    tid, ret->resolved_type.class_name, g_return_type.class_name);
+                    tid, ret->ast_resolved_type.class_name, g_return_type.class_name);
             cleanup_emit(out, indent);
             indent_line(out, indent);
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
             fprintf(out, "return _iret%d;\n", tid);
-        } else if (ret->resolved_type.kind == TYPE_CLASS) {
+        } else if (ret->ast_resolved_type.type_kind == TYPE_CLASS) {
             indent_line(out, indent);
             fprintf(out, "void* _r = mylang_retain(");
             codegen_expr(ret, out);
@@ -1044,9 +1044,9 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
             fprintf(out, "return _r;\n");
-        } else if (ret->resolved_type.kind == TYPE_INTERFACE) {
+        } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE) {
             char tbuf[128];
-            c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
+            c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
             int tid = assign_tmp_id++;
             indent_line(out, indent);
             fprintf(out, "%s _iret%d = ", tbuf, tid);
@@ -1061,7 +1061,7 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
             fprintf(out, "return _iret%d;\n", tid);
         } else {
             char tbuf[128];
-            c_type_str(&ret->resolved_type, tbuf, sizeof(tbuf));
+            c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
             indent_line(out, indent);
             fprintf(out, "%s _mylang_ret = ", tbuf);
             codegen_expr(ret, out);
@@ -1082,8 +1082,8 @@ static void codegen_return_stmt(AstNode* node, FILE* out, int indent) {
 }
 
 static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
-    emit_bounds_checks(node->children[0], out, indent);
-    AstNode* expr = node->children[0];
+    emit_bounds_checks(node->ast_children[0], out, indent);
+    AstNode* expr = node->ast_children[0];
     resolve_type(expr);
 
     /* Extract guarded class subexpressions into temporaries so side-effecting
@@ -1092,22 +1092,22 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
 
     /* class/array assignment: evaluate RHS first, release old LHS, then assign.
        This avoids use-after-free when RHS aliases LHS (e.g. b = b.set(5)). */
-    if (expr->kind == AST_ASSIGN) {
-        AstNode* lhs = expr->children[0];
-        AstNode* rhs = expr->children[1];
+    if (expr->ast_kind == AST_ASSIGN) {
+        AstNode* lhs = expr->ast_children[0];
+        AstNode* rhs = expr->ast_children[1];
         resolve_type(lhs);
         resolve_type(rhs);
-        Type lt = lhs->resolved_type;
+        Type lt = lhs->ast_resolved_type;
 
-        if (lhs->kind == AST_ARRAY_ACCESS) {
-            Type at = lhs->children[0]->resolved_type;
+        if (lhs->ast_kind == AST_ARRAY_ACCESS) {
+            Type at = lhs->ast_children[0]->ast_resolved_type;
             if (at.is_array && at.array_size == 0) {
                 emit_stmt_call_retains(expr, out, indent);
 
-                int is_class_elem = (lt.kind == TYPE_CLASS && lt.is_pointer);
-                AstNode* arr = lhs->children[0];
-                AstNode* idx = lhs->children[1];
-                int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+                int is_class_elem = (lt.type_kind == TYPE_CLASS && lt.is_pointer);
+                AstNode* arr = lhs->ast_children[0];
+                AstNode* idx = lhs->ast_children[1];
+                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
 
                 indent_line(out, indent);
                 if (is_class_elem) {
@@ -1126,18 +1126,18 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 } else {
                     codegen_expr(rhs, out);
                 }
-                fprintf(out, ", \"%s\", %d);\n", g_source_file_escaped, expr->tok.line);
+                fprintf(out, ", \"%s\", %d);\n", g_source_file_escaped, expr->ast_token.line);
 
                 emit_stmt_call_releases(expr, out, indent);
                 return;
             }
         }
 
-        if (lhs->kind == AST_IDENT && (lt.kind == TYPE_CLASS || lt.is_array)) {
+        if (lhs->ast_kind == AST_IDENT && (lt.type_kind == TYPE_CLASS || lt.is_array)) {
             emit_stmt_call_retains(expr, out, indent);
 
             int id = assign_tmp_id++;
-            int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
 
             indent_line(out, indent);
             fprintf(out, "void* _my_assign_%d = ", id);
@@ -1163,15 +1163,15 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
             return;
         }
 
-        if (lhs->kind == AST_IDENT && lt.kind == TYPE_INTERFACE) {
+        if (lhs->ast_kind == AST_IDENT && lt.type_kind == TYPE_INTERFACE) {
             emit_stmt_call_retains(expr, out, indent);
             resolve_type(rhs);
-            Type rt = rhs->resolved_type;
+            Type rt = rhs->ast_resolved_type;
 
             int id = assign_tmp_id++;
-            int rhs_owned = (rhs->kind == AST_CALL || rhs->kind == AST_NEW);
+            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
 
-            if (rt.kind == TYPE_CLASS) {
+            if (rt.type_kind == TYPE_CLASS) {
                 indent_line(out, indent);
                 fprintf(out, "void* _iassign_%d = ", id);
                 if (!rhs_owned) fprintf(out, "mylang_retain(");
@@ -1180,13 +1180,13 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 fprintf(out, ";\n");
 
                 indent_line(out, indent);
-                fprintf(out, "mylang_release(%s.data);\n", lhs->tok.text);
+                fprintf(out, "mylang_release(%s.data);\n", lhs->ast_token.text);
                 indent_line(out, indent);
-                fprintf(out, "%s.data = _iassign_%d;\n", lhs->tok.text, id);
+                fprintf(out, "%s.data = _iassign_%d;\n", lhs->ast_token.text, id);
                 indent_line(out, indent);
                 fprintf(out, "%s.vtable = &%s_%s_vtable;\n",
-                        lhs->tok.text, rt.class_name, lt.class_name);
-            } else if (rt.kind == TYPE_INTERFACE) {
+                        lhs->ast_token.text, rt.class_name, lt.class_name);
+            } else if (rt.type_kind == TYPE_INTERFACE) {
                 indent_line(out, indent);
                 fprintf(out, "%s _iassign_%d = ", c_base_name(&lt), id);
                 codegen_expr(rhs, out);
@@ -1198,13 +1198,13 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
                 }
 
                 indent_line(out, indent);
-                fprintf(out, "mylang_release(%s.data);\n", lhs->tok.text);
+                fprintf(out, "mylang_release(%s.data);\n", lhs->ast_token.text);
                 indent_line(out, indent);
                 codegen_expr(lhs, out);
                 fprintf(out, " = _iassign_%d;\n", id);
             } else {
                 fprintf(stderr, "error at %d:%d: cannot assign non-class value to interface '%s'\n",
-                        rhs->tok.line, rhs->tok.col, lt.class_name);
+                        rhs->ast_token.line, rhs->ast_token.col, lt.class_name);
                 g_codegen_error = 1;
             }
 
@@ -1216,15 +1216,15 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
     emit_stmt_call_retains(expr, out, indent);
 
     indent_line(out, indent);
-    if (expr->kind == AST_CALL && expr->resolved_type.kind == TYPE_CLASS) {
+    if (expr->ast_kind == AST_CALL && expr->ast_resolved_type.type_kind == TYPE_CLASS) {
         /* discarded class return: release the +1 from callee */
         fprintf(out, "(void)mylang_release(");
         codegen_expr(expr, out);
         fprintf(out, ")");
-    } else if (expr->kind == AST_CALL && expr->resolved_type.kind == TYPE_INTERFACE) {
+    } else if (expr->ast_kind == AST_CALL && expr->ast_resolved_type.type_kind == TYPE_INTERFACE) {
         /* discarded interface return: save to temp, release .data */
         int dtid = assign_tmp_id++;
-        fprintf(out, "%s _dt%d = ", c_base_name(&expr->resolved_type), dtid);
+        fprintf(out, "%s _dt%d = ", c_base_name(&expr->ast_resolved_type), dtid);
         codegen_expr(expr, out);
         fprintf(out, "; (void)mylang_release(_dt%d.data)", dtid);
     } else {
@@ -1238,7 +1238,7 @@ static void codegen_expr_stmt(AstNode* node, FILE* out, int indent) {
 static void codegen_stmt(AstNode* node, FILE* out, int indent) {
     if (!node) return;
 
-    switch (node->kind) {
+    switch (node->ast_kind) {
         case AST_BLOCK:
             codegen_body(node, out, indent);
             break;
@@ -1259,7 +1259,7 @@ static void codegen_stmt(AstNode* node, FILE* out, int indent) {
             break;
         default:
             indent_line(out, indent);
-            fprintf(out, "/* unknown stmt kind=%d */\n", node->kind);
+            fprintf(out, "/* unknown stmt kind=%d */\n", node->ast_kind);
             break;
     }
 }
@@ -1333,7 +1333,7 @@ static void codegen_class_interface_vtables(ClassInfo* ci, FILE* out) {
 
             /* call actual method */
             fprintf(out, "    ");
-            if (im->return_type.kind != TYPE_VOID) {
+            if (im->return_type.type_kind != TYPE_VOID) {
                 fprintf(out, "return ");
             }
             fprintf(out, "%s_%s((%s*)_p", ci->name, im->name, ci->name);
@@ -1357,10 +1357,10 @@ static void codegen_class_interface_vtables(ClassInfo* ci, FILE* out) {
 }
 
 static void codegen_struct_decl(AstNode* node, FILE* out) {
-    StructInfo* si = symtab_find_struct(node->tok.text);
+    StructInfo* si = symtab_find_struct(node->ast_token.text);
     if (!si) return;
 
-    fprintf(out, "typedef struct %s {\n", node->tok.text);
+    fprintf(out, "typedef struct %s {\n", node->ast_token.text);
     int i;
     if (si->field_count == 0) {
         fprintf(out, "    char _pad;\n");
@@ -1371,22 +1371,22 @@ static void codegen_struct_decl(AstNode* node, FILE* out) {
             fprintf(out, "    %s %s;\n", ftype_buf, si->field_names[i]);
         }
     }
-    fprintf(out, "} %s;\n\n", node->tok.text);
+    fprintf(out, "} %s;\n\n", node->ast_token.text);
 }
 
 static void codegen_class_decl(AstNode* node, FILE* out) {
-    ClassInfo* ci = symtab_find_class(node->tok.text);
+    ClassInfo* ci = symtab_find_class(node->ast_token.text);
     if (!ci) return;
 
-    fprintf(out, "typedef struct %s {\n", node->tok.text);
+    fprintf(out, "typedef struct %s {\n", node->ast_token.text);
     int i;
     if (ci->field_count == 0) {
         fprintf(out, "    char _pad;\n");
     } else {
         for (i = 0; i < ci->field_count; i++) {
             char ftype_buf[128];
-            if (ci->field_types[i].kind == TYPE_CLASS &&
-                strcmp(ci->field_types[i].class_name, node->tok.text) == 0) {
+            if (ci->field_types[i].type_kind == TYPE_CLASS &&
+                strcmp(ci->field_types[i].class_name, node->ast_token.text) == 0) {
                 int n = snprintf(ftype_buf, sizeof(ftype_buf), "struct %s*", ci->field_types[i].class_name);
                 CHECK_SNPRINTF(n, (size_t)sizeof(ftype_buf), "field type name too long");
             } else {
@@ -1395,12 +1395,12 @@ static void codegen_class_decl(AstNode* node, FILE* out) {
             fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
         }
     }
-    fprintf(out, "} %s;\n\n", node->tok.text);
+    fprintf(out, "} %s;\n\n", node->ast_token.text);
 
     /* emit method declarations */
-    AstNode* m = node->children[0];
+    AstNode* m = node->ast_children[0];
     while (m) {
-        codegen_method_decl(m, out, node->tok.text);
+        codegen_method_decl(m, out, node->ast_token.text);
         m = m->next;
     }
 
@@ -1411,35 +1411,35 @@ static void codegen_class_decl(AstNode* node, FILE* out) {
 
 static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name) {
     char ret_buf[128];
-    c_type_str(&node->resolved_type, ret_buf, sizeof(ret_buf));
-    fprintf(out, "%s %s_%s(%s* thiz", ret_buf, class_name, node->tok.text, class_name);
+    c_type_str(&node->ast_resolved_type, ret_buf, sizeof(ret_buf));
+    fprintf(out, "%s %s_%s(%s* thiz", ret_buf, class_name, node->ast_token.text, class_name);
     AstNode* params = NULL; AstNode* body = NULL;
-    if (node->child_count == 2) { params = node->children[0]; body = node->children[1]; }
-    else { body = node->children[0]; }
+    if (node->ast_child_count == 2) { params = node->ast_children[0]; body = node->ast_children[1]; }
+    else { body = node->ast_children[0]; }
     { AstNode* p = params; while (p) { fprintf(out, ", ");
-        char pt[128]; c_type_str(&p->resolved_type, pt, sizeof(pt));
-        if (type_is_ref(&p->resolved_type)) {
-            fprintf(out, "%s* %s", pt, p->tok.text);
+        char pt[128]; c_type_str(&p->ast_resolved_type, pt, sizeof(pt));
+        if (type_is_ref(&p->ast_resolved_type)) {
+            fprintf(out, "%s* %s", pt, p->ast_token.text);
         } else {
-            fprintf(out, "%s %s", pt, p->tok.text);
+            fprintf(out, "%s %s", pt, p->ast_token.text);
         }
         p = p->next; } }
     fprintf(out, ")\n{\n");
     cleanup_push_scope(); symtab_enter_scope();
     Type prev_ret = g_return_type;
-    g_return_type = node->resolved_type;
+    g_return_type = node->ast_resolved_type;
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
-    thiz_type.kind = TYPE_CLASS;
+    thiz_type.type_kind = TYPE_CLASS;
     CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
     thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
-    { AstNode* p = params; while (p) { symtab_insert(p->tok.text, p->resolved_type);
+    { AstNode* p = params; while (p) { symtab_insert(p->ast_token.text, p->ast_resolved_type);
         p = p->next; } }
 
     indent_line(out, 1);
-    fprintf(out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->tok.text, g_source_file_escaped, node->tok.line);
+    fprintf(out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->ast_token.text, g_source_file_escaped, node->ast_token.line);
 
     fprintf(out, "{\n");
-    if (body && body->kind == AST_BLOCK) { AstNode* s = body->children[0];
+    if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
         while (s) { codegen_stmt(s, out, 2); s = s->next; } }
     cleanup_pop_scope(out, 2);
     fprintf(out, "}\n");
@@ -1452,17 +1452,17 @@ static void codegen_method_decl(AstNode* node, FILE* out, const char* class_name
     g_return_type = prev_ret;
 }
 static void codegen_func_decl(AstNode* node, FILE* out) {
-    const char* func_name = node->tok.text;
+    const char* func_name = node->ast_token.text;
     if (strcmp(func_name, "main") == 0) {
         func_name = "_my_main";
         g_has_main = 1;
-        g_main_return_type = node->resolved_type;
+        g_main_return_type = node->ast_resolved_type;
     }
 
     /* return type */
     {
         char ret_buf[128];
-        c_type_str(&node->resolved_type, ret_buf, sizeof(ret_buf));
+        c_type_str(&node->ast_resolved_type, ret_buf, sizeof(ret_buf));
         fprintf(out, "%s %s(", ret_buf, func_name);
     }
 
@@ -1470,11 +1470,11 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     AstNode* params = NULL;
     AstNode* body   = NULL;
 
-    if (node->child_count == 2) {
-        params = node->children[0];
-        body   = node->children[1];
+    if (node->ast_child_count == 2) {
+        params = node->ast_children[0];
+        body   = node->ast_children[1];
     } else {
-        body = node->children[0];
+        body = node->ast_children[0];
     }
 
     {
@@ -1483,11 +1483,11 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
         while (p) {
             if (!first) fprintf(out, ", ");
             char ptype_buf[128];
-            c_type_str(&p->resolved_type, ptype_buf, sizeof(ptype_buf));
-            if (type_is_ref(&p->resolved_type)) {
-                fprintf(out, "%s* %s", ptype_buf, p->tok.text);
+            c_type_str(&p->ast_resolved_type, ptype_buf, sizeof(ptype_buf));
+            if (type_is_ref(&p->ast_resolved_type)) {
+                fprintf(out, "%s* %s", ptype_buf, p->ast_token.text);
             } else {
-                fprintf(out, "%s %s", ptype_buf, p->tok.text);
+                fprintf(out, "%s %s", ptype_buf, p->ast_token.text);
             }
             first = 0;
             p = p->next;
@@ -1502,25 +1502,25 @@ static void codegen_func_decl(AstNode* node, FILE* out) {
     symtab_enter_scope();
 
     Type prev_ret = g_return_type;
-    g_return_type = node->resolved_type;
+    g_return_type = node->ast_resolved_type;
 
     /* register parameters in scope */
     {
         AstNode* p = params;
         while (p) {
-            symtab_insert(p->tok.text, p->resolved_type);
+            symtab_insert(p->ast_token.text, p->ast_resolved_type);
             p = p->next;
         }
     }
 
     indent_line(out, 1);
-    fprintf(out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, g_source_file_escaped, node->tok.line);
+    fprintf(out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, g_source_file_escaped, node->ast_token.line);
 
     fprintf(out, "{\n");
 
     /* walk body statements */
-    if (body && body->kind == AST_BLOCK) {
-        AstNode* s = body->children[0];
+    if (body && body->ast_kind == AST_BLOCK) {
+        AstNode* s = body->ast_children[0];
         while (s) {
             codegen_stmt(s, out, 2);
             s = s->next;
@@ -1937,25 +1937,25 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
 
     codegen_interface_typedefs(out);
 
-    AstNode* decl = program->children[0];
+    AstNode* decl = program->ast_children[0];
     while (decl) {
-        if (decl->kind == AST_STRUCT_DECL) {
+        if (decl->ast_kind == AST_STRUCT_DECL) {
             codegen_struct_decl(decl, out);
         }
         decl = decl->next;
     }
 
-    decl = program->children[0];
+    decl = program->ast_children[0];
     while (decl) {
-        if (decl->kind == AST_CLASS_DECL) {
+        if (decl->ast_kind == AST_CLASS_DECL) {
             codegen_class_decl(decl, out);
         }
         decl = decl->next;
     }
 
-    decl = program->children[0];
+    decl = program->ast_children[0];
     while (decl) {
-        if (decl->kind == AST_FUNC_DECL) {
+        if (decl->ast_kind == AST_FUNC_DECL) {
             codegen_func_decl(decl, out);
         }
         decl = decl->next;
@@ -1969,7 +1969,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
         fprintf(out, "    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);\n");
         fprintf(out, "    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);\n");
         fprintf(out, "#endif\n");
-        if (g_main_return_type.kind == TYPE_VOID) {
+        if (g_main_return_type.type_kind == TYPE_VOID) {
             fprintf(out, "    _my_main();\n");
             fprintf(out, "#ifdef _DEBUG\n");
             fprintf(out, "    _CrtDumpMemoryLeaks();\n");

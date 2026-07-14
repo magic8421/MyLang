@@ -28,16 +28,16 @@ static int expect(Parser* p, TokenKind k) {
 
 static int expr_contains_assign(AstNode* node) {
     if (!node) return 0;
-    if (node->kind == AST_ASSIGN) return 1;
+    if (node->ast_kind == AST_ASSIGN) return 1;
     int i;
-    for (i = 0; i < node->child_count; i++) {
-        if (expr_contains_assign(node->children[i])) return 1;
+    for (i = 0; i < node->ast_child_count; i++) {
+        if (expr_contains_assign(node->ast_children[i])) return 1;
     }
     return expr_contains_assign(node->next);
 }
 
 static int expr_is_direct_assignment(AstNode* node) {
-    return node && node->kind == AST_ASSIGN;
+    return node && node->ast_kind == AST_ASSIGN;
 }
 
 static int is_type_name(const char* name) {
@@ -63,7 +63,7 @@ static Type parse_type(Parser* p) {
     if (check(p, TOK_KW_WEAK)) {
         advance(p);
         if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
-            t.kind = TYPE_CLASS;
+            t.type_kind = TYPE_CLASS;
             CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
             t.class_name[63] = '\0';
             t.is_weak = 1;
@@ -77,49 +77,49 @@ static Type parse_type(Parser* p) {
         }
     } else if (check(p, TOK_KW_I32)) {
         advance(p);
-        t.kind = TYPE_I32;
+        t.type_kind = TYPE_I32;
         t.type_id = TYPE_ID_I32;
     } else if (check(p, TOK_KW_I8)) {
         advance(p);
-        t.kind = TYPE_I8;
+        t.type_kind = TYPE_I8;
         t.type_id = TYPE_ID_I8;
     } else if (check(p, TOK_KW_I16)) {
         advance(p);
-        t.kind = TYPE_I16;
+        t.type_kind = TYPE_I16;
         t.type_id = TYPE_ID_I16;
     } else if (check(p, TOK_KW_I64)) {
         advance(p);
-        t.kind = TYPE_I64;
+        t.type_kind = TYPE_I64;
         t.type_id = TYPE_ID_I64;
     } else if (check(p, TOK_KW_U8)) {
         advance(p);
-        t.kind = TYPE_U8;
+        t.type_kind = TYPE_U8;
         t.type_id = TYPE_ID_U8;
     } else if (check(p, TOK_KW_U16)) {
         advance(p);
-        t.kind = TYPE_U16;
+        t.type_kind = TYPE_U16;
         t.type_id = TYPE_ID_U16;
     } else if (check(p, TOK_KW_U32)) {
         advance(p);
-        t.kind = TYPE_U32;
+        t.type_kind = TYPE_U32;
         t.type_id = TYPE_ID_U32;
     } else if (check(p, TOK_KW_U64)) {
         advance(p);
-        t.kind = TYPE_U64;
+        t.type_kind = TYPE_U64;
         t.type_id = TYPE_ID_U64;
     } else if (check(p, TOK_KW_F32)) {
         advance(p);
-        t.kind = TYPE_F32;
+        t.type_kind = TYPE_F32;
         t.type_id = TYPE_ID_F32;
     } else if (check(p, TOK_KW_F64)) {
         advance(p);
-        t.kind = TYPE_F64;
+        t.type_kind = TYPE_F64;
         t.type_id = TYPE_ID_F64;
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
-        t.kind = TYPE_VOID;
+        t.type_kind = TYPE_VOID;
     } else if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
-        t.kind = TYPE_CLASS;
+        t.type_kind = TYPE_CLASS;
         CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 1;
@@ -127,7 +127,7 @@ static Type parse_type(Parser* p) {
         if (ci) t.type_id = ci->type_id;
         advance(p);
     } else if (check(p, TOK_IDENT) && symtab_find_struct(p->current.text)) {
-        t.kind = TYPE_STRUCT;
+        t.type_kind = TYPE_STRUCT;
         CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "struct name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 0;
@@ -135,7 +135,7 @@ static Type parse_type(Parser* p) {
         if (si) t.type_id = si->type_id;
         advance(p);
     } else if (check(p, TOK_IDENT) && symtab_find_interface(p->current.text)) {
-        t.kind = TYPE_INTERFACE;
+        t.type_kind = TYPE_INTERFACE;
         CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "interface name too long");
         t.class_name[63] = '\0';
         t.is_pointer = 0;
@@ -143,7 +143,7 @@ static Type parse_type(Parser* p) {
         if (ii) t.type_id = ii->type_id;
         advance(p);
     } else {
-        t.kind = TYPE_VOID;
+        t.type_kind = TYPE_VOID;
     }
 
     if (check(p, TOK_LBRACKET)) {
@@ -168,15 +168,15 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_INT_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_INT_LIT, t);
-        n->resolved_type.kind = TYPE_I32;
-        n->resolved_type.type_id = TYPE_ID_I32;
+        n->ast_resolved_type.type_kind = TYPE_I32;
+        n->ast_resolved_type.type_id = TYPE_ID_I32;
         return n;
     }
     if (check(p, TOK_CHAR_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_CHAR_LIT, t);
-        n->resolved_type.kind = TYPE_I8;
-        n->resolved_type.type_id = TYPE_ID_I8;
+        n->ast_resolved_type.type_kind = TYPE_I8;
+        n->ast_resolved_type.type_id = TYPE_ID_I8;
         return n;
     }
     if (check(p, TOK_IDENT)) {
@@ -201,31 +201,31 @@ static AstNode* parse_primary(Parser* p) {
         Type base;
         memset(&base, 0, sizeof(base));
 
-        if (check(p, TOK_KW_I32))       { advance(p); base.kind = TYPE_I32; base.type_id = TYPE_ID_I32; }
-        else if (check(p, TOK_KW_I8)) { advance(p); base.kind = TYPE_I8;  base.type_id = TYPE_ID_I8; }
-        else if (check(p, TOK_KW_I16))  { advance(p); base.kind = TYPE_I16; base.type_id = TYPE_ID_I16; }
-        else if (check(p, TOK_KW_I64))  { advance(p); base.kind = TYPE_I64; base.type_id = TYPE_ID_I64; }
-        else if (check(p, TOK_KW_U8))   { advance(p); base.kind = TYPE_U8;  base.type_id = TYPE_ID_U8; }
-        else if (check(p, TOK_KW_U16))  { advance(p); base.kind = TYPE_U16; base.type_id = TYPE_ID_U16; }
-        else if (check(p, TOK_KW_U32))  { advance(p); base.kind = TYPE_U32; base.type_id = TYPE_ID_U32; }
-        else if (check(p, TOK_KW_U64))  { advance(p); base.kind = TYPE_U64; base.type_id = TYPE_ID_U64; }
-        else if (check(p, TOK_KW_F32))  { advance(p); base.kind = TYPE_F32; base.type_id = TYPE_ID_F32; }
-        else if (check(p, TOK_KW_F64))  { advance(p); base.kind = TYPE_F64; base.type_id = TYPE_ID_F64; }
+        if (check(p, TOK_KW_I32))       { advance(p); base.type_kind = TYPE_I32; base.type_id = TYPE_ID_I32; }
+        else if (check(p, TOK_KW_I8)) { advance(p); base.type_kind = TYPE_I8;  base.type_id = TYPE_ID_I8; }
+        else if (check(p, TOK_KW_I16))  { advance(p); base.type_kind = TYPE_I16; base.type_id = TYPE_ID_I16; }
+        else if (check(p, TOK_KW_I64))  { advance(p); base.type_kind = TYPE_I64; base.type_id = TYPE_ID_I64; }
+        else if (check(p, TOK_KW_U8))   { advance(p); base.type_kind = TYPE_U8;  base.type_id = TYPE_ID_U8; }
+        else if (check(p, TOK_KW_U16))  { advance(p); base.type_kind = TYPE_U16; base.type_id = TYPE_ID_U16; }
+        else if (check(p, TOK_KW_U32))  { advance(p); base.type_kind = TYPE_U32; base.type_id = TYPE_ID_U32; }
+        else if (check(p, TOK_KW_U64))  { advance(p); base.type_kind = TYPE_U64; base.type_id = TYPE_ID_U64; }
+        else if (check(p, TOK_KW_F32))  { advance(p); base.type_kind = TYPE_F32; base.type_id = TYPE_ID_F32; }
+        else if (check(p, TOK_KW_F64))  { advance(p); base.type_kind = TYPE_F64; base.type_id = TYPE_ID_F64; }
         else if (check(p, TOK_IDENT))   {
             ClassInfo* ci = symtab_find_class(p->current.text);
             StructInfo* si = symtab_find_struct(p->current.text);
             InterfaceInfo* ii = symtab_find_interface(p->current.text);
             if (si) {
-                base.kind = TYPE_STRUCT;
+                base.type_kind = TYPE_STRUCT;
                 base.type_id = si->type_id;
             } else if (ci) {
-                base.kind = TYPE_CLASS;
+                base.type_kind = TYPE_CLASS;
                 base.type_id = ci->type_id;
             } else if (ii) {
-                base.kind = TYPE_INTERFACE;
+                base.type_kind = TYPE_INTERFACE;
                 base.type_id = ii->type_id;
             } else {
-                base.kind = TYPE_CLASS;
+                base.type_kind = TYPE_CLASS;
             }
             CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "type name too long");
             base.class_name[63] = '\0';
@@ -238,9 +238,9 @@ static AstNode* parse_primary(Parser* p) {
         }
 
         AstNode* node = ast_new_node(AST_NEW, new_tok);
-        node->resolved_type = base;
+        node->ast_resolved_type = base;
 
-        if (base.kind == TYPE_INTERFACE) {
+        if (base.type_kind == TYPE_INTERFACE) {
             fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
                     new_tok.line, new_tok.col, base.class_name);
             p->had_error = 1;
@@ -248,10 +248,10 @@ static AstNode* parse_primary(Parser* p) {
 
         if (check(p, TOK_LBRACKET)) {
             advance(p);
-            node->children[0] = parse_expr_no_assign(p, "new array size");
-            node->child_count = 1;
+            node->ast_children[0] = parse_expr_no_assign(p, "new array size");
+            node->ast_child_count = 1;
             expect(p, TOK_RBRACKET);
-        } else if (base.kind == TYPE_STRUCT) {
+        } else if (base.type_kind == TYPE_STRUCT) {
             fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value; use 'new %s[N]' for an array\n",
                     new_tok.line, new_tok.col, base.class_name);
             p->had_error = 1;
@@ -301,8 +301,8 @@ static AstNode* parse_postfix(Parser* p) {
                     advance(p);
                     args = ast_append_list(args, parse_expr_no_assign(p, "call argument"));
                 }
-                call->children[1] = args;
-                call->child_count = 2;
+                call->ast_children[1] = args;
+                call->ast_child_count = 2;
             }
             expect(p, TOK_RPAREN);
             node = call;
@@ -314,14 +314,14 @@ static AstNode* parse_postfix(Parser* p) {
     if (check(p, TOK_KW_AS)) {
         Token t = p->current; advance(p);
         Type target = parse_type(p);
-        if (target.kind == TYPE_VOID && !p->had_error) {
+        if (target.type_kind == TYPE_VOID && !p->had_error) {
             fprintf(stderr, "error at %d:%d: expected type name after 'as'\n",
                     p->current.line, p->current.col);
             p->had_error = 1;
         }
         AstNode* cast = ast_new_node(AST_AS_CAST, t);
         ast_add_child(cast, node);
-        cast->resolved_type = target;
+        cast->ast_resolved_type = target;
         node = cast;
     }
 
@@ -403,7 +403,7 @@ static AstNode* parse_expr_no_assign(Parser* p, const char* where) {
     AstNode* e = parse_expr(p);
     if (e && expr_contains_assign(e)) {
         fprintf(stderr, "error at %d:%d: assignment not allowed in %s\n",
-                e->tok.line, e->tok.col, where);
+                e->ast_token.line, e->ast_token.col, where);
         p->had_error = 1;
     }
     return e;
@@ -422,8 +422,8 @@ static AstNode* parse_block(Parser* p) {
         if (s) stmts = ast_append_list(stmts, s);
     }
     expect(p, TOK_RBRACE);
-    block->children[0] = stmts;
-    block->child_count = 1;
+    block->ast_children[0] = stmts;
+    block->ast_child_count = 1;
     return block;
 }
 
@@ -465,15 +465,15 @@ static AstNode* parse_var_decl(Parser* p) {
         ast_add_child(node, init);
         if (init && !p->had_error && !expr_is_direct_assignment(init) && expr_contains_assign(init)) {
             fprintf(stderr, "error at %d:%d: assignment not allowed in variable initializer\n",
-                    init->tok.line, init->tok.col);
+                    init->ast_token.line, init->ast_token.col);
             p->had_error = 1;
         }
-        if (init && init->kind == AST_NEW && type.kind == TYPE_CLASS) {
+        if (init && init->ast_kind == AST_NEW && type.type_kind == TYPE_CLASS) {
             type.is_pointer = 1;
         }
     }
 
-    node->resolved_type = type;
+    node->ast_resolved_type = type;
     symtab_insert(name.text, type);
     expect(p, TOK_SEMI);
     return node;
@@ -490,7 +490,7 @@ static AstNode* parse_stmt(Parser* p) {
         AstNode* cond = parse_expr(p);
         if (expr_contains_assign(cond)) {
             fprintf(stderr, "error at %d:%d: assignment not allowed in if condition\n",
-                    cond->tok.line, cond->tok.col);
+                    cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
@@ -513,7 +513,7 @@ static AstNode* parse_stmt(Parser* p) {
         AstNode* cond = parse_expr(p);
         if (expr_contains_assign(cond)) {
             fprintf(stderr, "error at %d:%d: assignment not allowed in while condition\n",
-                    cond->tok.line, cond->tok.col);
+                    cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
@@ -543,11 +543,11 @@ static AstNode* parse_stmt(Parser* p) {
         AstNode* expr = parse_expr(p);
         if (expr && !p->had_error && !expr_is_direct_assignment(expr) && expr_contains_assign(expr)) {
             fprintf(stderr, "error at %d:%d: assignment not allowed in expression statement\n",
-                    expr->tok.line, expr->tok.col);
+                    expr->ast_token.line, expr->ast_token.col);
             p->had_error = 1;
         }
         if (expr) {
-            AstNode* es = ast_new_node(AST_EXPR_STMT, expr->tok);
+            AstNode* es = ast_new_node(AST_EXPR_STMT, expr->ast_token);
             ast_add_child(es, expr);
             expect(p, TOK_SEMI);
             return es;
@@ -580,7 +580,7 @@ static AstNode* parse_struct_decl(Parser* p) {
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         Type ft = parse_type(p);
-        if (ft.kind == TYPE_VOID || ft.kind == TYPE_CLASS || ft.kind == TYPE_STRUCT ||
+        if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_STRUCT ||
             ft.is_array || ft.array_size > 0) {
             fprintf(stderr, "error at %d:%d: struct fields must be primitive types in this phase\n",
                     p->current.line, p->current.col);
@@ -603,9 +603,9 @@ static AstNode* parse_struct_decl(Parser* p) {
     expect(p, TOK_RBRACE);
 
     AstNode* node = ast_new_node(AST_STRUCT_DECL, name);
-    node->resolved_type.kind = TYPE_STRUCT;
-    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text, sizeof(node->resolved_type.class_name)), "struct name too long");
-    node->resolved_type.type_id = info->type_id;
+    node->ast_resolved_type.type_kind = TYPE_STRUCT;
+    CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "struct name too long");
+    node->ast_resolved_type.type_id = info->type_id;
     return node;
 }
 
@@ -668,7 +668,7 @@ static AstNode* parse_class_decl(Parser* p) {
             /* register implicit this */
             Type this_type;
             memset(&this_type, 0, sizeof(this_type));
-            this_type.kind = TYPE_CLASS;
+            this_type.type_kind = TYPE_CLASS;
             CHECK_STRSCPY(strscpy(this_type.class_name, name.text, sizeof(this_type.class_name)), "class name too long");
             this_type.is_pointer = 1;
             symtab_insert("this", this_type);
@@ -694,7 +694,7 @@ static AstNode* parse_class_decl(Parser* p) {
                     }
                     Token pn = p->current; advance(p);
                     AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
-                    pd->resolved_type = pt;
+                    pd->ast_resolved_type = pt;
                     symtab_insert(pn.text, pt);
                     mparams = ast_append_list(mparams, pd);
                     if (mc < 16) {
@@ -713,14 +713,14 @@ static AstNode* parse_class_decl(Parser* p) {
             symtab_add_method(info, fname.text, ft, mc, mpn, mpt);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
-            mnode->resolved_type = ft;
-            if (mparams) { mnode->children[mnode->child_count++] = mparams; }
-            mnode->children[mnode->child_count++] = mbody;
+            mnode->ast_resolved_type = ft;
+            if (mparams) { mnode->ast_children[mnode->ast_child_count++] = mparams; }
+            mnode->ast_children[mnode->ast_child_count++] = mbody;
             methods = ast_append_list(methods, mnode);
 
         } else {
             /* FIELD */
-            if (ft.kind == TYPE_INTERFACE) {
+            if (ft.type_kind == TYPE_INTERFACE) {
                 fprintf(stderr, "error at %d:%d: class fields cannot have interface type '%s'\n",
                         fname.line, fname.col, ft.class_name);
                 p->had_error = 1;
@@ -732,10 +732,10 @@ static AstNode* parse_class_decl(Parser* p) {
     expect(p, TOK_RBRACE);
 
     AstNode* node = ast_new_node(AST_CLASS_DECL, name);
-    node->resolved_type.kind = TYPE_CLASS;
-    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text, sizeof(node->resolved_type.class_name)), "class name too long");
-    node->children[0] = methods;
-    if (methods) node->child_count = 1;
+    node->ast_resolved_type.type_kind = TYPE_CLASS;
+    CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "class name too long");
+    node->ast_children[0] = methods;
+    if (methods) node->ast_child_count = 1;
     return node;
 }
 
@@ -771,7 +771,7 @@ static AstNode* parse_interface_decl(Parser* p) {
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         Type ret_type = parse_type(p);
-        if (ret_type.kind == TYPE_VOID) {
+        if (ret_type.type_kind == TYPE_VOID) {
             /* allow void return type */
         }
 
@@ -820,9 +820,9 @@ static AstNode* parse_interface_decl(Parser* p) {
     expect(p, TOK_RBRACE);
 
     AstNode* node = ast_new_node(AST_INTERFACE_DECL, name);
-    node->resolved_type.kind = TYPE_INTERFACE;
-    CHECK_STRSCPY(strscpy(node->resolved_type.class_name, name.text,
-                          sizeof(node->resolved_type.class_name)),
+    node->ast_resolved_type.type_kind = TYPE_INTERFACE;
+    CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text,
+                          sizeof(node->ast_resolved_type.class_name)),
                   "interface name too long");
     return node;
 }
@@ -853,7 +853,7 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
             }
             Token pname = p->current; advance(p);
             AstNode* pd = ast_new_node(AST_VAR_DECL, pname);
-            pd->resolved_type = param_type;
+            pd->ast_resolved_type = param_type;
             symtab_insert(pname.text, param_type);
             params = ast_append_list(params, pd);
             if (pc < 16) {
@@ -871,9 +871,9 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     symtab_add_func(name.text, ret_type, pc, pn, pt);
 
     AstNode* node = ast_new_node(AST_FUNC_DECL, name);
-    node->resolved_type = ret_type;
-    if (params) { node->children[node->child_count++] = params; }
-    node->children[node->child_count++] = body;
+    node->ast_resolved_type = ret_type;
+    if (params) { node->ast_children[node->ast_child_count++] = params; }
+    node->ast_children[node->ast_child_count++] = body;
     return node;
 }
 
@@ -923,10 +923,10 @@ void parser_init(Parser* p, Lexer* lexer) {
 AstNode* parser_parse_program(Parser* p) {
     Type void_type;
     memset(&void_type, 0, sizeof(void_type));
-    void_type.kind = TYPE_VOID;
+    void_type.type_kind = TYPE_VOID;
 
     AstNode* program = ast_new_node(AST_PROGRAM, p->current);
-    program->resolved_type = void_type;
+    program->ast_resolved_type = void_type;
 
     symtab_init();
 
@@ -936,8 +936,8 @@ AstNode* parser_parse_program(Parser* p) {
         if (d) decls = ast_append_list(decls, d);
     }
 
-    program->children[0] = decls;
-    program->child_count = 1;
+    program->ast_children[0] = decls;
+    program->ast_child_count = 1;
     return program;
 }
 
