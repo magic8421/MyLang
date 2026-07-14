@@ -1491,6 +1491,48 @@ i32 main() {
 }
 """, 0),
 
+    ("iface_chain_as_arg", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+IShape make() {
+    Square sq = new Square;
+    sq.side = 7;
+    return sq;
+}
+i32 use(Square p) {
+    if (p) return p.area();
+    return 0;
+}
+i32 main() {
+    return use(make() as Square);
+}
+""", 49),
+
+    ("weak_iface_chain_as_arg", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 use(Square p) {
+    if (p) return p.area();
+    return 0;
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 7;
+    weak IShape w = sq;
+    return use(w.lock() as Square);
+}
+""", 49),
+
     ("iface_dyn_array_basic", """
 interface IShape {
     i32 area();

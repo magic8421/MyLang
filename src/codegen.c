@@ -778,11 +778,17 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
             Type target = node->ast_resolved_type;
             if (target.type_kind == TYPE_CLASS) {
                 ClassInfo* ci = symtab_find_class(target.class_name);
+                /* Use a temporary if the object expression was hoisted by
+                   emit_subexpr_temps; otherwise codegen_expr would re-evaluate
+                   a call-like subexpression (e.g. w.lock()) twice. */
+                const char* obj_name = (obj->ast_temp_name[0] != '\0') ? obj->ast_temp_name : NULL;
                 fprintf(out, "((");
-                codegen_expr(ctx, obj, out);
+                if (obj_name) fprintf(out, "%s", obj_name);
+                else codegen_expr(ctx, obj, out);
                 fprintf(out, ").vtable->concrete_type_id == %u ? (%s*)(",
                         ci ? (unsigned)ci->type_id : 0, target.class_name);
-                codegen_expr(ctx, obj, out);
+                if (obj_name) fprintf(out, "%s", obj_name);
+                else codegen_expr(ctx, obj, out);
                 fprintf(out, ").data : NULL)");
             } else {
                 fprintf(stderr, "error at %d:%d: 'as' target must be a class type\n",
@@ -942,23 +948,23 @@ static void extract_owned_call_temp(CodegenContext* ctx, AstNode* node, FILE* ou
 /* Extract owned class/interface subexpression calls into temporaries so they
    are not re-evaluated (which leaks reference counts).  Direct call arguments
    are left for emit_guarded_temp_decls to handle. */
-static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+static void emit_subexpr_temps_impl(CodegenContext* ctx, AstNode* node, FILE* out, int indent, int extract_root) {
     if (!node) return;
 
     if (node->ast_kind == AST_AS_CAST) {
-        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        emit_subexpr_temps_impl(ctx, node->ast_children[0], out, indent, 1);
         AstNode* obj = node->ast_children[0];
         if (subexpr_needs_temp(obj)) {
             extract_owned_call_temp(ctx, obj, out, indent);
         }
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     if (node->ast_kind == AST_BINARY) {
         int i;
         for (i = 0; i < node->ast_child_count; i++) {
-            emit_subexpr_temps(ctx, node->ast_children[i], out, indent);
+            emit_subexpr_temps_impl(ctx, node->ast_children[i], out, indent, 1);
         }
         for (i = 0; i < node->ast_child_count; i++) {
             AstNode* child = node->ast_children[i];
@@ -966,52 +972,69 @@ static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, FILE* out, in
                 extract_owned_call_temp(ctx, child, out, indent);
             }
         }
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     if (node->ast_kind == AST_MEMBER_ACCESS) {
-        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        emit_subexpr_temps_impl(ctx, node->ast_children[0], out, indent, 1);
         AstNode* obj = node->ast_children[0];
         if (subexpr_needs_temp(obj)) {
             extract_owned_call_temp(ctx, obj, out, indent);
         }
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     if (node->ast_kind == AST_CALL) {
         /* Recurse into callee for method-call receiver subexpressions. */
         if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
-            emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+            emit_subexpr_temps_impl(ctx, node->ast_children[0], out, indent, 1);
         }
-        /* Top-level arguments are handled by emit_guarded_temp_decls; do not
-           extract them here because that would add a second release path. */
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        /* Top-level arguments are handled by emit_guarded_temp_decls for
+           lifetime management.  However, nested subexpressions inside
+           arguments (e.g. the object of an 'as' cast or an interface method
+           receiver) may be evaluated multiple times by their parent, so we
+           extract those into temporaries.  We pass extract_root=0 so the
+           argument root itself is not extracted here. */
+        AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        while (args) {
+            emit_subexpr_temps_impl(ctx, args, out, indent, 0);
+            args = args->next;
+        }
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     if (node->ast_kind == AST_ASSIGN) {
         /* LHS must remain an lvalue.  RHS is evaluated into its destination,
            so only nested subexpressions inside RHS need extraction. */
-        emit_subexpr_temps(ctx, node->ast_children[1], out, indent);
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        emit_subexpr_temps_impl(ctx, node->ast_children[1], out, indent, 1);
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     if (node->ast_kind == AST_NEW) {
         /* 'new' is handled by its surrounding statement; only nested size
            expressions need subexpression extraction. */
-        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
-        emit_subexpr_temps(ctx, node->next, out, indent);
+        emit_subexpr_temps_impl(ctx, node->ast_children[0], out, indent, 1);
+        emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
         return;
     }
 
     int i;
     for (i = 0; i < node->ast_child_count; i++) {
-        emit_subexpr_temps(ctx, node->ast_children[i], out, indent);
+        emit_subexpr_temps_impl(ctx, node->ast_children[i], out, indent, 1);
     }
-    emit_subexpr_temps(ctx, node->next, out, indent);
+    emit_subexpr_temps_impl(ctx, node->next, out, indent, 1);
+
+    if (extract_root && subexpr_needs_temp(node)) {
+        extract_owned_call_temp(ctx, node, out, indent);
+    }
+}
+
+static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    emit_subexpr_temps_impl(ctx, node, out, indent, 1);
 }
 
 static void emit_call_guards(CodegenContext* ctx, AstNode* expr, FILE* out, int is_retain) {

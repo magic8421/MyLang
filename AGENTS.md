@@ -84,7 +84,7 @@ Source code lives under `src/`:
 - **Callee retains at return**: class-valued returns go through `mylang_retain(expr)`. Caller receives +1.
 - **Caller does NOT retain call results**: `codegen_var_decl` and assignment skip retain when RHS is `AST_CALL` or `AST_NEW`.
 - **Caller retain/release for guarded args**: non-local class-valued arguments to calls get caller-side `mylang_retain` before and `mylang_release` after the call. Local variables and parameters are unguarded (optimization).
-- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation.
+- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
 - **Class assignment**: RHS retained before LHS released to avoid UAF on self-assignment (`b = b.set(5)`).
 - **Discarded class return**: `(void)mylang_release(call(...))` in expression statements.
 - **This in methods**: retained on entry, released via cleanup. Name mapped to `thiz` in generated C.

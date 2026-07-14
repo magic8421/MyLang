@@ -122,7 +122,9 @@ Phase 1: Core Interface
     [x] 6a. Class implements all interface methods (name + signature match)
     [x] 6b. Error if class declares ': Interface' but doesn't implement methods
     [x] 6c. Error on interface instance creation (can't "new InterfaceName")
-    [ ] 6d. Error if both interfaces have method with same name but different signature
+    [x] 6d. Error if both interfaces have method with same name but different signature
+        - Checked in symtab_validate_impls when a class implements multiple interfaces.
+        - Negative test: bad_iface_method_conflict.
     [x] 6e. Error if "as Type" where Type is not a class (or class not implementing the interface)
     [x] 6f. Error if interface variable assigned from non-implementing type
     [x] 6g. Allow "new InterfaceName[N]" (dynamic interface arrays); keep scalar "new InterfaceName" rejected
@@ -147,12 +149,14 @@ Phase 1: Core Interface
     [x] 8k. "as" used in if condition
     [x] 8l. Interface refcounting correctness (no leaks)
         - Scalar interface lifecycle clean; chained interface calls extracted to temps.
+        - Argument contexts (e.g. use(w.lock() as Square)) also hoist the nested call once.
     [x] 8m. Interface method with primitive params
     [x] 8n. Interface method with ref params
     [x] 8o. Interface method returning class type
     [x] 8p. Interface method returning interface type
     [x] 8q. Chained calls through interface
         - Fixed by emit_subexpr_temps; added iface_chain_as/method/compare tests.
+        - Extended to call arguments: iface_chain_as_arg and weak_iface_chain_as_arg.
     [x] 8r. Self-assignment of interface variables (iface = iface)
     [x] 8s. Interface method with multiple params
         - Added iface_multi_param test (3 params).
