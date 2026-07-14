@@ -56,103 +56,146 @@ static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
 
 
-static Type parse_type(Parser* p) {
-    Type t;
-    memset(&t, 0, sizeof(t));
+static const char* parser_type_params[MAX_GENERIC_PARAMS];
+static int         parser_type_param_count = 0;
 
-    if (check(p, TOK_KW_WEAK)) {
+static void parser_push_type_params(ClassInfo* info) {
+    int i;
+    parser_type_param_count = 0;
+    for (i = 0; i < info->generic_param_count && i < MAX_GENERIC_PARAMS; i++) {
+        parser_type_params[i] = info->generic_params[i];
+    }
+    parser_type_param_count = i;
+}
+
+static void parser_pop_type_params(void) {
+    parser_type_param_count = 0;
+}
+
+static int parser_is_type_param(const char* name) {
+    int i;
+    for (i = 0; i < parser_type_param_count; i++) {
+        if (strcmp(parser_type_params[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+static Type parse_base_type(Parser* p) {
+    Type t = {0};
+    if (check(p, TOK_KW_I32)) {
         advance(p);
-        if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
-            t.type_kind = TYPE_CLASS;
-            CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
-            t.class_name[63] = '\0';
-            t.is_weak = 1;
-            ClassInfo* ci = symtab_find_class(p->current.text);
-            if (ci) t.type_id = ci->type_id;
-            advance(p);
-        } else if (check(p, TOK_IDENT) && symtab_find_interface(p->current.text)) {
-            t.type_kind = TYPE_INTERFACE;
-            CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "interface name too long");
-            t.class_name[63] = '\0';
-            t.is_weak = 1;
-            t.is_pointer = 0;
-            InterfaceInfo* ii = symtab_find_interface(p->current.text);
-            if (ii) t.type_id = ii->type_id;
-            advance(p);
-        } else {
-            fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
-                    p->current.line, p->current.col);
-            p->had_error = 1;
-        }
-    } else if (check(p, TOK_KW_I32)) {
-        advance(p);
-        t.type_kind = TYPE_I32;
-        t.type_id = TYPE_ID_I32;
+        t = type_make_primitive(TYPE_I32);
     } else if (check(p, TOK_KW_I8)) {
         advance(p);
-        t.type_kind = TYPE_I8;
-        t.type_id = TYPE_ID_I8;
+        t = type_make_primitive(TYPE_I8);
     } else if (check(p, TOK_KW_I16)) {
         advance(p);
-        t.type_kind = TYPE_I16;
-        t.type_id = TYPE_ID_I16;
+        t = type_make_primitive(TYPE_I16);
     } else if (check(p, TOK_KW_I64)) {
         advance(p);
-        t.type_kind = TYPE_I64;
-        t.type_id = TYPE_ID_I64;
+        t = type_make_primitive(TYPE_I64);
     } else if (check(p, TOK_KW_U8)) {
         advance(p);
-        t.type_kind = TYPE_U8;
-        t.type_id = TYPE_ID_U8;
+        t = type_make_primitive(TYPE_U8);
     } else if (check(p, TOK_KW_U16)) {
         advance(p);
-        t.type_kind = TYPE_U16;
-        t.type_id = TYPE_ID_U16;
+        t = type_make_primitive(TYPE_U16);
     } else if (check(p, TOK_KW_U32)) {
         advance(p);
-        t.type_kind = TYPE_U32;
-        t.type_id = TYPE_ID_U32;
+        t = type_make_primitive(TYPE_U32);
     } else if (check(p, TOK_KW_U64)) {
         advance(p);
-        t.type_kind = TYPE_U64;
-        t.type_id = TYPE_ID_U64;
+        t = type_make_primitive(TYPE_U64);
     } else if (check(p, TOK_KW_F32)) {
         advance(p);
-        t.type_kind = TYPE_F32;
-        t.type_id = TYPE_ID_F32;
+        t = type_make_primitive(TYPE_F32);
     } else if (check(p, TOK_KW_F64)) {
         advance(p);
-        t.type_kind = TYPE_F64;
-        t.type_id = TYPE_ID_F64;
+        t = type_make_primitive(TYPE_F64);
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.type_kind = TYPE_VOID;
-    } else if (check(p, TOK_IDENT) && symtab_find_class(p->current.text)) {
-        t.type_kind = TYPE_CLASS;
-        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "class name too long");
-        t.class_name[63] = '\0';
-        t.is_pointer = 1;
-        ClassInfo* ci = symtab_find_class(p->current.text);
-        if (ci) t.type_id = ci->type_id;
-        advance(p);
-    } else if (check(p, TOK_IDENT) && symtab_find_struct(p->current.text)) {
-        t.type_kind = TYPE_STRUCT;
-        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "struct name too long");
-        t.class_name[63] = '\0';
-        t.is_pointer = 0;
-        StructInfo* si = symtab_find_struct(p->current.text);
-        if (si) t.type_id = si->type_id;
-        advance(p);
-    } else if (check(p, TOK_IDENT) && symtab_find_interface(p->current.text)) {
-        t.type_kind = TYPE_INTERFACE;
-        CHECK_STRSCPY(strscpy(t.class_name, p->current.text, sizeof(t.class_name)), "interface name too long");
-        t.class_name[63] = '\0';
-        t.is_pointer = 0;
-        InterfaceInfo* ii = symtab_find_interface(p->current.text);
-        if (ii) t.type_id = ii->type_id;
+    } else if (check(p, TOK_IDENT)) {
+        const char* name = p->current.text;
+        if (parser_is_type_param(name)) {
+            advance(p);
+            return type_make_param(name);
+        }
+        ClassInfo* ci = symtab_find_class(name);
+        StructInfo* si = symtab_find_struct(name);
+        InterfaceInfo* ii = symtab_find_interface(name);
+        if (ci) {
+            t = type_make_user(TYPE_CLASS, name);
+            t.is_pointer = 1;
+            t.type_id = ci->type_id;
+        } else if (si) {
+            t = type_make_user(TYPE_STRUCT, name);
+            t.type_id = si->type_id;
+        } else if (ii) {
+            t = type_make_user(TYPE_INTERFACE, name);
+            t.type_id = ii->type_id;
+        } else {
+            fprintf(stderr, "error at %d:%d: unknown type '%s'\n",
+                    p->current.line, p->current.col, name);
+            p->had_error = 1;
+            t.type_kind = TYPE_VOID;
+        }
         advance(p);
     } else {
+        fprintf(stderr, "error at %d:%d: expected type\n",
+                p->current.line, p->current.col);
+        p->had_error = 1;
         t.type_kind = TYPE_VOID;
+    }
+
+    if (check(p, TOK_LT)) {
+        ClassInfo* ci = symtab_find_class(t.class_name);
+        if (t.type_kind != TYPE_CLASS || !ci || !ci->is_generic) {
+            fprintf(stderr, "error at %d:%d: type '%s' does not accept type arguments\n",
+                    p->current.line, p->current.col, t.class_name);
+            p->had_error = 1;
+        }
+        advance(p); /* < */
+        int count = 0;
+        if (!check(p, TOK_GT)) {
+            do {
+                Type arg = parse_base_type(p);
+                if (count < MAX_TYPE_ARGS) {
+                    type_set_arg(&t, count, &arg);
+                } else {
+                    fprintf(stderr, "error at %d:%d: too many type arguments for '%s' (max %d)\n",
+                            p->current.line, p->current.col, t.class_name, MAX_TYPE_ARGS);
+                    p->had_error = 1;
+                }
+                count++;
+            } while (check(p, TOK_COMMA) && (advance(p), 1));
+        }
+        expect(p, TOK_GT);
+        t.type_id = 0;
+        type_mangled_name(&t);
+    }
+
+    return t;
+}
+
+static Type parse_type(Parser* p) {
+    int is_weak = 0;
+    if (check(p, TOK_KW_WEAK)) {
+        is_weak = 1;
+        advance(p);
+    }
+
+    Type t = parse_base_type(p);
+
+    if (is_weak) {
+        if (t.type_kind != TYPE_CLASS && t.type_kind != TYPE_INTERFACE) {
+            fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        } else {
+            t.is_weak = 1;
+            t.mangled_name[0] = '\0';
+        }
     }
 
     if (check(p, TOK_LBRACKET)) {
@@ -168,6 +211,7 @@ static Type parse_type(Parser* p) {
         } else {
             expect(p, TOK_RBRACKET);
         }
+        t.mangled_name[0] = '\0';
     }
     return t;
 }
@@ -207,41 +251,10 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_KW_NEW)) {
         Token new_tok = p->current; advance(p);
 
-        Type base;
-        memset(&base, 0, sizeof(base));
-
-        if (check(p, TOK_KW_I32))       { advance(p); base.type_kind = TYPE_I32; base.type_id = TYPE_ID_I32; }
-        else if (check(p, TOK_KW_I8)) { advance(p); base.type_kind = TYPE_I8;  base.type_id = TYPE_ID_I8; }
-        else if (check(p, TOK_KW_I16))  { advance(p); base.type_kind = TYPE_I16; base.type_id = TYPE_ID_I16; }
-        else if (check(p, TOK_KW_I64))  { advance(p); base.type_kind = TYPE_I64; base.type_id = TYPE_ID_I64; }
-        else if (check(p, TOK_KW_U8))   { advance(p); base.type_kind = TYPE_U8;  base.type_id = TYPE_ID_U8; }
-        else if (check(p, TOK_KW_U16))  { advance(p); base.type_kind = TYPE_U16; base.type_id = TYPE_ID_U16; }
-        else if (check(p, TOK_KW_U32))  { advance(p); base.type_kind = TYPE_U32; base.type_id = TYPE_ID_U32; }
-        else if (check(p, TOK_KW_U64))  { advance(p); base.type_kind = TYPE_U64; base.type_id = TYPE_ID_U64; }
-        else if (check(p, TOK_KW_F32))  { advance(p); base.type_kind = TYPE_F32; base.type_id = TYPE_ID_F32; }
-        else if (check(p, TOK_KW_F64))  { advance(p); base.type_kind = TYPE_F64; base.type_id = TYPE_ID_F64; }
-        else if (check(p, TOK_IDENT))   {
-            ClassInfo* ci = symtab_find_class(p->current.text);
-            StructInfo* si = symtab_find_struct(p->current.text);
-            InterfaceInfo* ii = symtab_find_interface(p->current.text);
-            if (si) {
-                base.type_kind = TYPE_STRUCT;
-                base.type_id = si->type_id;
-            } else if (ci) {
-                base.type_kind = TYPE_CLASS;
-                base.type_id = ci->type_id;
-            } else if (ii) {
-                base.type_kind = TYPE_INTERFACE;
-                base.type_id = ii->type_id;
-            } else {
-                base.type_kind = TYPE_CLASS;
-            }
-            CHECK_STRSCPY(strscpy(base.class_name, p->current.text, sizeof(base.class_name)), "type name too long");
-            base.class_name[63] = '\0';
-            advance(p);
-        } else {
+        Type base = parse_base_type(p);
+        if (base.type_kind == TYPE_VOID) {
             fprintf(stderr, "error at %d:%d: expected type after 'new'\n",
-                    p->current.line, p->current.col);
+                    new_tok.line, new_tok.col);
             p->had_error = 1;
             return NULL;
         }
@@ -451,6 +464,10 @@ static int stmt_looks_like_var_decl(Parser* p) {
         TokenKind next = p->peek.kind;
         if (next == TOK_IDENT) return 1;
         if (next == TOK_LBRACKET) return 1;
+        if (next == TOK_LT) {
+            ClassInfo* ci = symtab_find_class(p->current.text);
+            if (ci && ci->is_generic) return 1;
+        }
     }
     return 0;
 }
@@ -633,10 +650,69 @@ static AstNode* parse_class_decl(Parser* p) {
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
     info->name[63] = '\0';
-    info->type_id = symtab_next_type_id();
 
     /* register early so methods with this return type resolve */
     symtab_add_class(name.text, info);
+
+    /* parse optional generic parameter list */
+    if (check(p, TOK_LT)) {
+        advance(p); /* < */
+        char params[MAX_GENERIC_PARAMS][64];
+        int param_count = 0;
+        do {
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "error at %d:%d: expected type parameter name\n",
+                        p->current.line, p->current.col);
+                p->had_error = 1;
+                break;
+            }
+            CHECK_STRSCPY(strscpy(params[param_count], p->current.text, sizeof(params[param_count])),
+                          "generic parameter name too long");
+            param_count++;
+            advance(p);
+
+            int param_idx = param_count - 1;
+            if (check(p, TOK_COLON)) {
+                advance(p); /* : */
+                do {
+                    if (check(p, TOK_KW_NEW)) {
+                        advance(p);
+                        expect(p, TOK_LPAREN);
+                        expect(p, TOK_RPAREN);
+                        info->generic_has_new[param_idx] = 1;
+                    } else if (check(p, TOK_IDENT)) {
+                        Token c = p->current; advance(p);
+                        if (!symtab_find_interface(c.text)) {
+                            fprintf(stderr, "error at %d:%d: unknown interface constraint '%s'\n",
+                                    c.line, c.col, c.text);
+                            p->had_error = 1;
+                        }
+                        int cc = info->generic_constraint_count[param_idx];
+                        if (cc < MAX_CONSTRAINTS_PER_PARAM) {
+                            CHECK_STRSCPY(strscpy(info->generic_constraints[param_idx][cc], c.text,
+                                                  sizeof(info->generic_constraints[param_idx][cc])),
+                                          "constraint name too long");
+                            info->generic_constraint_count[param_idx]++;
+                        }
+                    } else {
+                        fprintf(stderr, "error at %d:%d: expected 'new()' or interface name in constraint\n",
+                                p->current.line, p->current.col);
+                        p->had_error = 1;
+                        break;
+                    }
+                } while (check(p, TOK_COMMA) && (advance(p), 1));
+            }
+        } while (check(p, TOK_COMMA) && (advance(p), 1));
+        expect(p, TOK_GT);
+        {
+            const char* param_ptrs[MAX_GENERIC_PARAMS];
+            int k;
+            for (k = 0; k < param_count && k < MAX_GENERIC_PARAMS; k++) {
+                param_ptrs[k] = params[k];
+            }
+            symtab_mark_class_generic(info, NULL, param_count, param_ptrs);
+        }
+    }
 
     /* parse optional interface implementation list */
     if (check(p, TOK_COLON)) {
@@ -653,10 +729,16 @@ static AstNode* parse_class_decl(Parser* p) {
         } while (check(p, TOK_COMMA) && (advance(p), 1));
     }
 
+    /* generic definitions do not get a concrete type_id until instantiated */
+    if (!info->is_generic) {
+        info->type_id = symtab_next_type_id();
+    }
+
     expect(p, TOK_LBRACE);
 
+    parser_push_type_params(info);
+
     AstNode* methods = NULL;
-    // ... rest of class parsing (remove old info creation since moved above)
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         Type ft = parse_type(p);
@@ -675,11 +757,15 @@ static AstNode* parse_class_decl(Parser* p) {
             symtab_enter_scope();
 
             /* register implicit this */
-            Type this_type;
-            memset(&this_type, 0, sizeof(this_type));
-            this_type.type_kind = TYPE_CLASS;
-            CHECK_STRSCPY(strscpy(this_type.class_name, name.text, sizeof(this_type.class_name)), "class name too long");
+            Type this_type = type_make_user(TYPE_CLASS, name.text);
             this_type.is_pointer = 1;
+            if (info->is_generic) {
+                int k;
+                for (k = 0; k < info->generic_param_count && k < MAX_TYPE_ARGS; k++) {
+                    Type param = type_make_param(info->generic_params[k]);
+                    type_set_arg(&this_type, k, &param);
+                }
+            }
             symtab_insert("this", this_type);
 
             AstNode* mparams = NULL;
@@ -740,11 +826,17 @@ static AstNode* parse_class_decl(Parser* p) {
     }
     expect(p, TOK_RBRACE);
 
+    parser_pop_type_params();
+
     AstNode* node = ast_new_node(AST_CLASS_DECL, name);
     node->ast_resolved_type.type_kind = TYPE_CLASS;
     CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "class name too long");
+    node->ast_resolved_type.type_id = info->type_id;
     node->ast_children[0] = methods;
     if (methods) node->ast_child_count = 1;
+    if (info->is_generic) {
+        info->generic_ast = node;
+    }
     return node;
 }
 

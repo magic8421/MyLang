@@ -44,7 +44,7 @@
 ## Phase 2: Parser Changes
 
 ### 2.1 Parse generic parameter list with constraints
-- [ ] Modify `src/parser.c` `parse_class_decl()`:
+- [x] Modify `src/parser.c` `parse_class_decl()`:
   - After parsing class name, check for `<`.
   - If present, parse comma-separated parameter declarations of the form `T` or `T : Constraint1, Constraint2`.
   - Constraints are currently:
@@ -55,7 +55,7 @@
   - Continue parsing optional interface implementation list (`:`) and class body.
 
 ### 2.2 Parse type arguments in type contexts
-- [ ] Modify `src/parser.c` `parse_type()`:
+- [x] Modify `src/parser.c` `parse_type()`:
   - After parsing a user type name (`class` / `struct` / `interface`), check for `<` in type context.
   - Parse comma-separated type arguments recursively.
   - Build a `Type` with `type_arg_count > 0`.
@@ -63,13 +63,13 @@
   - Continue parsing array suffixes (`[]`, `[N]`), `weak`, `ref` as before.
 
 ### 2.3 Parse type arguments in `new` expressions
-- [ ] Modify `src/parser.c` `parse_primary()`:
+- [x] Modify `src/parser.c` `parse_primary()`:
   - `new Box<i32>(...)` must parse the type with arguments.
   - Ensure constructor call arguments follow the type.
 
 ### 2.4 Disambiguation notes
-- [ ] Document that `<` as type arguments is only parsed in type contexts (variable decl, param, return type, `new`, `as Type`).
-- [ ] Expression-level generic method calls are out of scope for this phase.
+- [x] Document that `<` as type arguments is only parsed in type contexts (variable decl, param, return type, `new`, `as Type`).
+- [x] Expression-level generic method calls are out of scope for this phase.
 
 ## Phase 3: Semantic Analysis / Monomorphization
 
