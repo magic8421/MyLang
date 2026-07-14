@@ -153,8 +153,8 @@ Phase 1: Core Interface
     [x] 8p. Interface method returning interface type
     [ ] 8q. Chained calls through interface (currently leaks temporary objects)
     [x] 8r. Self-assignment of interface variables (iface = iface)
-    [ ] 8s. Interface method with multiple params
-        - Functionality implemented; no dedicated test case.
+    [x] 8s. Interface method with multiple params
+        - Added iface_multi_param test (3 params).
     [ ] 8t. Error: class missing interface method
         - Functionality implemented (symtab_validate_impls); no dedicated negative test.
     [x] 8u. Error: "new InterfaceName"

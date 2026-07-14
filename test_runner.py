@@ -898,6 +898,20 @@ i32 main() {
 }
 """, 19),
 
+    ("iface_multi_param", """
+interface IOp {
+    i32 calc(i32 a, i32 b, i32 c);
+}
+class Worker : IOp {
+    i32 calc(i32 a, i32 b, i32 c) { return a * b + c; }
+}
+i32 main() {
+    Worker w = new Worker;
+    IOp op = w;
+    return op.calc(5, 7, 3);
+}
+""", 38),
+
     ("iface_as", """
 interface IShape {
     i32 area();
