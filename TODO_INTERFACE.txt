@@ -158,7 +158,8 @@ Phase 1: Core Interface
     [x] 8t. Error: class missing interface method
         - Added negative test bad_missing_interface_method.
     [x] 8u. Error: "new InterfaceName"
-    [ ] 8v. Error: interface method signature mismatch between two interfaces
+    [x] 8v. Error: interface method signature mismatch between two interfaces
+        - Added check in symtab_validate_impls and negative test bad_iface_method_conflict.
     [x] 8w. Dynamic interface arrays (declaration, access, assignment)
     [x] 8x. Fixed-size interface arrays
     [x] 8y. Interface array element replacement (refcounting)

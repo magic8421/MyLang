@@ -245,6 +245,22 @@ static int signature_matches(MethodInfo* cls_method, InterfaceMethodInfo* iface_
     return 1;
 }
 
+static int iface_method_signature_matches(InterfaceMethodInfo* a, InterfaceMethodInfo* b) {
+    if (!type_equal(&a->return_type, &b->return_type)) {
+        return 0;
+    }
+    if (a->param_count != b->param_count) {
+        return 0;
+    }
+    int i;
+    for (i = 0; i < a->param_count; i++) {
+        if (!type_equal(&a->param_types[i], &b->param_types[i])) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 int symtab_validate_impls(void) {
     int errors = 0;
     ClassInfo* ci = class_list;
@@ -273,6 +289,26 @@ int symtab_validate_impls(void) {
                 }
             }
             if (!ci->impl_infos[i]) continue;
+
+            /* check for method signature conflicts between implemented interfaces */
+            for (j = 0; j < i; j++) {
+                InterfaceInfo* other = ci->impl_infos[j];
+                if (!other) continue;
+                int m;
+                for (m = 0; m < ii->method_count; m++) {
+                    InterfaceMethodInfo* im = &ii->methods[m];
+                    int n;
+                    for (n = 0; n < other->method_count; n++) {
+                        InterfaceMethodInfo* om = &other->methods[n];
+                        if (strcmp(im->name, om->name) != 0) continue;
+                        if (!iface_method_signature_matches(im, om)) {
+                            fprintf(stderr, "error: class '%s' cannot implement both '%s.%s()' and '%s.%s()' with conflicting signatures\n",
+                                    ci->name, ii->name, im->name, other->name, om->name);
+                            errors++;
+                        }
+                    }
+                }
+            }
 
             /* check every interface method is implemented */
             int m;

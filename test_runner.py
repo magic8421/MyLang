@@ -1597,6 +1597,21 @@ i32 main() {
     return 0;
 }
 """, "does not implement"),
+
+    ("bad_iface_method_conflict", """
+interface IFoo {
+    i32 compute(i32 x);
+}
+interface IBar {
+    i32 compute(i32 x, i32 y);
+}
+class Worker : IFoo, IBar {
+    i32 compute(i32 x) { return x; }
+}
+i32 main() {
+    return 0;
+}
+""", "conflicting signatures"),
 ]
 
 # ============================================================
