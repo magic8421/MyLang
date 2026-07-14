@@ -1585,6 +1585,18 @@ i32 main() {
     return 0;
 }
 """, "'as' target must be a class type"),
+
+    ("bad_missing_interface_method", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+}
+i32 main() {
+    return 0;
+}
+""", "does not implement"),
 ]
 
 # ============================================================

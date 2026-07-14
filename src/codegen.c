@@ -2253,6 +2253,8 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
 
     if (symtab_validate_impls() != 0) {
         fprintf(stderr, "error: semantic errors found, no output generated\n");
+        ctx.codegen_error = 1;
+        s_last_codegen_error = 1;
         return;
     }
 

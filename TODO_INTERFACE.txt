@@ -155,8 +155,8 @@ Phase 1: Core Interface
     [x] 8r. Self-assignment of interface variables (iface = iface)
     [x] 8s. Interface method with multiple params
         - Added iface_multi_param test (3 params).
-    [ ] 8t. Error: class missing interface method
-        - Functionality implemented (symtab_validate_impls); no dedicated negative test.
+    [x] 8t. Error: class missing interface method
+        - Added negative test bad_missing_interface_method.
     [x] 8u. Error: "new InterfaceName"
     [ ] 8v. Error: interface method signature mismatch between two interfaces
     [x] 8w. Dynamic interface arrays (declaration, access, assignment)
