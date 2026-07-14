@@ -114,5 +114,9 @@ int         type_is_generic(const Type* t);
 const char* type_mangled_name(Type* t);
 Type*       type_substitute(const Type* t, const char* params[], const Type* args[], int count);
 void        type_set_arg(Type* t, int idx, const Type* arg);
+void        type_free_args(Type* t);
+
+AstNode*    ast_clone(AstNode* node);
+void        ast_substitute_types(AstNode* node, const char* params[], const Type* args[], int count);
 
 #endif

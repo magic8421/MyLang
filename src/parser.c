@@ -118,8 +118,9 @@ static Type parse_base_type(Parser* p) {
     } else if (check(p, TOK_IDENT)) {
         const char* name = p->current.text;
         if (parser_is_type_param(name)) {
+            Type t = type_make_param(name);
             advance(p);
-            return type_make_param(name);
+            return t;
         }
         ClassInfo* ci = symtab_find_class(name);
         StructInfo* si = symtab_find_struct(name);

@@ -180,6 +180,16 @@ MethodInfo* symtab_find_method(const char* class_name, const char* method_name) 
     return NULL;
 }
 
+MethodInfo* symtab_find_method_in_class(ClassInfo* cls, const char* method_name) {
+    if (!cls) return NULL;
+    MethodInfo* m = cls->methods;
+    while (m) {
+        if (strcmp(m->name, method_name) == 0) return m;
+        m = m->next;
+    }
+    return NULL;
+}
+
 void symtab_add_interface(const char* name, InterfaceInfo* info) {
     info->next = interface_list;
     interface_list = info;
@@ -371,7 +381,7 @@ ClassInfo* symtab_find_class_by_mangled(const char* mangled_name) {
     return NULL;
 }
 
-ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* args, int arg_count) {
+ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type** args, int arg_count) {
     if (arg_count != generic_def->generic_param_count) {
         fprintf(stderr, "error: generic class '%s' expects %d type arguments, got %d\n",
                 generic_def->name, generic_def->generic_param_count, arg_count);
@@ -381,7 +391,7 @@ ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* ar
     Type inst_type = type_make_user(TYPE_CLASS, generic_def->name);
     int i;
     for (i = 0; i < arg_count && i < MAX_TYPE_ARGS; i++) {
-        type_set_arg(&inst_type, i, &args[i]);
+        type_set_arg(&inst_type, i, args[i]);
     }
     const char* mangled = type_mangled_name(&inst_type);
 
@@ -394,14 +404,14 @@ ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* ar
     }
 
     ClassInfo* ci = calloc(1, sizeof(ClassInfo));
-    CHECK_STRSCPY(strscpy(ci->name, generic_def->name, sizeof(ci->name)), "class name too long");
+    CHECK_STRSCPY(strscpy(ci->name, mangled, sizeof(ci->name)), "class name too long");
     CHECK_STRSCPY(strscpy(ci->mangled_name, mangled, sizeof(ci->mangled_name)), "mangled class name too long");
     ci->type_id = symtab_next_type_id();
     ci->is_instantiation = 1;
     ci->generic_def = generic_def;
     ci->instantiation_arg_count = arg_count;
     for (i = 0; i < arg_count && i < MAX_GENERIC_PARAMS; i++) {
-        ci->instantiation_args[i] = *type_new(&args[i]);
+        ci->instantiation_args[i] = *type_new(args[i]);
     }
 
     for (i = 0; i < inst_type.type_arg_count && i < MAX_TYPE_ARGS; i++) {
@@ -410,5 +420,133 @@ ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* ar
 
     ci->next = class_list;
     class_list = ci;
+    return ci;
+}
+
+static int type_implements_interface(const Type* t, const char* iface_name) {
+    if (t->type_kind == TYPE_CLASS) {
+        ClassInfo* ci = symtab_find_class(t->class_name);
+        if (ci) {
+            int i;
+            for (i = 0; i < ci->impl_count && i < MAX_IMPL; i++) {
+                if (strcmp(ci->impl_names[i], iface_name) == 0) return 1;
+            }
+        }
+    }
+    if (t->type_kind == TYPE_INTERFACE && strcmp(t->class_name, iface_name) == 0) {
+        return 1;
+    }
+    return 0;
+}
+
+ClassInfo* symtab_instantiate_class_from_type(Type* t) {
+    if (t->type_kind != TYPE_CLASS || t->type_arg_count == 0) {
+        return symtab_find_class(t->class_name);
+    }
+
+    ClassInfo* generic_def = symtab_find_class(t->class_name);
+    if (!generic_def || !generic_def->is_generic) {
+        fprintf(stderr, "error: type '%s' does not accept type arguments\n", t->class_name);
+        return NULL;
+    }
+
+    const Type* args[MAX_TYPE_ARGS];
+    int i;
+    for (i = 0; i < t->type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        args[i] = t->type_args[i];
+    }
+
+    /* validate constraints */
+    int p;
+    for (p = 0; p < generic_def->generic_param_count && p < t->type_arg_count; p++) {
+        int c;
+        for (c = 0; c < generic_def->generic_constraint_count[p] && c < MAX_CONSTRAINTS_PER_PARAM; c++) {
+            const char* iname = generic_def->generic_constraints[p][c];
+            if (!type_implements_interface(args[p], iname)) {
+                fprintf(stderr, "error: type argument '%s' does not implement interface '%s' required by '%s'\n",
+                        type_name(args[p]), iname, generic_def->generic_params[p]);
+                return NULL;
+            }
+        }
+        if (generic_def->generic_has_new[p]) {
+            if (args[p]->type_kind != TYPE_CLASS) {
+                fprintf(stderr, "error: type argument '%s' for '%s' must be a class (new() constraint)\n",
+                        type_name(args[p]), generic_def->generic_params[p]);
+                return NULL;
+            }
+        }
+    }
+
+    /* Ensure nested generic class arguments are materialised so their
+     * typedefs and method bodies are emitted before this instantiation. */
+    int p2;
+    for (p2 = 0; p2 < t->type_arg_count && p2 < MAX_TYPE_ARGS; p2++) {
+        if (args[p2]->type_kind == TYPE_CLASS && args[p2]->type_arg_count > 0) {
+            symtab_instantiate_class_from_type((Type*)args[p2]);
+        }
+    }
+
+    ClassInfo* ci = symtab_add_class_instantiation(generic_def, args, t->type_arg_count);
+    if (!ci) return NULL;
+
+    /* build concrete field/method signatures and clone AST on first creation */
+    if (!ci->field_count && !ci->methods && !ci->generic_ast) {
+        const char* params[MAX_GENERIC_PARAMS];
+        for (p = 0; p < generic_def->generic_param_count && p < MAX_GENERIC_PARAMS; p++) {
+            params[p] = generic_def->generic_params[p];
+        }
+
+        ci->field_count = generic_def->field_count;
+        for (i = 0; i < generic_def->field_count && i < MAX_FIELDS; i++) {
+            CHECK_STRSCPY(strscpy(ci->field_names[i], generic_def->field_names[i], sizeof(ci->field_names[i])),
+                          "field name too long");
+            Type* ft = type_substitute(&generic_def->field_types[i], params, args, generic_def->generic_param_count);
+            ci->field_types[i] = *ft;
+            free(ft);
+            type_mangled_name(&ci->field_types[i]);
+        }
+
+        MethodInfo* gm = generic_def->methods;
+        MethodInfo* prev = NULL;
+        while (gm) {
+            MethodInfo* m = calloc(1, sizeof(MethodInfo));
+            CHECK_STRSCPY(strscpy(m->name, gm->name, sizeof(m->name)), "method name too long");
+            Type* rt = type_substitute(&gm->return_type, params, args, generic_def->generic_param_count);
+            m->return_type = *rt;
+            free(rt);
+            type_mangled_name(&m->return_type);
+            m->param_count = gm->param_count;
+            int mp;
+            for (mp = 0; mp < gm->param_count && mp < 16; mp++) {
+                CHECK_STRSCPY(strscpy(m->param_names[mp], gm->param_names[mp], sizeof(m->param_names[mp])),
+                              "parameter name too long");
+                Type* pt = type_substitute(&gm->param_types[mp], params, args, generic_def->generic_param_count);
+                m->param_types[mp] = *pt;
+                free(pt);
+                type_mangled_name(&m->param_types[mp]);
+            }
+            if (prev) prev->next = m; else ci->methods = m;
+            prev = m;
+            gm = gm->next;
+        }
+
+        ci->impl_count = generic_def->impl_count;
+        for (i = 0; i < generic_def->impl_count && i < MAX_IMPL; i++) {
+            CHECK_STRSCPY(strscpy(ci->impl_names[i], generic_def->impl_names[i], sizeof(ci->impl_names[i])),
+                          "interface name too long");
+            ci->impl_infos[i] = generic_def->impl_infos[i];
+        }
+
+        if (generic_def->generic_ast) {
+            ci->generic_ast = ast_clone(generic_def->generic_ast);
+            ast_substitute_types(ci->generic_ast, params, args, generic_def->generic_param_count);
+            ci->generic_ast->ast_token.kind = TOK_IDENT;
+            CHECK_STRSCPY(strscpy(ci->generic_ast->ast_token.text, ci->mangled_name,
+                                  sizeof(ci->generic_ast->ast_token.text)),
+                          "mangled class name too long");
+        }
+    }
+
+    t->type_id = ci->type_id;
     return ci;
 }

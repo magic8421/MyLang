@@ -133,6 +133,8 @@ int  symtab_validate_impls(void);
 int  symtab_next_type_id(void);
 void symtab_mark_class_generic(ClassInfo* info, AstNode* ast, int param_count, const char* params[]);
 ClassInfo* symtab_find_class_by_mangled(const char* mangled_name);
-ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type* args, int arg_count);
+ClassInfo* symtab_add_class_instantiation(ClassInfo* generic_def, const Type** args, int arg_count);
+ClassInfo* symtab_instantiate_class_from_type(Type* t);
+MethodInfo* symtab_find_method_in_class(ClassInfo* cls, const char* method_name);
 
 #endif

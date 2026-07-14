@@ -65,16 +65,38 @@ static const char* c_base_name(const Type* t) {
         case TYPE_U64:   return "uint64_t";
         case TYPE_F32:   return "float";
         case TYPE_F64:   return "double";
-        case TYPE_CLASS: return t->class_name;
-        case TYPE_STRUCT: return t->class_name;
-        case TYPE_INTERFACE: return t->class_name;
+        case TYPE_CLASS:
+        case TYPE_STRUCT:
+        case TYPE_INTERFACE:
+            if (t->type_arg_count > 0) {
+                if (!t->mangled_name[0]) type_mangled_name((Type*)t);
+                return t->mangled_name;
+            }
+            return t->class_name;
         case TYPE_VOID:  return "void";
         default:         return "int32_t";
     }
 }
 
+static const char* class_c_name(const ClassInfo* ci) {
+    if (ci->is_instantiation && ci->mangled_name[0]) return ci->mangled_name;
+    return ci->name;
+}
+
 static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
     snprintf(buf, bufsz, "Weak%s", t->class_name);
+}
+
+static void preinstantiate_generic_types(AstNode* node) {
+    if (!node) return;
+    if (node->ast_resolved_type.type_kind == TYPE_CLASS && node->ast_resolved_type.type_arg_count > 0) {
+        symtab_instantiate_class_from_type(&node->ast_resolved_type);
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+        preinstantiate_generic_types(node->ast_children[i]);
+    }
+    preinstantiate_generic_types(node->next);
 }
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
@@ -170,7 +192,12 @@ static Type resolve_type(AstNode* node) {
 
         case AST_MEMBER_ACCESS: {
             Type obj = resolve_type(node->ast_children[0]);
-            ClassInfo* ci = symtab_find_class(obj.class_name);
+            ClassInfo* ci = NULL;
+            if (obj.type_kind == TYPE_CLASS && obj.type_arg_count > 0) {
+                ci = symtab_instantiate_class_from_type(&obj);
+            } else {
+                ci = symtab_find_class(obj.class_name);
+            }
             if (ci) {
                 int i;
                 for (i = 0; i < ci->field_count; i++) {
@@ -208,7 +235,13 @@ static Type resolve_type(AstNode* node) {
                         t.is_pointer = 1;
                     }
                 } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
-                    MethodInfo* mi = symtab_find_method(obj->ast_resolved_type.class_name, mem->ast_token.text);
+                    ClassInfo* ci = NULL;
+                    if (obj->ast_resolved_type.type_arg_count > 0) {
+                        ci = symtab_instantiate_class_from_type(&obj->ast_resolved_type);
+                    } else {
+                        ci = symtab_find_class(obj->ast_resolved_type.class_name);
+                    }
+                    MethodInfo* mi = symtab_find_method_in_class(ci, mem->ast_token.text);
                     if (mi) { t = mi->return_type; }
                 } else if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
                     InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
@@ -379,8 +412,15 @@ static void codegen_call(CodegenContext* ctx, AstNode* node, FILE* out) {
             return;
         }
         if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
-            MethodInfo* mi = symtab_find_method(obj->ast_resolved_type.class_name, mname);
-            fprintf(out, "%s_%s(", obj->ast_resolved_type.class_name, mname);
+            ClassInfo* ci = NULL;
+            if (obj->ast_resolved_type.type_arg_count > 0) {
+                ci = symtab_instantiate_class_from_type(&obj->ast_resolved_type);
+            } else {
+                ci = symtab_find_class(obj->ast_resolved_type.class_name);
+            }
+            MethodInfo* mi = symtab_find_method_in_class(ci, mname);
+            const char* class_c = ci ? class_c_name(ci) : obj->ast_resolved_type.class_name;
+            fprintf(out, "%s_%s(", class_c, mname);
             codegen_expr(ctx, obj, out);
             AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
             int idx = 0;
@@ -497,7 +537,7 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node, FILE* out)
     if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
         /* Class references may come from void* getters (e.g. dynamic arrays),
            so cast to the concrete struct pointer before using ->. */
-        fprintf(out, "((%s*)", obj->ast_resolved_type.class_name);
+        fprintf(out, "((%s*)", c_base_name(&obj->ast_resolved_type));
         codegen_expr(ctx, obj, out);
         fprintf(out, ")->%s", node->ast_token.text);
     } else if (obj->ast_resolved_type.is_pointer) {
@@ -511,6 +551,9 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node, FILE* out)
 
 static void codegen_new(CodegenContext* ctx, AstNode* node, FILE* out) {
     Type base = node->ast_resolved_type;
+    if (base.type_kind == TYPE_CLASS && base.type_arg_count > 0) {
+        symtab_instantiate_class_from_type(&base);
+    }
     if (node->ast_child_count > 0) {
         int is_class = (base.type_kind == TYPE_CLASS) ? 1 : 0;
         int is_interface = (base.type_kind == TYPE_INTERFACE) ? 1 : 0;
@@ -2005,6 +2048,7 @@ static void codegen_interface_typedefs(CodegenContext* ctx, FILE* out) {
 }
 
 static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci, FILE* out) {
+    const char* class_c = class_c_name(ci);
     int i;
     for (i = 0; i < ci->impl_count; i++) {
         const char* iface_name = ci->impl_names[i];
@@ -2019,7 +2063,7 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci, 
             c_type_str(&im->return_type, rbuf, sizeof(rbuf));
 
             /* static RetType Class_IFace_method(void* thiz, params...) */
-            fprintf(out, "static %s %s_%s_%s(void* _p", rbuf, ci->name, iface_name, im->name);
+            fprintf(out, "static %s %s_%s_%s(void* _p", rbuf, class_c, iface_name, im->name);
             int k;
             for (k = 0; k < im->param_count; k++) {
                 char pbuf[128];
@@ -2037,7 +2081,7 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci, 
             if (im->return_type.type_kind != TYPE_VOID) {
                 fprintf(out, "return ");
             }
-            fprintf(out, "%s_%s((%s*)_p", ci->name, im->name, ci->name);
+            fprintf(out, "%s_%s((%s*)_p", class_c, im->name, class_c);
             for (k = 0; k < im->param_count; k++) {
                 fprintf(out, ", _a%d", k);
             }
@@ -2046,10 +2090,10 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci, 
         }
 
         /* emit static vtable */
-        fprintf(out, "static const %sVTable %s_%s_vtable = {\n", iface_name, ci->name, iface_name);
+        fprintf(out, "static const %sVTable %s_%s_vtable = {\n", iface_name, class_c, iface_name);
         fprintf(out, "    .concrete_type_id = %u,\n", (unsigned)ci->type_id);
         for (j = 0; j < ii->method_count; j++) {
-            fprintf(out, "    .%s = %s_%s_%s", ii->methods[j].name, ci->name, iface_name, ii->methods[j].name);
+            fprintf(out, "    .%s = %s_%s_%s", ii->methods[j].name, class_c, iface_name, ii->methods[j].name);
             if (j < ii->method_count - 1) fprintf(out, ",");
             fprintf(out, "\n");
         }
@@ -2076,10 +2120,14 @@ static void codegen_struct_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
 }
 
 static void codegen_class_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
-    ClassInfo* ci = symtab_find_class(node->ast_token.text);
+    ClassInfo* ci = symtab_find_class_by_mangled(node->ast_token.text);
+    if (!ci) ci = symtab_find_class(node->ast_token.text);
     if (!ci) return;
+    if (ci->is_generic) return;
 
-    fprintf(out, "typedef struct %s {\n", node->ast_token.text);
+    const char* class_c = class_c_name(ci);
+
+    fprintf(out, "typedef struct %s {\n", class_c);
     int i;
     if (ci->field_count == 0) {
         fprintf(out, "    char _pad;\n");
@@ -2087,6 +2135,7 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
         for (i = 0; i < ci->field_count; i++) {
             char ftype_buf[128];
             if (ci->field_types[i].type_kind == TYPE_CLASS &&
+                ci->field_types[i].type_arg_count == 0 &&
                 strcmp(ci->field_types[i].class_name, node->ast_token.text) == 0) {
                 int n = snprintf(ftype_buf, sizeof(ftype_buf), "struct %s*", ci->field_types[i].class_name);
                 CHECK_SNPRINTF(n, (size_t)sizeof(ftype_buf), "field type name too long");
@@ -2096,12 +2145,12 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
             fprintf(out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
         }
     }
-    fprintf(out, "} %s;\n\n", node->ast_token.text);
+    fprintf(out, "} %s;\n\n", class_c);
 
     /* emit method declarations */
     AstNode* m = node->ast_children[0];
     while (m) {
-        codegen_method_decl(ctx, m, out, node->ast_token.text);
+        codegen_method_decl(ctx, m, out, class_c);
         m = m->next;
     }
 
@@ -2416,6 +2465,8 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
         return;
     }
 
+    preinstantiate_generic_types(program);
+
     fprintf(out, "/* Generated by MyLang compiler */\n");
     fprintf(out, "#define _CRTDBG_MAP_ALLOC\n");
     fprintf(out, "#include <stdio.h>\n");
@@ -2646,7 +2697,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
     {
         ClassInfo* ci = class_list;
         while (ci) {
-            fprintf(out, "typedef struct %s %s;\n", ci->name, ci->name);
+            fprintf(out, "typedef struct %s %s;\n", class_c_name(ci), class_c_name(ci));
             ci = ci->next;
         }
         extern InterfaceInfo* interface_list;
@@ -2674,6 +2725,17 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
             codegen_class_decl(&ctx, decl, out);
         }
         decl = decl->next;
+    }
+
+    /* emit concrete generic class instantiations */
+    {
+        ClassInfo* ci = class_list;
+        while (ci) {
+            if (ci->is_instantiation && ci->generic_ast) {
+                codegen_class_decl(&ctx, ci->generic_ast, out);
+            }
+            ci = ci->next;
+        }
     }
 
     decl = program->ast_children[0];

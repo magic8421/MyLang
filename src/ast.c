@@ -127,6 +127,17 @@ void type_free(Type* t) {
     free(t);
 }
 
+void type_free_args(Type* t) {
+    if (!t) return;
+    int i;
+    for (i = 0; i < t->type_arg_count && i < MAX_TYPE_ARGS; i++) {
+        type_free(t->type_args[i]);
+        t->type_args[i] = NULL;
+    }
+    t->type_arg_count = 0;
+    t->mangled_name[0] = '\0';
+}
+
 int type_is_param(const Type* t) {
     return t->type_kind == TYPE_TYPE_PARAM;
 }
@@ -153,6 +164,7 @@ Type* type_substitute(const Type* t, const char* params[], const Type* args[], i
         r->type_args[i] = sub;
     }
     r->mangled_name[0] = '\0';
+    type_mangled_name(r);
     return r;
 }
 
@@ -165,4 +177,34 @@ void type_set_arg(Type* t, int idx, const Type* arg) {
     if (idx >= t->type_arg_count) {
         t->type_arg_count = idx + 1;
     }
+}
+
+AstNode* ast_clone(AstNode* node) {
+    if (!node) return NULL;
+    AstNode* copy = ast_new_node(node->ast_kind, node->ast_token);
+    copy->ast_resolved_type = *type_new(&node->ast_resolved_type);
+    copy->ast_child_count = node->ast_child_count;
+    int i;
+    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+        copy->ast_children[i] = ast_clone(node->ast_children[i]);
+    }
+    copy->next = ast_clone(node->next);
+    return copy;
+}
+
+static void ast_substitute_types_node(AstNode* node, const char* params[], const Type* args[], int count) {
+    if (!node) return;
+    Type* sub = type_substitute(&node->ast_resolved_type, params, args, count);
+    type_free_args(&node->ast_resolved_type);
+    node->ast_resolved_type = *sub;
+    free(sub);
+    int i;
+    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+        ast_substitute_types_node(node->ast_children[i], params, args, count);
+    }
+    ast_substitute_types_node(node->next, params, args, count);
+}
+
+void ast_substitute_types(AstNode* node, const char* params[], const Type* args[], int count) {
+    ast_substitute_types_node(node, params, args, count);
 }
