@@ -1626,6 +1626,77 @@ i32 main() {
     return b.value;
 }
 """, 42),
+
+    ("generics_basic", """
+class Box<T> {
+    T value;
+    void set(T v) { this.value = v; }
+    T get() { return this.value; }
+}
+i32 main() {
+    Box<i32> b1 = new Box<i32>;
+    b1.set(10);
+    Box<Box<i32>> b2 = new Box<Box<i32>>;
+    b2.set(b1);
+    return b2.get().get();
+}
+""", 10),
+
+    ("generics_pair", """
+class Pair<T, U> {
+    T first;
+    U second;
+    void setFirst(T v) { this.first = v; }
+    void setSecond(U v) { this.second = v; }
+    T getFirst() { return this.first; }
+    U getSecond() { return this.second; }
+}
+i32 main() {
+    Pair<i32, i8> p = new Pair<i32, i8>;
+    p.setFirst(7);
+    p.setSecond('A');
+    return p.getFirst() + p.getSecond();
+}
+""", 72),
+
+    ("generics_func", """
+class Box<T> {
+    T value;
+    void set(T v) { this.value = v; }
+    T get() { return this.value; }
+}
+i32 doubleBox(Box<i32> b) {
+    return b.get() * 2;
+}
+Box<i32> make(i32 v) {
+    Box<i32> b = new Box<i32>;
+    b.set(v);
+    return b;
+}
+i32 main() {
+    Box<i32> b = make(21);
+    return doubleBox(b);
+}
+""", 42),
+
+    ("generics_nested_arg", """
+class Box<T> {
+    T value;
+    void set(T v) { this.value = v; }
+    T get() { return this.value; }
+}
+class Pair<A, B> {
+    A a;
+    B b;
+}
+i32 main() {
+    Box<Pair<i32, i8>> bp = new Box<Pair<i32, i8>>;
+    Pair<i32, i8> p = new Pair<i32, i8>;
+    p.a = 5;
+    bp.set(p);
+    return bp.get().a;
+}
+""", 5),
 ]
 
 # ============================================================
