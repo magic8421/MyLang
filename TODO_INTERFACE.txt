@@ -145,13 +145,14 @@ Phase 1: Core Interface
     [x] 8i. "as" type assertion success
     [x] 8j. "as" type assertion failure (returns null)
     [x] 8k. "as" used in if condition
-    [~] 8l. Interface refcounting correctness (no leaks)
-        - Covered for scalar interface lifecycle; chained interface calls still leak temporaries.
+    [x] 8l. Interface refcounting correctness (no leaks)
+        - Scalar interface lifecycle clean; chained interface calls extracted to temps.
     [x] 8m. Interface method with primitive params
     [x] 8n. Interface method with ref params
     [x] 8o. Interface method returning class type
     [x] 8p. Interface method returning interface type
-    [ ] 8q. Chained calls through interface (currently leaks temporary objects)
+    [x] 8q. Chained calls through interface
+        - Fixed by emit_subexpr_temps; added iface_chain_as/method/compare tests.
     [x] 8r. Self-assignment of interface variables (iface = iface)
     [x] 8s. Interface method with multiple params
         - Added iface_multi_param test (3 params).

@@ -29,6 +29,7 @@ typedef struct {
     CleanupEntry cleanup_entries[MAX_CLEANUP];
     int          cleanup_count;
     int          assign_tmp_id;
+    int          subexpr_tmp_id;
     int          cleanup_scope_stack[MAX_SCOPE];
     int          cleanup_scope_depth;
 } CodegenContext;
@@ -847,6 +848,19 @@ static int guard_needs_retain(AstNode* node) {
     return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
 }
 
+/* Sub-expressions that must be hoisted into a temporary so they are evaluated
+   exactly once.  Only call sites can add reference counts; lvalues, weak refs,
+   arrays and 'new' are left to their surrounding statement. */
+static int subexpr_needs_temp(AstNode* node) {
+    if (!node) return 0;
+    resolve_type(node);
+    Type* t = &node->ast_resolved_type;
+    if (t->is_weak) return 0;
+    if (t->is_array) return 0;
+    if (t->type_kind != TYPE_CLASS && t->type_kind != TYPE_INTERFACE) return 0;
+    return node->ast_kind == AST_CALL;
+}
+
 /* Evaluate each guarded class subexpression into a temporary once, so we do
    not re-evaluate side-effecting expressions (e.g. method calls) when the
    caller-side retain/release guards are emitted. */
@@ -888,6 +902,116 @@ static void emit_guarded_temp_decls(CodegenContext* ctx, AstNode* expr, FILE* ou
 
         fprintf(out, ";\n");
     }
+}
+
+static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int is_interface);
+
+/* Extract an owned class/interface call into a temporary variable so it is
+   evaluated exactly once.  The temporary is released via cleanup. */
+static void extract_owned_call_temp(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    if (!node || node->ast_temp_name[0] != '\0') return;
+    if (!subexpr_needs_temp(node)) return;
+
+    int id = ctx->subexpr_tmp_id++;
+    int n = snprintf(node->ast_temp_name, sizeof(node->ast_temp_name), "_i%d", id);
+    CHECK_SNPRINTF(n, sizeof(node->ast_temp_name), "subexpr temporary name too long");
+
+    char tbuf[128];
+    c_type_str(&node->ast_resolved_type, tbuf, sizeof(tbuf));
+    indent_line(out, indent);
+    fprintf(out, "%s %s = ", tbuf, node->ast_temp_name);
+
+    /* Evaluate the original expression without using its own temp name. */
+    char saved[64];
+    CHECK_STRSCPY(strscpy(saved, node->ast_temp_name, sizeof(saved)),
+                  "subexpr temporary name too long");
+    node->ast_temp_name[0] = '\0';
+    codegen_expr(ctx, node, out);
+    CHECK_STRSCPY(strscpy(node->ast_temp_name, saved, sizeof(node->ast_temp_name)),
+                  "subexpr temporary name too long");
+
+    fprintf(out, ";\n");
+
+    if (node->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+        cleanup_add(ctx, node->ast_temp_name, 0, 1);
+    } else {
+        cleanup_add(ctx, node->ast_temp_name, 0, 0);
+    }
+}
+
+/* Extract owned class/interface subexpression calls into temporaries so they
+   are not re-evaluated (which leaks reference counts).  Direct call arguments
+   are left for emit_guarded_temp_decls to handle. */
+static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    if (!node) return;
+
+    if (node->ast_kind == AST_AS_CAST) {
+        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        AstNode* obj = node->ast_children[0];
+        if (subexpr_needs_temp(obj)) {
+            extract_owned_call_temp(ctx, obj, out, indent);
+        }
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    if (node->ast_kind == AST_BINARY) {
+        int i;
+        for (i = 0; i < node->ast_child_count; i++) {
+            emit_subexpr_temps(ctx, node->ast_children[i], out, indent);
+        }
+        for (i = 0; i < node->ast_child_count; i++) {
+            AstNode* child = node->ast_children[i];
+            if (subexpr_needs_temp(child)) {
+                extract_owned_call_temp(ctx, child, out, indent);
+            }
+        }
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    if (node->ast_kind == AST_MEMBER_ACCESS) {
+        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        AstNode* obj = node->ast_children[0];
+        if (subexpr_needs_temp(obj)) {
+            extract_owned_call_temp(ctx, obj, out, indent);
+        }
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    if (node->ast_kind == AST_CALL) {
+        /* Recurse into callee for method-call receiver subexpressions. */
+        if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
+            emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        }
+        /* Top-level arguments are handled by emit_guarded_temp_decls; do not
+           extract them here because that would add a second release path. */
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    if (node->ast_kind == AST_ASSIGN) {
+        /* LHS must remain an lvalue.  RHS is evaluated into its destination,
+           so only nested subexpressions inside RHS need extraction. */
+        emit_subexpr_temps(ctx, node->ast_children[1], out, indent);
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    if (node->ast_kind == AST_NEW) {
+        /* 'new' is handled by its surrounding statement; only nested size
+           expressions need subexpression extraction. */
+        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+        emit_subexpr_temps(ctx, node->next, out, indent);
+        return;
+    }
+
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        emit_subexpr_temps(ctx, node->ast_children[i], out, indent);
+    }
+    emit_subexpr_temps(ctx, node->next, out, indent);
 }
 
 static void emit_call_guards(CodegenContext* ctx, AstNode* expr, FILE* out, int is_retain) {
@@ -1091,6 +1215,10 @@ static void codegen_body(CodegenContext* ctx, AstNode* body, FILE* out, int inde
 
 static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
     Type type = node->ast_resolved_type;
+
+    if (node->ast_child_count > 0) {
+        emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
+    }
 
     symtab_insert(node->ast_token.text, type);
 
@@ -1339,6 +1467,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int 
 }
 
 static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "if (");
@@ -1354,6 +1483,7 @@ static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int i
 }
 
 static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     indent_line(out, indent);
     fprintf(out, "while (");
@@ -1365,6 +1495,7 @@ static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, FILE* out, in
 static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
     if (node->ast_child_count > 0) {
         AstNode* ret = node->ast_children[0];
+        emit_subexpr_temps(ctx, ret, out, indent);
         emit_bounds_checks(ctx, ret, out, indent);
         resolve_type(ret);
 
@@ -1452,6 +1583,10 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     AstNode* expr = node->ast_children[0];
     resolve_type(expr);
+
+    /* Extract owned class/interface subexpressions (e.g. inside 'as' casts or
+       comparisons) into temporaries so they are evaluated once and released. */
+    emit_subexpr_temps(ctx, expr, out, indent);
 
     /* Extract guarded class subexpressions into temporaries so side-effecting
        arguments (e.g. method calls) are evaluated exactly once. */
