@@ -29,7 +29,7 @@ Source code lives under `src/`:
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `void`.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
 - Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
-- Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`.
+- Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.

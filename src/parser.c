@@ -240,21 +240,21 @@ static AstNode* parse_primary(Parser* p) {
         AstNode* node = ast_new_node(AST_NEW, new_tok);
         node->ast_resolved_type = base;
 
-        if (base.type_kind == TYPE_INTERFACE) {
-            fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
-                    new_tok.line, new_tok.col, base.class_name);
-            p->had_error = 1;
-        }
-
         if (check(p, TOK_LBRACKET)) {
             advance(p);
             node->ast_children[0] = parse_expr_no_assign(p, "new array size");
             node->ast_child_count = 1;
             expect(p, TOK_RBRACKET);
-        } else if (base.type_kind == TYPE_STRUCT) {
-            fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value; use 'new %s[N]' for an array\n",
-                    new_tok.line, new_tok.col, base.class_name);
-            p->had_error = 1;
+        } else {
+            if (base.type_kind == TYPE_INTERFACE) {
+                fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
+                        new_tok.line, new_tok.col, base.class_name);
+                p->had_error = 1;
+            } else if (base.type_kind == TYPE_STRUCT) {
+                fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value; use 'new %s[N]' for an array\n",
+                        new_tok.line, new_tok.col, base.class_name);
+                p->had_error = 1;
+            }
         }
         return node;
     }

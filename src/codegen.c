@@ -11,6 +11,8 @@ typedef struct {
     const char* name;
     int         is_weak;
     int         is_interface;
+    int         is_interface_array;
+    int         interface_array_size;
 } CleanupEntry;
 
 typedef struct {
@@ -69,11 +71,15 @@ static const char* c_base_name(const Type* t) {
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {
     int n;
-    if (t->type_kind == TYPE_INTERFACE) {
-        n = snprintf(buf, bufsz, "%s", t->class_name);
-    } else if (t->array_size > 0) {
+    if (t->array_size > 0) {
         /* fixed-size array declared as T name[N] */
         n = snprintf(buf, bufsz, "%s", c_base_name(t));
+    } else if (t->type_kind == TYPE_INTERFACE && t->is_array) {
+        /* dynamic array of interface fat pointers: IFoo* */
+        n = snprintf(buf, bufsz, "%s*", t->class_name);
+    } else if (t->type_kind == TYPE_INTERFACE) {
+        /* interface fat pointer struct */
+        n = snprintf(buf, bufsz, "%s", t->class_name);
     } else if (t->type_kind == TYPE_CLASS && t->is_array && t->is_pointer) {
         /* dynamic array of class references: Box** */
         n = snprintf(buf, bufsz, "%s**", c_base_name(t));
@@ -403,6 +409,16 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node, FILE* out) 
             fprintf(out, ", ");
             codegen_expr(ctx, idx, out);
             fprintf(out, ", sizeof(%s), \"%s\", %d))", c_base_name(&et), ctx->source_file_escaped, node->ast_token.line);
+        } else if (et.type_kind == TYPE_INTERFACE) {
+            /* Interface arrays are arrays of fat-pointer structs. Bounds check
+               inline and index directly so the result has the real IFoo type. */
+            fprintf(out, "((%s*)mylang_check_bounds(", c_base_name(&et));
+            codegen_expr(ctx, arr, out);
+            fprintf(out, ", ");
+            codegen_expr(ctx, idx, out);
+            fprintf(out, ", \"%s\", %d))[", ctx->source_file_escaped, node->ast_token.line);
+            codegen_expr(ctx, idx, out);
+            fprintf(out, "]");
         } else {
             fprintf(out, "array_get_%s(", c_base_name(&et));
             codegen_expr(ctx, arr, out);
@@ -440,6 +456,7 @@ static void codegen_new(CodegenContext* ctx, AstNode* node, FILE* out) {
     Type base = node->ast_resolved_type;
     if (node->ast_child_count > 0) {
         int is_class = (base.type_kind == TYPE_CLASS) ? 1 : 0;
+        int is_interface = (base.type_kind == TYPE_INTERFACE) ? 1 : 0;
         fprintf(out, "mylang_new_array(");
         codegen_expr(ctx, node->ast_children[0], out);
         fprintf(out, ", ");
@@ -448,7 +465,7 @@ static void codegen_new(CodegenContext* ctx, AstNode* node, FILE* out) {
         } else {
             fprintf(out, "sizeof(%s)", c_base_name(&base));
         }
-        fprintf(out, ", 0x%08XU)", (unsigned)(base.type_id | TYPE_IS_ARRAY));
+        fprintf(out, ", 0x%08XU)", (unsigned)(base.type_id | (is_interface ? TYPE_IS_INTERFACE : 0) | TYPE_IS_ARRAY));
         base.is_pointer = 1;
     } else {
         if (base.type_kind == TYPE_CLASS) {
@@ -577,11 +594,10 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
                 int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
-                int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
 
                 fprintf(out, "((void)");
                 if (rt.type_kind == TYPE_CLASS) {
-                    if (!rhs_owned && !rhs_local) {
+                    if (!rhs_owned) {
                         fprintf(out, "mylang_retain(");
                         codegen_expr(ctx, rhs, out);
                         fprintf(out, "), ");
@@ -597,8 +613,10 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
                     fprintf(out, ".vtable = &%s_%s_vtable", rt.class_name, lt.class_name);
                     fprintf(out, "))");
                 } else {
-                    if (!rhs_owned && !rhs_local && rhs->ast_kind == AST_IDENT) {
-                        fprintf(out, "mylang_retain(%s.data), ", rhs->ast_token.text);
+                    if (!rhs_owned) {
+                        fprintf(out, "mylang_retain(");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ".data), ");
                     }
                     fprintf(out, "mylang_release(");
                     codegen_expr(ctx, lhs, out);
@@ -800,6 +818,19 @@ static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int 
         ctx->cleanup_entries[ctx->cleanup_count].name = name;
         ctx->cleanup_entries[ctx->cleanup_count].is_weak = is_weak;
         ctx->cleanup_entries[ctx->cleanup_count].is_interface = is_interface;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = 0;
+        ctx->cleanup_count++;
+    }
+}
+
+static void cleanup_add_interface_array(CodegenContext* ctx, const char* name, int size) {
+    if (ctx->cleanup_count < MAX_CLEANUP) {
+        ctx->cleanup_entries[ctx->cleanup_count].name = name;
+        ctx->cleanup_entries[ctx->cleanup_count].is_weak = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].is_interface_array = 1;
+        ctx->cleanup_entries[ctx->cleanup_count].interface_array_size = size;
         ctx->cleanup_count++;
     }
 }
@@ -812,6 +843,11 @@ static void cleanup_emit(CodegenContext* ctx, FILE* out, int indent) {
         if (ctx->cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].interface_array_size; j++) {
+                fprintf(out, "mylang_release(%s[%d].data);\n", name, j);
+            }
         } else if (ctx->cleanup_entries[i].is_interface) {
             fprintf(out, "mylang_release(%s.data);\n", name);
         } else {
@@ -837,6 +873,11 @@ static void cleanup_pop_scope(CodegenContext* ctx, FILE* out, int indent) {
         if (ctx->cleanup_entries[i].is_weak) {
             fprintf(out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].interface_array_size; j++) {
+                fprintf(out, "mylang_release(%s[%d].data);\n", name, j);
+            }
         } else if (ctx->cleanup_entries[i].is_interface) {
             fprintf(out, "mylang_release(%s.data);\n", name);
         } else {
@@ -910,6 +951,28 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int 
     }
 
     if (type.type_kind == TYPE_INTERFACE) {
+        if (type.is_array && type.array_size == 0) {
+            /* Dynamic array of interface fat pointers. */
+            indent_line(out, indent);
+            fprintf(out, "%s* %s = ", type.class_name, node->ast_token.text);
+            if (node->ast_child_count > 0) {
+                codegen_expr(ctx, node->ast_children[0], out);
+            } else {
+                fprintf(out, "NULL");
+            }
+            fprintf(out, ";\n");
+            cleanup_add(ctx, node->ast_token.text, 0, 0);
+            return;
+        } else if (type.array_size > 0) {
+            /* Fixed-size array of interface fat pointers. Zero-initialize so
+               cleanup can safely release each element's .data. */
+            indent_line(out, indent);
+            fprintf(out, "%s %s[%d] = {0};\n", type.class_name,
+                    node->ast_token.text, type.array_size);
+            cleanup_add_interface_array(ctx, node->ast_token.text, type.array_size);
+            return;
+        }
+
         if (node->ast_child_count > 0) {
             AstNode* init = node->ast_children[0];
             resolve_type(init);
@@ -1050,6 +1113,19 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
             fprintf(out, "MY_POP();\n");
             indent_line(out, indent);
             fprintf(out, "return _r;\n");
+        } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE && ret->ast_resolved_type.is_array) {
+            /* Returning an interface array pointer (dynamic array). */
+            char tbuf[128];
+            c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
+            indent_line(out, indent);
+            fprintf(out, "%s _r = mylang_retain(", tbuf);
+            codegen_expr(ctx, ret, out);
+            fprintf(out, ");\n");
+            cleanup_emit(ctx, out, indent);
+            indent_line(out, indent);
+            fprintf(out, "MY_POP();\n");
+            indent_line(out, indent);
+            fprintf(out, "return _r;\n");
         } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE) {
             char tbuf[128];
             c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
@@ -1108,12 +1184,59 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
         if (lhs->ast_kind == AST_ARRAY_ACCESS) {
             Type at = lhs->ast_children[0]->ast_resolved_type;
             if (at.is_array && at.array_size == 0) {
-                emit_stmt_call_retains(ctx, expr, out, indent);
-
-                int is_class_elem = (lt.type_kind == TYPE_CLASS && lt.is_pointer);
                 AstNode* arr = lhs->ast_children[0];
                 AstNode* idx = lhs->ast_children[1];
                 int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+
+                if (lt.type_kind == TYPE_INTERFACE) {
+                    emit_stmt_call_retains(ctx, expr, out, indent);
+
+                    Type rt = rhs->ast_resolved_type;
+                    indent_line(out, indent);
+                    fprintf(out, "((void)(");
+                    if (rt.type_kind == TYPE_CLASS) {
+                        if (!rhs_owned) {
+                            fprintf(out, "mylang_retain(");
+                            codegen_expr(ctx, rhs, out);
+                            fprintf(out, "), ");
+                        }
+                        fprintf(out, "mylang_release(");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".data), (");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".data = (void*)");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ", ");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".vtable = &%s_%s_vtable", rt.class_name, lt.class_name);
+                        fprintf(out, ")));\n");
+                    } else if (rt.type_kind == TYPE_INTERFACE) {
+                        if (!rhs_owned) {
+                            fprintf(out, "mylang_retain(");
+                            codegen_expr(ctx, rhs, out);
+                            fprintf(out, ".data), ");
+                        }
+                        fprintf(out, "mylang_release(");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, ".data), (");
+                        codegen_expr(ctx, lhs, out);
+                        fprintf(out, " = ");
+                        codegen_expr(ctx, rhs, out);
+                        fprintf(out, ")));\n");
+                    } else {
+                        fprintf(stderr, "error at %d:%d: cannot assign non-class value to interface array element\n",
+                                rhs->ast_token.line, rhs->ast_token.col);
+                        ctx->codegen_error = 1;
+                        fprintf(out, "0));\n");
+                    }
+
+                    emit_stmt_call_releases(ctx, expr, out, indent);
+                    return;
+                }
+
+                emit_stmt_call_retains(ctx, expr, out, indent);
+
+                int is_class_elem = (lt.type_kind == TYPE_CLASS && lt.is_pointer);
 
                 indent_line(out, indent);
                 if (is_class_elem) {
@@ -1724,6 +1847,7 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
 
     fprintf(out, "#define MYLANG_TYPE_IS_ARRAY   0x80000000U\n");
     fprintf(out, "#define MYLANG_TYPE_IS_STRUCT  0x40000000U\n");
+    fprintf(out, "#define MYLANG_TYPE_IS_INTERFACE 0x%08XU\n", TYPE_IS_INTERFACE);
     fprintf(out, "#define MYLANG_TYPE_ID_CLASS_BASE 16\n");
     if (leak_check) {
         fprintf(out, "#define MYLANG_LEAK_CHECK\n");
@@ -1822,9 +1946,10 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
     fprintf(out, "    return h + 1;\n");
     fprintf(out, "}\n\n");
 
-    fprintf(out, "static inline void mylang_check_bounds(void* arr, size_t idx, const char* file, int line) {\n");
+    fprintf(out, "static inline void* mylang_check_bounds(void* arr, size_t idx, const char* file, int line) {\n");
     fprintf(out, "    MY_LOC(file, line);\n");
     fprintf(out, "    MY_CHECK((size_t)(idx) < mylang_obj_hdr(arr)->length, \"index out of bounds\");\n");
+    fprintf(out, "    return arr;\n");
     fprintf(out, "}\n\n");
 
     fprintf(out, "static void* mylang_retain(void* ptr) {\n");
@@ -1870,11 +1995,16 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
     fprintf(out, "    }\n");
     fprintf(out, "}\n\n");
 
+    fprintf(out, "typedef struct { void* data; const void* vtable; } AnyInterface;\n\n");
     fprintf(out, "static int mylang_release(void* ptr) {\n");
     fprintf(out, "    if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {\n");
     fprintf(out, "        ObjHeader* h = mylang_obj_hdr(ptr);\n");
     fprintf(out, "        if (h->type_id & MYLANG_TYPE_IS_ARRAY) {\n");
-    fprintf(out, "            if (!(h->type_id & MYLANG_TYPE_IS_STRUCT)) {\n");
+    fprintf(out, "            if (h->type_id & MYLANG_TYPE_IS_INTERFACE) {\n");
+    fprintf(out, "                AnyInterface* data = (AnyInterface*)ptr;\n");
+    fprintf(out, "                size_t i;\n");
+    fprintf(out, "                for (i = 0; i < h->length; i++) mylang_release(data[i].data);\n");
+    fprintf(out, "            } else if (!(h->type_id & MYLANG_TYPE_IS_STRUCT)) {\n");
     fprintf(out, "                uint32_t et = h->type_id & ~MYLANG_TYPE_IS_ARRAY;\n");
     fprintf(out, "                if (et >= MYLANG_TYPE_ID_CLASS_BASE) {\n");
     fprintf(out, "                    void** data = (void**)ptr;\n");

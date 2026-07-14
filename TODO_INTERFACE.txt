@@ -125,14 +125,13 @@ Phase 1: Core Interface
     [ ] 6d. Error if both interfaces have method with same name but different signature
     [x] 6e. Error if "as Type" where Type is not a class (or class not implementing the interface)
     [x] 6f. Error if interface variable assigned from non-implementing type
-    [x] 6g. Error on "new InterfaceName[N]" (interface arrays)
+    [x] 6g. Allow "new InterfaceName[N]" (dynamic interface arrays); keep scalar "new InterfaceName" rejected
     [x] 6h. Error on interface field declarations (interfaces not allowed as class fields)
 
-[~] 7. FIXED-SIZE ARRAY OF INTERFACES
-    [~] 7a. Allow "InterfaceName[N]" syntax for fixed-size interface arrays
-    [~] 7b. C typedef: IFooName array[N]
-    [ ] 7c. Cleanup: iterate and release each element's .data
-        - Current cleanup incorrectly emits mylang_release(arr.data) for the array variable.
+[x] 7. FIXED-SIZE ARRAY OF INTERFACES
+    [x] 7a. Allow "InterfaceName[N]" syntax for fixed-size interface arrays
+    [x] 7b. C typedef: IFooName array[N]
+    [x] 7c. Cleanup: iterate and release each element's .data
 
 [x] 8. TESTS (test_runner.py + standalone .my files)
     [x] 8a. Basic interface declaration (no implementation)
@@ -160,6 +159,10 @@ Phase 1: Core Interface
         - Functionality implemented (symtab_validate_impls); no dedicated negative test.
     [x] 8u. Error: "new InterfaceName"
     [ ] 8v. Error: interface method signature mismatch between two interfaces
+    [x] 8w. Dynamic interface arrays (declaration, access, assignment)
+    [x] 8x. Fixed-size interface arrays
+    [x] 8y. Interface array element replacement (refcounting)
+    [x] 8z. Interface array bounds checking
 
 ============================================================================
 Phase 2: weak + Interface

@@ -1244,6 +1244,85 @@ i32 main() {
 }
 """, 99),
 
+    ("iface_dyn_array_basic", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    IShape[] arr = new IShape[2];
+    Square sq = new Square;
+    sq.side = 3;
+    Circle ci = new Circle;
+    ci.radius = 2;
+    arr[0] = sq;
+    arr[1] = ci;
+    return arr[0].area() + arr[1].area();
+}
+""", 21),
+
+    ("iface_fixed_array_basic", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    IShape[2] arr;
+    Square sq = new Square;
+    sq.side = 4;
+    arr[0] = sq;
+    return arr[0].area();
+}
+""", 16),
+
+    ("iface_array_replace", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    IShape[] arr = new IShape[1];
+    Square sq = new Square;
+    sq.side = 2;
+    arr[0] = sq;
+    Circle ci = new Circle;
+    ci.radius = 3;
+    arr[0] = ci;
+    return arr[0].area();
+}
+""", 27),
+
+    ("iface_array_bounds", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    IShape[] arr = new IShape[2];
+    return arr[5].area();
+}
+""", "crash"),
+
     ("circular_ref_leak", """
 class Node {
     Node next;
@@ -1275,19 +1354,6 @@ class Square : IShape {
 }
 i32 main() {
     IShape s = new IShape;
-    return 0;
-}
-""", "cannot create instance of interface"),
-
-    ("bad_new_interface_array", """
-interface IShape {
-    i32 area();
-}
-class Square : IShape {
-    i32 area() { return 1; }
-}
-i32 main() {
-    IShape[] arr = new IShape[5];
     return 0;
 }
 """, "cannot create instance of interface"),

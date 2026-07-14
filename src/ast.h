@@ -34,6 +34,7 @@ typedef enum {
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U
 #define TYPE_IS_WEAK     0x20000000U
+#define TYPE_IS_INTERFACE 0x10000000U
 
 typedef struct {
     TypeKind type_kind;
