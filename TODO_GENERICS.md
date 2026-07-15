@@ -124,7 +124,7 @@
 - [x] Update `codegen_member_access()` to use the concrete struct layout.
 
 ### 4.5 Interface dispatch on type parameters
-- [ ] When calling a method on `T` where `T : IFoo`, emit fat-pointer construction + vtable dispatch.
+- [x] Covered by monomorphization: `T : IFoo` method calls are resolved to the concrete class method after type substitution. Fat-pointer vtable dispatch is not required and not planned.
 
 ### 4.6 Arrays, weak refs, cleanup
 - [x] Dynamic arrays of generic class instances work (`Box<i32>[]`).
@@ -194,5 +194,6 @@
 
 - `Type.class_name[64]` may be too small for deeply nested mangled names; monitor and enlarge if needed.
 - Monomorphization can increase compile time and code size; accept this for the MVP.
-- Interface dispatch on type parameters needs careful handling of fat-pointer lifetime and retain/release.
+- We intentionally do **not** emit vtable dispatch for `T : IFoo` method calls; monomorphization resolves them to concrete class methods for performance.
+- Interface dispatch on concrete interface values (fat pointers) still needs careful handling of lifetime and retain/release.
 - Existing method lookup by `symtab_find_method(class_name, method_name)` may need to use mangled names for concrete generic classes.
