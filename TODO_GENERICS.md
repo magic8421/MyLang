@@ -148,7 +148,7 @@
 - [x] `generics_func` - generic class as function argument and return value.
 - [x] `generics_nested_arg` - inner generic type used only as a type argument.
 - [x] `gen_interface.my` - class with interface constraint (`T : IPrintable`) and method call.
-- [ ] `gen_new_constraint.my` - class with `T : new()` and `new T()`.
+- [x] `gen_new_constraint.my` - class with `T : new()` and `new T()`.
 - [ ] `gen_multi_constraint.my` - `T : IFoo, IBar`.
 - [ ] `gen_array.my` - `T[]` and `T[N]` inside generic class.
 - [ ] `gen_weak.my` - `weak Box<i32>`.

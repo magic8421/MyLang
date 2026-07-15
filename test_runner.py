@@ -1716,6 +1716,24 @@ i32 main() {
     return p.print(n);
 }
 """, 42),
+
+    ("gen_new_constraint", """
+class Factory<T : new()> {
+    T make() {
+        T t = new T;
+        return t;
+    }
+}
+class Widget {
+    i32 value;
+}
+i32 main() {
+    Factory<Widget> f = new Factory<Widget>;
+    Widget w = f.make();
+    w.value = 42;
+    return w.value;
+}
+""", 42),
 ]
 
 # ============================================================

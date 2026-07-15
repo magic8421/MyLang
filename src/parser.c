@@ -40,8 +40,11 @@ static int expr_is_direct_assignment(AstNode* node) {
     return node && node->ast_kind == AST_ASSIGN;
 }
 
+static int parser_is_type_param(const char* name);  /* defined below */
+
 static int is_type_name(const char* name) {
-    return symtab_find_class(name) != NULL ||
+    return parser_is_type_param(name) ||
+           symtab_find_class(name) != NULL ||
            symtab_find_struct(name) != NULL ||
            symtab_find_interface(name) != NULL;
 }

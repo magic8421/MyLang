@@ -129,7 +129,6 @@ Source code lives under `src/`:
 
 ## Memory Leak Debugging
 - During compiler development, when need verify no memory leak, run the test suite in debug mode: `python test_runner.py --mode debug`.
-- For mylang end users, enable leak tracking at compile time with `mylang --leak-check source.my out.c`.
 - Tracks only `ObjHeader` based allocations (class instances and dynamic arrays). WeakRef control blocks are not tracked.
 - When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
 - `mylang_release` removes the block from the list before freeing it.
