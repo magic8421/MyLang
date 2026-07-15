@@ -36,6 +36,13 @@ Source code lives under `src/`:
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
 
+## Compound Assignment Operators
+- Supported: `+=`, `-=`, `*=`, `/=`.
+- Only primitive numeric types (`i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`) support compound assignment.
+- Class, interface, weak, struct, and array types are rejected with a compile-time error.
+- `x += y` is generated as `x = x + y`; the left-hand side is evaluated twice, which is safe for primitives but disallowed for non-primitives.
+- Like simple assignment (`=`), compound assignment is an expression and is not allowed in `if`/`while` conditions, variable initializers, or `return` expressions.
+
 ## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.

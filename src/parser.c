@@ -447,7 +447,8 @@ static AstNode* parse_logical_or(Parser* p)     { return parse_binary(p, parse_l
 static AstNode* parse_assignment(Parser* p) {
     AstNode* left = parse_logical_or(p);
     if (!left) return NULL;
-    if (check(p, TOK_ASSIGN)) {
+    if (check(p, TOK_ASSIGN) || check(p, TOK_PLUS_ASSIGN) || check(p, TOK_MINUS_ASSIGN) ||
+        check(p, TOK_STAR_ASSIGN) || check(p, TOK_SLASH_ASSIGN)) {
         Token op = p->current; advance(p);
         AstNode* right = parse_assignment(p);
         AstNode* assign = ast_new_node(AST_ASSIGN, op);

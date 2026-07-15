@@ -40,6 +40,10 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_GT:        return ">";
         case TOK_GE:        return ">=";
         case TOK_ASSIGN:    return "=";
+        case TOK_PLUS_ASSIGN:  return "+=";
+        case TOK_MINUS_ASSIGN: return "-=";
+        case TOK_STAR_ASSIGN:  return "*=";
+        case TOK_SLASH_ASSIGN: return "/=";
         case TOK_NOT:       return "!";
         case TOK_AND:       return "&&";
         case TOK_OR:        return "||";

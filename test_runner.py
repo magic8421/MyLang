@@ -143,6 +143,72 @@ i32 main() {
 }
 """, 55),
 
+    ("compound_add", """
+i32 main() {
+    i32 x = 5;
+    x += 3;
+    return x;
+}
+""", 8),
+
+    ("compound_sub", """
+i32 main() {
+    i32 x = 10;
+    x -= 4;
+    return x;
+}
+""", 6),
+
+    ("compound_mul", """
+i32 main() {
+    i32 x = 7;
+    x *= 3;
+    return x;
+}
+""", 21),
+
+    ("compound_div", """
+i32 main() {
+    i32 x = 20;
+    x /= 4;
+    return x;
+}
+""", 5),
+
+    ("compound_array", """
+i32 main() {
+    i32[] arr;
+    arr.push(10);
+    arr[0] += 5;
+    arr[0] -= 2;
+    arr[0] *= 2;
+    arr[0] /= 3;
+    return arr[0];
+}
+""", 8),
+
+    ("compound_member", """
+class Counter {
+    i32 val;
+}
+i32 main() {
+    Counter c = new Counter;
+    c.val = 10;
+    c.val += 5;
+    c.val -= 2;
+    return c.val;
+}
+""", 13),
+
+    ("compound_float", """
+f32 main() {
+    f32 x = 5;
+    x += 2;
+    x *= 2;
+    return x;
+}
+""", 14),
+
     ("if_else", """
 i32 main() {
     i32 x = 3;
@@ -2010,6 +2076,17 @@ i32 main() {
     return 0;
 }
 """, "arrays are created empty"),
+
+    ("bad_compound_class", """
+class Counter {
+    i32 n;
+}
+i32 main() {
+    Counter c = new Counter;
+    c += c;
+    return 0;
+}
+""", "compound assignment not supported"),
 ]
 
 # ============================================================

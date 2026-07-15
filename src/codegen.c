@@ -842,6 +842,35 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
                 break;
             }
 
+            {
+                TokenKind assign_op = node->ast_token.kind;
+                if (assign_op == TOK_PLUS_ASSIGN || assign_op == TOK_MINUS_ASSIGN ||
+                    assign_op == TOK_STAR_ASSIGN || assign_op == TOK_SLASH_ASSIGN) {
+                    /* Compound assignment: only primitive numeric types are supported. */
+                    int is_primitive_numeric = (lt.type_kind == TYPE_I8 || lt.type_kind == TYPE_I16 ||
+                                                lt.type_kind == TYPE_I32 || lt.type_kind == TYPE_I64 ||
+                                                lt.type_kind == TYPE_U8 || lt.type_kind == TYPE_U16 ||
+                                                lt.type_kind == TYPE_U32 || lt.type_kind == TYPE_U64 ||
+                                                lt.type_kind == TYPE_F32 || lt.type_kind == TYPE_F64);
+                    if (!is_primitive_numeric) {
+                        fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
+                                node->ast_token.line, node->ast_token.col);
+                        ctx->codegen_error = 1;
+                        fprintf(out, "0 /* invalid compound assignment */");
+                        break;
+                    }
+                    const char* op_text = (assign_op == TOK_PLUS_ASSIGN) ? "+" :
+                                          (assign_op == TOK_MINUS_ASSIGN) ? "-" :
+                                          (assign_op == TOK_STAR_ASSIGN) ? "*" : "/";
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, " = ");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, " %s ", op_text);
+                    codegen_expr(ctx, rhs, out);
+                    break;
+                }
+            }
+
             if (lhs->ast_kind == AST_ARRAY_ACCESS) {
                 Type at = lhs->ast_children[0]->ast_resolved_type;
                 if (at.is_array) {
@@ -1997,6 +2026,28 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
         resolve_type(lhs);
         resolve_type(rhs);
         Type lt = lhs->ast_resolved_type;
+
+        {
+            TokenKind assign_op = expr->ast_token.kind;
+            if (assign_op == TOK_PLUS_ASSIGN || assign_op == TOK_MINUS_ASSIGN ||
+                assign_op == TOK_STAR_ASSIGN || assign_op == TOK_SLASH_ASSIGN) {
+                int is_primitive_numeric = (lt.type_kind == TYPE_I8 || lt.type_kind == TYPE_I16 ||
+                                            lt.type_kind == TYPE_I32 || lt.type_kind == TYPE_I64 ||
+                                            lt.type_kind == TYPE_U8 || lt.type_kind == TYPE_U16 ||
+                                            lt.type_kind == TYPE_U32 || lt.type_kind == TYPE_U64 ||
+                                            lt.type_kind == TYPE_F32 || lt.type_kind == TYPE_F64);
+                if (!is_primitive_numeric) {
+                    fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
+                            expr->ast_token.line, expr->ast_token.col);
+                    ctx->codegen_error = 1;
+                    indent_line(out, indent);
+                    fprintf(out, "0 /* invalid compound assignment */;\n");
+                    return;
+                }
+                /* Primitive compound assignments fall through to the normal
+                   codegen_expr path below. */
+            }
+        }
 
         if (lhs->ast_kind == AST_ARRAY_ACCESS) {
             Type at = lhs->ast_children[0]->ast_resolved_type;

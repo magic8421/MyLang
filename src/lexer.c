@@ -224,6 +224,22 @@ Token lexer_next(Lexer* lexer) {
         lexer_advance(lexer); lexer_advance(lexer);
         return make_token(lexer, TOK_OR, "||", 2, 2);
     }
+    if (c == '+' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_PLUS_ASSIGN, "+=", 2, 2);
+    }
+    if (c == '-' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_MINUS_ASSIGN, "-=", 2, 2);
+    }
+    if (c == '*' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_STAR_ASSIGN, "*=", 2, 2);
+    }
+    if (c == '/' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_SLASH_ASSIGN, "/=", 2, 2);
+    }
 
     /* single-character tokens */
     lexer_advance(lexer);
