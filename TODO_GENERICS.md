@@ -75,7 +75,7 @@
 
 ### 3.1 Build generic definition AST
 - [x] Ensure `parse_class_decl()` produces a generic `ClassInfo` + AST for `class Box<T>` but does not immediately codegen it.
-- [ ] Generic definitions do not get a `type_id` until instantiated. (Current implementation assigns a base type ID for the generic definition; it is not used for codegen.)
+- [x] Generic definitions do not get a `type_id` until instantiated.
 
 ### 3.2 Instantiate on first use
 - [x] Implement `symtab_instantiate_class_from_type(Type* t)` / `symtab_add_class_instantiation(...)`:
