@@ -188,9 +188,7 @@ All arrays are dynamic vectors.
 ## Leak Checking
 
 Class/interface allocations continue to use `ObjHeader` leak-check tracking.
-Array buffers are tracked separately.  During language implementation the debug
-CRT catches leaks; end-user `--leak-check` will be extended to arrays in a later
-pass.
+Array buffers are tracked separately.  During language implementation the debug CRT catches leaks;
 
 ## Implementation Phases
 

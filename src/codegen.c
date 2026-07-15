@@ -399,10 +399,14 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
         return;
     }
     if (type_is_ref(param_type)) {
-        AstNode* var = arg;
-        if (arg->ast_kind == AST_REF_ARG) {
-            var = arg->ast_children[0];
+        if (arg->ast_kind != AST_REF_ARG) {
+            fprintf(stderr, "error at %d:%d: missing 'ref' keyword for ref parameter\n",
+                    arg->ast_token.line, arg->ast_token.col);
+            ctx->codegen_error = 1;
+            fprintf(out, "0 /* missing ref keyword */");
+            return;
         }
+        AstNode* var = arg->ast_children[0];
         if (!var || var->ast_kind != AST_IDENT) {
             fprintf(stderr, "error at %d:%d: ref argument must be a local variable\n",
                     arg->ast_token.line, arg->ast_token.col);

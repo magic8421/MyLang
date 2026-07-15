@@ -661,7 +661,7 @@ void add_one(ref i32 x) {
 }
 i32 main() {
     i32 a = 10;
-    add_one(a);
+    add_one(ref a);
     return a;
 }
 """, 11),
@@ -676,7 +676,7 @@ void inc(ref Counter c) {
 i32 main() {
     Counter c = new Counter;
     c.n = 5;
-    inc(c);
+    inc(ref c);
     return c.n;
 }
 """, 6),
@@ -686,11 +686,11 @@ void bump(ref i32 x) {
     x = x + 1;
 }
 void proxy(ref i32 y) {
-    bump(y);
+    bump(ref y);
 }
 i32 main() {
     i32 a = 10;
-    proxy(a);
+    proxy(ref a);
     return a;
 }
 """, 11),
@@ -703,7 +703,7 @@ void divmod(i32 a, i32 b, ref i32 q, ref i32 r) {
 i32 main() {
     i32 q = 0;
     i32 r = 0;
-    divmod(17, 5, q, r);
+    divmod(17, 5, ref q, ref r);
     return q * 10 + r;
 }
 """, 32),
@@ -722,9 +722,9 @@ i32 main() {
     Accumulator a = new Accumulator;
     a.total = 5;
     i32 v = 7;
-    a.add(v);
+    a.add(ref v);
     i32 result = 0;
-    a.get(result);
+    a.get(ref result);
     return result;
 }
 """, 12),
@@ -737,7 +737,7 @@ void fill(ref i32[] arr) {
 }
 i32 main() {
     i32[] a = new i32[3];
-    fill(a);
+    fill(ref a);
     return a[0] + a[1] + a[2];
 }
 """, 6),
@@ -808,7 +808,7 @@ void inc(ref Counter c) {
 i32 main() {
     Counter c;
     c.n = 7;
-    inc(c);
+    inc(ref c);
     return c.n;
 }
 """, 8),
@@ -1094,7 +1094,7 @@ i32 main() {
     Counter c = new Counter;
     IInc inc = c;
     i32 v = 10;
-    inc.inc(v);
+    inc.inc(ref v);
     return v;
 }
 """, 11),
@@ -1895,6 +1895,17 @@ i32 main() {
     return 0;
 }
 """, "no interface constraint providing"),
+
+    ("ref_missing_keyword", """
+void inc(ref i32 x) {
+    x = x + 1;
+}
+i32 main() {
+    i32 a = 0;
+    inc(a);
+    return a;
+}
+""", "missing 'ref' keyword"),
 ]
 
 # ============================================================

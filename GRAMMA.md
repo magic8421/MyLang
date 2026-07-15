@@ -355,17 +355,17 @@ void inc(ref i32 x) {
 }
 ```
 
-At the call site, the argument must be a simple local variable. The `ref` keyword is optional for scalar `ref` parameters, but array `ref` parameters are usually written explicitly:
+At the call site, the argument must be a simple local variable and the `ref` keyword is required:
 ```my
 i32 a = 0;
-inc(a);                 // OK
+inc(ref a);             // OK
 
 void fill(ref i32[] arr) { ... }
 i32[] nums = new i32[10];
 fill(ref nums);         // OK
 ```
 
-Field access or array-element arguments are rejected.
+Omitting `ref` (e.g. `inc(a)`) is a compile error. Field access or array-element arguments are rejected.
 
 ---
 

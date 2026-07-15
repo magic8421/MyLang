@@ -64,8 +64,7 @@ Source code lives under `src/`:
 ## Reference Parameters
 - Only the `ref` keyword is supported.
 - `ref T p` means the parameter aliases a caller variable.
-- At the call site the argument must be a local variable.
-- For scalar `ref` parameters the `ref` keyword at the call site is optional (e.g. `inc(a)`); for array `ref` parameters it is usually written explicitly (e.g. `fill(ref arr)`).
+- At the call site the argument must be a local variable and the `ref` keyword is **required** (e.g. `inc(ref a)`, `fill(ref arr)`).
 - Codegen emits `&var` for normal locals and bare `var` when the argument itself is already a `ref` parameter.
 
 ## Struct Value Types (Phase 1)
