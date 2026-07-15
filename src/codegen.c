@@ -2099,6 +2099,36 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
     }
 }
 
+static int is_compound_assign_op(TokenKind k) {
+    return k == TOK_PLUS_ASSIGN || k == TOK_MINUS_ASSIGN ||
+           k == TOK_STAR_ASSIGN || k == TOK_SLASH_ASSIGN;
+}
+
+/* For compound assignments and increment/decrement on non-trivial lvalues
+   (array elements, member accesses, etc.), evaluate the address once into a
+   temporary pointer so the left-hand side is not computed twice. */
+static void emit_compound_lvalue_temp(CodegenContext* ctx, AstNode* expr, FILE* out, int indent) {
+    AstNode* target = NULL;
+    if (expr->ast_kind == AST_ASSIGN && is_compound_assign_op(expr->ast_token.kind)) {
+        target = expr->ast_children[0];
+    } else if (expr->ast_kind == AST_INC_DEC) {
+        target = expr->ast_children[0];
+    }
+    if (!target || target->ast_kind == AST_IDENT) return;
+
+    Type t = resolve_type(target);
+    char typename_buf[128];
+    c_type_str(&t, typename_buf, sizeof(typename_buf));
+    int id = ctx->assign_tmp_id++;
+
+    indent_line(out, indent);
+    fprintf(out, "%s* _mylang_ca%d = &", typename_buf, id);
+    codegen_expr(ctx, target, out);
+    fprintf(out, ";\n");
+
+    snprintf(target->ast_temp_name, sizeof(target->ast_temp_name), "(*_mylang_ca%d)", id);
+}
+
 static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     AstNode* expr = node->ast_children[0];
@@ -2147,6 +2177,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
             Type at = lhs->ast_children[0]->ast_resolved_type;
             if (at.is_array) {
                 emit_stmt_call_retains(ctx, expr, out, indent);
+                emit_compound_lvalue_temp(ctx, expr, out, indent);
                 indent_line(out, indent);
                 codegen_expr(ctx, expr, out);
                 fprintf(out, ";\n");
@@ -2314,6 +2345,10 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
     }
 
     emit_stmt_call_retains(ctx, expr, out, indent);
+
+    if (expr->ast_kind == AST_ASSIGN || expr->ast_kind == AST_INC_DEC) {
+        emit_compound_lvalue_temp(ctx, expr, out, indent);
+    }
 
     indent_line(out, indent);
     if (expr->ast_kind == AST_CALL && expr->ast_resolved_type.type_kind == TYPE_CLASS) {

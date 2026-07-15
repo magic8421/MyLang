@@ -209,6 +209,21 @@ f32 main() {
 }
 """, 14),
 
+    ("compound_struct_array", """
+struct Pos {
+    f32 x;
+    f32 y;
+}
+i32 main() {
+    Pos[] arr;
+    arr.resize(1);
+    arr[0].x = 1;
+    arr[0].x += 10;
+    i32 r = arr[0].x;
+    return r;
+}
+""", 11),
+
     ("inc_basic", """
 i32 main() {
     i32 x = 5;
