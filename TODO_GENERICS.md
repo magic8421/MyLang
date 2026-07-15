@@ -110,7 +110,7 @@
 - [x] Modify `src/codegen.c` `codegen_method_decl()`:
   - Use mangled class name for method prefix: `Box_i32_get(Box_i32* thiz, ...)`.
   - Substitute type parameters inside method bodies via cloned AST.
-  - [ ] Handle `new T()` inside methods when `T : new()` is present.
+  - [x] Handle `new T()` inside methods when `T : new()` is present.
 
 ### 4.3 Generate constructors
 - [x] Ensure `new Box<i32>()` emits:
