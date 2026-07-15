@@ -84,15 +84,16 @@ def compile_mylang():
     return True
 
 def compile_c(src, exe):
-    """Compile generated C code with MSVC + ASan (release) or debug CRT (debug)."""
+    """Compile generated C code + runtime.c with MSVC + ASan (release) or debug CRT (debug)."""
     exedir = os.path.dirname(exe)
     os.makedirs(exedir, exist_ok=True)
     if TEST_MODE == "debug":
         flags = "/MDd /Zi"
     else:
         flags = "/fsanitize=address /Zi"
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Fe:{exe} {src}'
-    r = shell(cmd, cwd=exedir)
+    runtime_c = os.path.join(SCRIPT_DIR, "src", "runtime.c")
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /Fe:{exe} {src} {runtime_c}'
+    r = shell(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
         print(r.stdout[-500:] if len(r.stdout) > 500 else r.stdout)
@@ -221,15 +222,6 @@ i32 main() {
     i32[] arr = new i32[3];
     arr[0] = 1;
     arr[5] = 0;
-    return 0;
-}
-""", "crash"),
-
-    ("bounds_fixed_oob", """
-i32 main() {
-    i32[3] arr;
-    arr[0] = 1;
-    arr[10] = 0;
     return 0;
 }
 """, "crash"),
@@ -447,7 +439,7 @@ i32 main() {
 class Box {
     i32 v;
 }
-i32 sum(Box[] arr) {
+i32 sum(ref Box[] arr) {
     return arr[0].v + arr[1].v;
 }
 i32 main() {
@@ -456,7 +448,7 @@ i32 main() {
     a[0].v = 3;
     a[1] = new Box;
     a[1].v = 4;
-    return sum(a);
+    return sum(ref a);
 }
 """, 7),
 
@@ -464,16 +456,17 @@ i32 main() {
 class Box {
     i32 v;
 }
-Box[] make() {
+void make(ref Box[] out) {
     Box[] a = new Box[2];
     a[0] = new Box;
     a[0].v = 5;
     a[1] = new Box;
     a[1].v = 7;
-    return a;
+    a.move_to(ref out);
 }
 i32 main() {
-    Box[] x = make();
+    Box[] x;
+    make(ref x);
     return x[0].v + x[1].v;
 }
 """, 12),
@@ -538,6 +531,72 @@ i32 main() {
 }
 """, 5),
 
+    ("array_vector_methods", """
+i32 main() {
+    i32[] a = new i32[2];
+    a[0] = 1;
+    a[1] = 2;
+    a.push(3);
+    a.push(4);
+    a.pop();
+    a.reserve(10);
+    a.resize(5);
+    a.clear();
+    a.push(5);
+    return a[0] + a.length;
+}
+""", 6),
+
+    ("class_array_vector_methods", """
+class Box {
+    i32 v;
+}
+i32 main() {
+    Box[] a = new Box[1];
+    a[0] = new Box;
+    a[0].v = 2;
+    Box b = new Box;
+    b.v = 3;
+    a.push(b);
+    a.pop();
+    return a[0].v;
+}
+""", 2),
+
+    ("array_move_copy", """
+i32 main() {
+    i32[] a = new i32[2];
+    a[0] = 10;
+    a[1] = 20;
+    i32[] b;
+    a.copy_to(ref b);
+    i32[] c;
+    a.move_to(ref c);
+    return b[0] + b[1] + c.length;
+}
+""", 32),
+
+    ("weak_iface_dyn_array", """
+interface IBox {
+    i32 get();
+}
+class Box : IBox {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    weak IBox[] w = new weak IBox[2];
+    Box a = new Box;
+    a.v = 7;
+    Box b = new Box;
+    b.v = 9;
+    w[0] = a;
+    w[1] = b;
+    IBox s = w[0].lock();
+    return s.get();
+}
+""", 7),
+
     ("fixed_width_basic", """
 i32 main() {
     u8  a = 200;
@@ -565,7 +624,7 @@ i32 main() {
 """, 30),
 
     ("fixed_width_func_arg", """
-i32 sum(i16[] arr) {
+i32 sum(ref i16[] arr) {
     i32 s = 0;
     i32 i = 0;
     while (i < 3) {
@@ -579,7 +638,7 @@ i32 main() {
     a[0] = 10;
     a[1] = 20;
     a[2] = 30;
-    return sum(a);
+    return sum(ref a);
 }
 """, 60),
 
@@ -721,19 +780,6 @@ i32 main() {
     return arr[0].v + arr[1].v + arr[2].v;
 }
 """, 6),
-
-    ("struct_array_fixed", """
-struct Vec {
-    i32 v;
-}
-i32 main() {
-    Vec[3] arr;
-    arr[0].v = 5;
-    arr[1].v = 10;
-    arr[2].v = 15;
-    return arr[2].v;
-}
-""", 15),
 
     ("struct_func_arg_return", """
 struct Pair {
@@ -1378,24 +1424,6 @@ i32 main() {
 }
 """, 0),
 
-    ("weak_iface_fixed_array", """
-interface IShape {
-    i32 area();
-}
-class Square : IShape {
-    i32 side;
-    i32 area() { return this.side * this.side; }
-}
-i32 main() {
-    weak IShape[2] arr;
-    Square sq = new Square;
-    sq.side = 2;
-    arr[0] = sq;
-    IShape s = arr[0].lock();
-    return s.area() + 1;
-}
-""", 5),
-
     ("weak_iface_assign", """
 interface IShape {
     i32 area();
@@ -1556,23 +1584,6 @@ i32 main() {
     return arr[0].area() + arr[1].area();
 }
 """, 21),
-
-    ("iface_fixed_array_basic", """
-interface IShape {
-    i32 area();
-}
-class Square : IShape {
-    i32 side;
-    i32 area() { return this.side * this.side; }
-}
-i32 main() {
-    IShape[2] arr;
-    Square sq = new Square;
-    sq.side = 4;
-    arr[0] = sq;
-    return arr[0].area();
-}
-""", 16),
 
     ("iface_array_replace", """
 interface IShape {

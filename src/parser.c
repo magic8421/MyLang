@@ -208,11 +208,10 @@ static Type parse_type(Parser* p) {
         if (check(p, TOK_RBRACKET)) {
             advance(p);
             t.is_pointer = 1;
-        } else if (check(p, TOK_INT_LIT)) {
-            t.array_size = p->current.int_val;
-            advance(p);
-            expect(p, TOK_RBRACKET);
         } else {
+            fprintf(stderr, "error at %d:%d: fixed-size arrays are not supported; use 'T[]' dynamic arrays\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
             expect(p, TOK_RBRACKET);
         }
         t.mangled_name[0] = '\0';
@@ -255,12 +254,29 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_KW_NEW)) {
         Token new_tok = p->current; advance(p);
 
+        int is_weak = 0;
+        if (check(p, TOK_KW_WEAK)) {
+            is_weak = 1;
+            advance(p);
+        }
+
         Type base = parse_base_type(p);
         if (base.type_kind == TYPE_VOID) {
             fprintf(stderr, "error at %d:%d: expected type after 'new'\n",
                     new_tok.line, new_tok.col);
             p->had_error = 1;
             return NULL;
+        }
+
+        if (is_weak) {
+            if (base.type_kind != TYPE_CLASS && base.type_kind != TYPE_INTERFACE) {
+                fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
+                        new_tok.line, new_tok.col);
+                p->had_error = 1;
+            } else {
+                base.is_weak = 1;
+                base.mangled_name[0] = '\0';
+            }
         }
 
         AstNode* node = ast_new_node(AST_NEW, new_tok);
@@ -322,10 +338,23 @@ static AstNode* parse_postfix(Parser* p) {
             ast_add_child(call, node);
             if (!check(p, TOK_RPAREN)) {
                 AstNode* args = NULL;
-                args = ast_append_list(args, parse_expr_no_assign(p, "call argument"));
-                while (check(p, TOK_COMMA)) {
-                    advance(p);
-                    args = ast_append_list(args, parse_expr_no_assign(p, "call argument"));
+                for (;;) {
+                    AstNode* arg;
+                    if (check(p, TOK_KW_REF)) {
+                        Token rt = p->current;
+                        advance(p);
+                        AstNode* inner = parse_expr_no_assign(p, "call argument");
+                        arg = ast_new_node(AST_REF_ARG, rt);
+                        ast_add_child(arg, inner);
+                    } else {
+                        arg = parse_expr_no_assign(p, "call argument");
+                    }
+                    args = ast_append_list(args, arg);
+                    if (check(p, TOK_COMMA)) {
+                        advance(p);
+                        continue;
+                    }
+                    break;
                 }
                 call->ast_children[1] = args;
                 call->ast_child_count = 2;
@@ -582,6 +611,11 @@ static AstNode* parse_stmt(Parser* p) {
             expect(p, TOK_SEMI);
             return es;
         }
+        /* Error recovery: skip the offending token so parsing can make progress. */
+        if (!check(p, TOK_EOF) && !check(p, TOK_RBRACE) && !check(p, TOK_SEMI)) {
+            advance(p);
+        }
+        expect(p, TOK_SEMI);
     }
 
     return NULL;
@@ -805,6 +839,22 @@ static AstNode* parse_class_decl(Parser* p) {
             }
             expect(p, TOK_RPAREN);
 
+            if (ft.is_array) {
+                fprintf(stderr, "error at %d:%d: method '%s' cannot return array by value\n",
+                        fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+            {
+                int pi;
+                for (pi = 0; pi < mc; pi++) {
+                    if (mpt[pi].is_array && !mpt[pi].is_ref) {
+                        fprintf(stderr, "error at %d:%d: array parameter '%s' of method '%s' must be ref\n",
+                                fname.line, fname.col, mpn[pi], fname.text);
+                        p->had_error = 1;
+                    }
+                }
+            }
+
             AstNode* mbody = parse_stmt(p);
 
             symtab_exit_scope();
@@ -920,6 +970,23 @@ static AstNode* parse_interface_decl(Parser* p) {
             } while (check(p, TOK_COMMA) && (advance(p), 1));
         }
         expect(p, TOK_RPAREN);
+
+        if (ret_type.is_array) {
+            fprintf(stderr, "error at %d:%d: interface method '%s' cannot return array by value\n",
+                    mname.line, mname.col, mname.text);
+            p->had_error = 1;
+        }
+        {
+            int pi;
+            for (pi = 0; pi < mc; pi++) {
+                if (mpt[pi].is_array && !mpt[pi].is_ref) {
+                    fprintf(stderr, "error at %d:%d: array parameter '%s' of interface method '%s' must be ref\n",
+                            mname.line, mname.col, mpn[pi], mname.text);
+                    p->had_error = 1;
+                }
+            }
+        }
+
         expect(p, TOK_SEMI);
 
         symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt);
@@ -972,6 +1039,22 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
         } while (check(p, TOK_COMMA) && (advance(p), 1));
     }
     expect(p, TOK_RPAREN);
+
+    if (ret_type.is_array) {
+        fprintf(stderr, "error at %d:%d: function '%s' cannot return array by value\n",
+                name.line, name.col, name.text);
+        p->had_error = 1;
+    }
+    {
+        int pi;
+        for (pi = 0; pi < pc; pi++) {
+            if (pt[pi].is_array && !pt[pi].is_ref) {
+                fprintf(stderr, "error at %d:%d: array parameter '%s' of function '%s' must be ref\n",
+                        name.line, name.col, pn[pi], name.text);
+                p->had_error = 1;
+            }
+        }
+    }
 
     AstNode* body = parse_stmt(p);
     symtab_exit_scope();

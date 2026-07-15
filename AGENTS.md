@@ -31,6 +31,8 @@ Source code lives under `src/`:
 - Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
+- `T[]` is a value-type vector (`MyArray`), not reference-counted and not copyable by assignment. Transfer is explicit via `move_to(ref)` and `copy_to(ref)`.
+- `T[] a;` declares a zero-initialized empty vector; `a.push(x)` will auto-grow from capacity 0.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
 
@@ -56,28 +58,28 @@ Source code lives under `src/`:
 - Conversion helpers are emitted per interface: `mylang_lock_IFoo`, `mylang_weakify_IFoo`, `mylang_weakify_IFoo_owned`, `mylang_weakify_IFoo_from_ptr`, `mylang_weakify_IFoo_from_ptr_owned`.
 - Initialization supports class instance, strong interface, and weak-to-weak copy.
 - `lock()` returns `{ NULL, NULL }` if the object is dead; callers can check `result.data`.
-- Fixed-size arrays of weak interfaces (`weak IFoo[N] arr;`) are supported; cleanup releases each element's `.wr`.
-- `weak IFoo[]` dynamic arrays are not supported.
+- Dynamic arrays of weak interfaces (`weak IFoo[] arr = new weak IFoo[N];`) are supported; cleanup releases each element's `.wr`.
 - Weak interface parameters pass by value and are released via cleanup on function exit.
 
 ## Reference Parameters
 - Only the `ref` keyword is supported.
 - `ref T p` means the parameter aliases a caller variable.
 - At the call site the argument must be a local variable.
+- For scalar `ref` parameters the `ref` keyword at the call site is optional (e.g. `inc(a)`); for array `ref` parameters it is usually written explicitly (e.g. `fill(ref arr)`).
 - Codegen emits `&var` for normal locals and bare `var` when the argument itself is already a `ref` parameter.
 
 ## Struct Value Types (Phase 1)
 - Structs are stack-allocated value types; assignment copies the whole struct.
 - `new StructName` is illegal.
 - `new StructName[N]` creates a dynamic array of structs.
-- `StructName[N]` creates a fixed-size array.
 - Struct fields are restricted to primitive types only.
-- The runtime uses `TYPE_IS_STRUCT` to avoid treating struct arrays as class pointer arrays during release.
+- The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements correctly.
 
 ## Memory Model
 - Heap objects use atomic reference counting via `ObjHeader`.
-- `ObjHeader` holds `refcount`, `type_id`, `length`, and `WeakRef* weak`.
-- Dynamic arrays and class instances are released through `mylang_release`.
+- `ObjHeader` holds `refcount`, `type_id`, and `WeakRef* weak`.
+- Class instances are released through `mylang_release`.
+- Arrays (`T[]`) are standalone value-type vectors with their own data buffer allocated via `malloc`/`realloc`/`free`; they are not reference-counted and are freed with `mylang_array_free`.
 - `mylang_obj_hdr(ptr)` macro subtracts `sizeof(ObjHeader)` to get the header from a user-data pointer.
 
 ## Refcounting Rules
@@ -101,16 +103,22 @@ Source code lives under `src/`:
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
 
+## Array / Vector Value Types
+- `T[]` compiles to the C value type `MyArray { size_t capacity; size_t length; void* data; }`.
+- The vector is not reference-counted; its data buffer is allocated with `malloc`/`realloc` and freed with `free` via `mylang_array_free`.
+- Arrays cannot be returned by value, passed by value, or assigned with `=`. Use `ref T[]` parameters for mutation and `move_to(ref dst)` / `copy_to(ref dst)` for transfer or duplication.
+- Builtin vector methods: `.push(v)`, `.pop()`, `.reserve(n)`, `.resize(n)`, `.clear()`, `.compact()`, `.move_to(ref dst)`, `.copy_to(ref dst)`.
+- Element access uses `arr[i]` and is bounds-checked at runtime via `mylang_array_at()`.
+
 ## Cleanup System
-- `CleanupEntry` array tracks class/weak variables requiring release at scope exit.
+- `CleanupEntry` array tracks class/weak/array variables requiring release at scope exit.
 - Scope-based push/pop (`cleanup_push_scope`, `cleanup_pop_scope`) emits releases in reverse declaration order.
 - `cleanup_emit` in return statements releases all variables on the return code path.
 - `cleanup_reset` was removed: it zeroed `cleanup_scope_depth`, corrupting state for fallthrough code paths and causing memory leaks.
 - Subsequent `cleanup_pop_scope` calls after returns generate dead code (harmless — after `return` in C, function exits immediately).
 
 ## Bounds Checking
-- Dynamic arrays use runtime bounds checks via `mylang_check_bounds()` in getter/setter helpers.
-- Fixed-size arrays use compile-time constant bounds with `MY_CHECK` at the point of access.
+- Arrays use runtime bounds checks via `mylang_array_at()`.
 - Out-of-bounds triggers `my_panic` which calls `abort()`.
 
 ## Method Dispatch
@@ -121,15 +129,17 @@ Source code lives under `src/`:
 
 ## Runtime Functions
 - `mylang_new_object(sz, type_id)` — allocates ObjHeader + data, refcount=1.
-- `mylang_new_array(count, elem_size, type_id)` — allocates ObjHeader + array data.
-- `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount.
-- `array_get_*` / `array_set_*` / `array_get_class` / `array_replace_class` — bounds-checked dynamic array access.
-- `array_get_struct_ptr` — returns pointer to struct element in dynamic array.
+- `mylang_array_new(count, elem_size)` — allocates a standalone `MyArray` value with a zeroed data buffer.
+- `mylang_array_free(a, elem_size, elem_kind)` — releases elements according to kind and frees the data buffer.
+- `mylang_array_at(a, idx, elem_size, file, line)` — bounds-checked pointer to element.
+- `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.
+- `mylang_array_push(a, elem_size, elem_kind, value)` / `mylang_array_pop(a, elem_size, elem_kind)` / `mylang_array_clear(a, elem_size, elem_kind)` / `mylang_array_compact(a, elem_size)` — vector methods.
+- `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging
 - During compiler development, when need verify no memory leak, run the test suite in debug mode: `python test_runner.py --mode debug`.
-- Tracks only `ObjHeader` based allocations (class instances and dynamic arrays). WeakRef control blocks are not tracked.
+- Tracks only `ObjHeader` based allocations (class instances and interface objects). Arrays and WeakRef control blocks are not tracked by the MyLang leak list.
 - When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
 - `mylang_release` removes the block from the list before freeing it.
 - On the first allocation, `atexit(mylang_leak_check)` is registered; at exit, unreleased blocks are printed with address, type_id, refcount, length, and allocation stack trace.
@@ -149,6 +159,7 @@ Source code lives under `src/`:
 ## Known Limitations
 - `ref` arguments must be local variables; field/array-element arguments are rejected.
 - `out`/`in` keywords were removed for simplicity.
+- Arrays cannot be returned by value, passed by value, or assigned directly; use `ref T[]` parameters and `move_to(ref)` / `copy_to(ref)`.
 - Weak references cannot be used as class fields (local variables and parameters only).
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
