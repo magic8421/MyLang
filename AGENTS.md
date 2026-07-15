@@ -158,7 +158,7 @@ Source code lives under `src/`:
 ## Runtime Functions
 - `mylang_new_object(sz, type_id)` — allocates ObjHeader + data, refcount=1.
 - `mylang_array_free(a, elem_size, elem_kind)` — releases elements according to kind and frees the data buffer.
-- `mylang_array_at(a, idx, elem_size, file, line)` — bounds-checked pointer to element.
+- `mylang_array_at(a, idx, elem_size)` — bounds-checked pointer to element. The current source line is tracked via `MY_LOC(line)` and reported by `my_panic` on out-of-bounds access.
 - `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.
 - `mylang_array_push(a, elem_size, elem_kind, value)` / `mylang_array_pop(a, elem_size, elem_kind)` / `mylang_array_clear(a, elem_size, elem_kind)` / `mylang_array_compact(a, elem_size)` — vector methods.
 - `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.

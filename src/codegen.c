@@ -43,6 +43,7 @@ struct CodegenContext {
     int          subexpr_tmp_id;
     int          cleanup_scope_stack[MAX_SCOPE];
     int          cleanup_scope_depth;
+    int          last_loc_line;
 };
 
 static int s_last_codegen_error = 0;
@@ -727,7 +728,7 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node, FILE* out) 
     emit_array_ptr_expr(ctx, arr, out);
     fprintf(out, ", ");
     codegen_expr(ctx, idx, out);
-    fprintf(out, ", %s, \"%s\", %d))", elem_size, ctx->source_file_escaped, node->ast_token.line);
+    fprintf(out, ", %s))", elem_size);
 }
 
 static void codegen_member_access(CodegenContext* ctx, AstNode* node, FILE* out) {
@@ -1660,6 +1661,18 @@ static void indent_line(FILE* out, int indent) {
     for (i = 0; i < indent; i++) fprintf(out, "    ");
 }
 
+/* Update the thread-local line marker when the source line changes. The file
+   is already set by MY_PUSH at function entry, so only the line needs to be
+   tracked. */
+static void emit_line_loc(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    if (!node) return;
+    int line = node->ast_token.line;
+    if (line <= 0 || line == ctx->last_loc_line) return;
+    ctx->last_loc_line = line;
+    indent_line(out, indent);
+    fprintf(out, "MY_LOC(%d);\n", line);
+}
+
 static void codegen_body(CodegenContext* ctx, AstNode* body, FILE* out, int indent) {
     indent_line(out, indent);
     fprintf(out, "{\n");
@@ -1680,6 +1693,9 @@ static void codegen_body(CodegenContext* ctx, AstNode* body, FILE* out, int inde
 
 static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
     Type type = node->ast_resolved_type;
+
+    /* Update the panic location before evaluating the initializer. */
+    emit_line_loc(ctx, node, out, indent);
 
     if (node->ast_child_count > 0) {
         emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
@@ -1907,6 +1923,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, FILE* out, int 
 }
 
 static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    emit_line_loc(ctx, node->ast_children[0], out, indent);
     emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     indent_line(out, indent);
@@ -1923,6 +1940,7 @@ static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int i
 }
 
 static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    emit_line_loc(ctx, node->ast_children[0], out, indent);
     emit_subexpr_temps(ctx, node->ast_children[0], out, indent);
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     indent_line(out, indent);
@@ -1957,6 +1975,7 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int 
     }
 
     if (cond) {
+        emit_line_loc(ctx, cond, out, indent + 1);
         emit_subexpr_temps(ctx, cond, out, indent + 1);
         emit_bounds_checks(ctx, cond, out, indent + 1);
     }
@@ -2004,6 +2023,7 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int 
 static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
     if (node->ast_child_count > 0) {
         AstNode* ret = node->ast_children[0];
+        emit_line_loc(ctx, ret, out, indent);
         emit_subexpr_temps(ctx, ret, out, indent);
         emit_bounds_checks(ctx, ret, out, indent);
         resolve_type(ret);
@@ -2133,6 +2153,9 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int
     emit_bounds_checks(ctx, node->ast_children[0], out, indent);
     AstNode* expr = node->ast_children[0];
     resolve_type(expr);
+
+    /* Update the panic location before any runtime call in this statement. */
+    emit_line_loc(ctx, expr, out, indent);
 
     /* Extract owned class/interface subexpressions (e.g. inside 'as' casts or
        comparisons) into temporaries so they are evaluated once and released. */
@@ -2795,6 +2818,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
 void codegen_program(AstNode* program, FILE* out, const char* source_file, int leak_check) {
     CodegenContext ctx;
     memset(&ctx, 0, sizeof(ctx));
+    ctx.last_loc_line = -1;
     s_last_codegen_error = 0;
     ctx.source_file = source_file ? source_file : "";
     escape_source_file(&ctx, ctx.source_file);

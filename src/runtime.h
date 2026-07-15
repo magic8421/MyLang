@@ -83,7 +83,7 @@ extern MY_TL int         __my_line;
 extern MY_TL MyFrame     __my_stack[MY_STACK_MAX];
 extern MY_TL int         __my_depth;
 
-#define MY_LOC(f, l) do { __my_file = (f); __my_line = (l); } while(0)
+#define MY_LOC(l) do { __my_line = (l); } while(0)
 #define MY_PUSH(fn, f, l) do { \
     if (__my_depth < MY_STACK_MAX) { \
         MyFrame* _fr = &__my_stack[__my_depth++]; \
@@ -111,7 +111,7 @@ void  mylang_array_reserve(MyArray* a, size_t new_capacity, size_t elem_size);
 void  mylang_array_resize(MyArray* a, size_t new_length, size_t elem_size, int elem_kind);
 void  mylang_array_move(MyArray* src, MyArray* dst, size_t elem_size, int elem_kind);
 void  mylang_array_copy(const MyArray* src, MyArray* dst, size_t elem_size, int elem_kind);
-void* mylang_array_at(MyArray* a, size_t idx, size_t elem_size, const char* file, int line);
+void* mylang_array_at(MyArray* a, size_t idx, size_t elem_size);
 void  mylang_array_push(MyArray* a, size_t elem_size, int elem_kind, const void* value);
 void  mylang_array_pop(MyArray* a, size_t elem_size, int elem_kind);
 void  mylang_array_clear(MyArray* a, size_t elem_size, int elem_kind);

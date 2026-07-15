@@ -186,8 +186,7 @@ void mylang_array_copy(const MyArray* src, MyArray* dst, size_t elem_size, int e
     }
 }
 
-void* mylang_array_at(MyArray* a, size_t idx, size_t elem_size, const char* file, int line) {
-    MY_LOC(file, line);
+void* mylang_array_at(MyArray* a, size_t idx, size_t elem_size) {
     MY_CHECK(idx < a->length, "index out of bounds");
     return (char*)a->data + idx * elem_size;
 }
