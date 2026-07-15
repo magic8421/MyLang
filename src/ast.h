@@ -66,6 +66,7 @@ typedef enum {
     AST_VAR_DECL,
     AST_IF_STMT,
     AST_WHILE_STMT,
+    AST_FOR_STMT,
     AST_RETURN_STMT,
     AST_EXPR_STMT,
     AST_ASSIGN,

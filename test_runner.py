@@ -263,6 +263,58 @@ i32 main() {
 }
 """, 5),
 
+    ("for_sum", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 1; i <= 10; i = i + 1) {
+        s = s + i;
+    }
+    return s;
+}
+""", 55),
+
+    ("for_no_init", """
+i32 main() {
+    i32 s = 0;
+    i32 i = 0;
+    for (; i < 5; i = i + 1) {
+        s = s + i;
+    }
+    return s;
+}
+""", 10),
+
+    ("for_no_step", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 0; i < 5;) {
+        s = s + i;
+        i = i + 1;
+    }
+    return s;
+}
+""", 10),
+
+    ("for_no_cond", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 0;; i = i + 1) {
+        if (i >= 5) return s;
+        s = s + i;
+    }
+}
+""", 10),
+
+    ("for_float", """
+i32 main() {
+    i32 x = 0;
+    for (i32 i = 0; i < 4; i++) {
+        x += 2;
+    }
+    return x;
+}
+""", 8),
+
     ("if_else", """
 i32 main() {
     i32 x = 3;
@@ -2166,6 +2218,15 @@ i32 main() {
     i32 x = 0;
     if (x++) {
         return 1;
+    }
+    return 0;
+}
+""", "increment/decrement not allowed"),
+
+    ("bad_for_condition", """
+i32 main() {
+    for (i32 i = 0; i++; i < 5) {
+        return 0;
     }
     return 0;
 }

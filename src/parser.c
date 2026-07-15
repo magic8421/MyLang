@@ -581,9 +581,57 @@ static AstNode* parse_var_decl(Parser* p) {
     return node;
 }
 
+static AstNode* parse_for_stmt(Parser* p) {
+    Token kw = p->current;
+    advance(p);
+    expect(p, TOK_LPAREN);
+
+    AstNode* init = NULL;
+    if (!check(p, TOK_SEMI)) {
+        if (stmt_looks_like_var_decl(p)) {
+            init = parse_var_decl(p);
+        } else {
+            init = parse_expr(p);
+            expect(p, TOK_SEMI);
+        }
+    } else {
+        advance(p);
+    }
+
+    AstNode* cond = NULL;
+    if (!check(p, TOK_SEMI)) {
+        cond = parse_expr(p);
+        if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
+            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in for condition\n",
+                    cond->ast_token.line, cond->ast_token.col);
+            p->had_error = 1;
+        }
+    }
+    expect(p, TOK_SEMI);
+
+    AstNode* step = NULL;
+    if (!check(p, TOK_RPAREN)) {
+        step = parse_expr(p);
+    }
+    expect(p, TOK_RPAREN);
+
+    AstNode* body = parse_stmt(p);
+
+    AstNode* node = ast_new_node(AST_FOR_STMT, kw);
+    ast_add_child(node, init);
+    ast_add_child(node, cond);
+    ast_add_child(node, step);
+    ast_add_child(node, body);
+    return node;
+}
+
 static AstNode* parse_stmt(Parser* p) {
     if (check(p, TOK_LBRACE)) {
         return parse_block(p);
+    }
+
+    if (check(p, TOK_KW_FOR)) {
+        return parse_for_stmt(p);
     }
 
     if (check(p, TOK_KW_IF)) {

@@ -1653,6 +1653,7 @@ static void cleanup_pop_scope(CodegenContext* ctx, FILE* out, int indent) {
 }
 
 static void codegen_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent);
+static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent);
 
 static void indent_line(FILE* out, int indent) {
     int i;
@@ -1929,6 +1930,75 @@ static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, FILE* out, in
     codegen_expr(ctx, node->ast_children[0], out);
     fprintf(out, ")\n");
     codegen_body(ctx, node->ast_children[1], out, indent);
+}
+
+static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
+    AstNode* init = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    AstNode* cond = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    AstNode* step = (node->ast_child_count > 2) ? node->ast_children[2] : NULL;
+    AstNode* body = (node->ast_child_count > 3) ? node->ast_children[3] : NULL;
+
+    indent_line(out, indent);
+    fprintf(out, "{\n");
+    cleanup_push_scope(ctx);
+
+    if (init) {
+        if (init->ast_kind == AST_VAR_DECL) {
+            codegen_var_decl(ctx, init, out, indent + 1);
+        } else {
+            AstNode es;
+            memset(&es, 0, sizeof(es));
+            es.ast_kind = AST_EXPR_STMT;
+            es.ast_token = init->ast_token;
+            es.ast_children[0] = init;
+            es.ast_child_count = 1;
+            codegen_expr_stmt(ctx, &es, out, indent + 1);
+        }
+    }
+
+    if (cond) {
+        emit_subexpr_temps(ctx, cond, out, indent + 1);
+        emit_bounds_checks(ctx, cond, out, indent + 1);
+    }
+    indent_line(out, indent + 1);
+    if (cond) {
+        fprintf(out, "while (");
+        codegen_expr(ctx, cond, out);
+        fprintf(out, ")\n");
+    } else {
+        fprintf(out, "while (1)\n");
+    }
+
+    /* The body gets its own cleanup scope so variables declared inside it are
+       released at the end of each iteration. The step runs after the body. */
+    indent_line(out, indent + 1);
+    fprintf(out, "{\n");
+    cleanup_push_scope(ctx);
+    if (body && body->ast_kind == AST_BLOCK) {
+        AstNode* s = body->ast_children[0];
+        while (s) {
+            codegen_stmt(ctx, s, out, indent + 2);
+            s = s->next;
+        }
+    } else if (body) {
+        codegen_stmt(ctx, body, out, indent + 2);
+    }
+    if (step) {
+        AstNode es;
+        memset(&es, 0, sizeof(es));
+        es.ast_kind = AST_EXPR_STMT;
+        es.ast_token = step->ast_token;
+        es.ast_children[0] = step;
+        es.ast_child_count = 1;
+        codegen_expr_stmt(ctx, &es, out, indent + 2);
+    }
+    cleanup_pop_scope(ctx, out, indent + 2);
+    indent_line(out, indent + 1);
+    fprintf(out, "}\n");
+
+    cleanup_pop_scope(ctx, out, indent + 1);
+    indent_line(out, indent);
+    fprintf(out, "}\n");
 }
 
 static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int indent) {
@@ -2280,6 +2350,9 @@ static void codegen_stmt(CodegenContext* ctx, AstNode* node, FILE* out, int inde
             break;
         case AST_WHILE_STMT:
             codegen_while_stmt(ctx, node, out, indent);
+            break;
+        case AST_FOR_STMT:
+            codegen_for_stmt(ctx, node, out, indent);
             break;
         case AST_RETURN_STMT:
             codegen_return_stmt(ctx, node, out, indent);

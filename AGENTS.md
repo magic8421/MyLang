@@ -50,6 +50,16 @@ Source code lives under `src/`:
 - `++`/`--` are parsed as expressions but are only legal as top-level expression statements; they are rejected in `if`/`while` conditions, variable initializers, `return` expressions, call arguments, and nested expressions (e.g. `y = x++`).
 - In the allowed statement context, prefix and postfix forms have identical effect.
 
+## For Loops
+- C-style syntax: `for (init; condition; step) body`.
+- `init` may be a variable declaration (`i32 i = 0`), an expression, or omitted.
+- `condition` may be an expression or omitted; omitted condition means an infinite loop.
+- `step` may be an expression or omitted.
+- `body` is a single statement or a block.
+- Variables declared in `init` are scoped to the loop (not visible after it) and are released on normal loop exit.
+- Assignment and increment/decrement are not allowed in the `condition` expression.
+- `break` and `continue` are not supported yet.
+
 ## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.

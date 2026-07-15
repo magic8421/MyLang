@@ -22,6 +22,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_IF:     return "if";
         case TOK_KW_ELSE:   return "else";
         case TOK_KW_WHILE:  return "while";
+        case TOK_KW_FOR:    return "for";
         case TOK_KW_RETURN: return "return";
         case TOK_KW_NEW:    return "new";
         case TOK_KW_CLASS:  return "class";

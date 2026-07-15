@@ -26,6 +26,7 @@ static const KeywordEntry keywords[] = {
     {"if",     TOK_KW_IF},
     {"else",   TOK_KW_ELSE},
     {"while",  TOK_KW_WHILE},
+    {"for",    TOK_KW_FOR},
     {"return", TOK_KW_RETURN},
     {"new",    TOK_KW_NEW},
     {"class",     TOK_KW_CLASS},
