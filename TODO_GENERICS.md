@@ -181,7 +181,8 @@
 | `src/parser.c` | Parse `<T : C1, C2>` and `Name<T1, T2>` in types. |
 | `src/codegen.c` | Generate concrete structs/methods per instantiation. |
 | `src/codegen.h` | Possibly add helper declarations. |
-| `src/util.h` / new `src/mangle.c` | Type mangling utilities. |
+| `src/util.h` | String/copy helpers. |
+| `src/mangle.h` / `src/mangle.c` | Type mangling utilities. |
 | `test/gen_*.my` | New test cases. |
 | `AGENTS.md` / `GENERICS_DESIGN.md` | Docs updates. |
 
