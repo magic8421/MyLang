@@ -219,7 +219,8 @@ i32 main() {
 
     ("bounds_dynamic_oob", """
 i32 main() {
-    i32[] arr = new i32[3];
+    i32[] arr;
+    arr.resize(3);
     arr[0] = 1;
     arr[5] = 0;
     return 0;
@@ -228,7 +229,8 @@ i32 main() {
 
     ("bounds_in_bounds", """
 i32 main() {
-    i32[] arr = new i32[10];
+    i32[] arr;
+    arr.resize(10);
     arr[5] = 42;
     return arr[5];
 }
@@ -281,7 +283,8 @@ i32 main() {
     ("new_array_expr_size", """
 i32 main() {
     i32 n = 5;
-    i32[] arr = new i32[n + 2];
+    i32[] arr;
+    arr.resize(n + 2);
     arr[6] = 99;
     return arr[6];
 }
@@ -425,7 +428,8 @@ class Box {
     i32 get() { return this.v; }
 }
 i32 main() {
-    Box[] arr = new Box[3];
+    Box[] arr;
+    arr.resize(3);
     arr[0] = new Box;
     arr[0].v = 1;
     arr[1] = new Box;
@@ -443,7 +447,8 @@ i32 sum(ref Box[] arr) {
     return arr[0].v + arr[1].v;
 }
 i32 main() {
-    Box[] a = new Box[2];
+    Box[] a;
+    a.resize(2);
     a[0] = new Box;
     a[0].v = 3;
     a[1] = new Box;
@@ -457,7 +462,8 @@ class Box {
     i32 v;
 }
 void make(ref Box[] out) {
-    Box[] a = new Box[2];
+    Box[] a;
+    a.resize(2);
     a[0] = new Box;
     a[0].v = 5;
     a[1] = new Box;
@@ -476,7 +482,8 @@ class Box {
     i32 v;
 }
 i32 main() {
-    Box[] a = new Box[2];
+    Box[] a;
+    a.resize(2);
     return a[5].v;
 }
 """, "crash"),
@@ -486,7 +493,8 @@ class Box {
     i32 v;
 }
 i32 main() {
-    Box[] a = new Box[2];
+    Box[] a;
+    a.resize(2);
     a[0] = new Box;
     a[0].v = 1;
     Box b = a[0];
@@ -501,7 +509,8 @@ class Box {
     i32 v;
 }
 i32 main() {
-    Box[] a = new Box[4];
+    Box[] a;
+    a.resize(4);
     i32 i = 0;
     while (i < 4) {
         a[i] = new Box;
@@ -524,7 +533,8 @@ class Box {
     i32 get() { return this.v; }
 }
 i32 main() {
-    Box[] a = new Box[2];
+    Box[] a;
+    a.resize(2);
     a[0] = new Box;
     a[0].v = 5;
     return a[0].get();
@@ -533,7 +543,8 @@ i32 main() {
 
     ("array_vector_methods", """
 i32 main() {
-    i32[] a = new i32[2];
+    i32[] a;
+    a.resize(2);
     a[0] = 1;
     a[1] = 2;
     a.push(3);
@@ -552,7 +563,8 @@ class Box {
     i32 v;
 }
 i32 main() {
-    Box[] a = new Box[1];
+    Box[] a;
+    a.resize(1);
     a[0] = new Box;
     a[0].v = 2;
     Box b = new Box;
@@ -565,7 +577,8 @@ i32 main() {
 
     ("array_move_copy", """
 i32 main() {
-    i32[] a = new i32[2];
+    i32[] a;
+    a.resize(2);
     a[0] = 10;
     a[1] = 20;
     i32[] b;
@@ -585,7 +598,8 @@ class Box : IBox {
     i32 get() { return this.v; }
 }
 i32 main() {
-    weak IBox[] w = new weak IBox[2];
+    weak IBox[] w;
+    w.resize(2);
     Box a = new Box;
     a.v = 7;
     Box b = new Box;
@@ -614,7 +628,8 @@ i32 main() {
 
     ("fixed_width_array", """
 i32 main() {
-    u32[] arr = new u32[4];
+    u32[] arr;
+    arr.resize(4);
     arr[0] = 10;
     arr[1] = 20;
     arr[2] = arr[0] + arr[1];
@@ -634,7 +649,8 @@ i32 sum(ref i16[] arr) {
     return s;
 }
 i32 main() {
-    i16[] a = new i16[3];
+    i16[] a;
+    a.resize(3);
     a[0] = 10;
     a[1] = 20;
     a[2] = 30;
@@ -644,7 +660,8 @@ i32 main() {
 
     ("float_array", """
 i32 main() {
-    f32[] a = new f32[3];
+    f32[] a;
+    a.resize(3);
     a[0] = 1;
     a[1] = 2;
     a[2] = a[0] + a[1];
@@ -736,7 +753,8 @@ void fill(ref i32[] arr) {
     arr[2] = 3;
 }
 i32 main() {
-    i32[] a = new i32[3];
+    i32[] a;
+    a.resize(3);
     fill(ref a);
     return a[0] + a[1] + a[2];
 }
@@ -773,7 +791,8 @@ struct Vec {
     i32 v;
 }
 i32 main() {
-    Vec[] arr = new Vec[3];
+    Vec[] arr;
+    arr.resize(3);
     arr[0].v = 1;
     arr[1].v = 2;
     arr[2].v = 3;
@@ -1574,7 +1593,8 @@ class Circle : IShape {
     i32 area() { return 3 * this.radius * this.radius; }
 }
 i32 main() {
-    IShape[] arr = new IShape[2];
+    IShape[] arr;
+    arr.resize(2);
     Square sq = new Square;
     sq.side = 3;
     Circle ci = new Circle;
@@ -1598,7 +1618,8 @@ class Circle : IShape {
     i32 area() { return 3 * this.radius * this.radius; }
 }
 i32 main() {
-    IShape[] arr = new IShape[1];
+    IShape[] arr;
+    arr.resize(1);
     Square sq = new Square;
     sq.side = 2;
     arr[0] = sq;
@@ -1618,7 +1639,8 @@ class Square : IShape {
     i32 area() { return this.side * this.side; }
 }
 i32 main() {
-    IShape[] arr = new IShape[2];
+    IShape[] arr;
+    arr.resize(2);
     return arr[5].area();
 }
 """, "crash"),
@@ -1906,6 +1928,13 @@ i32 main() {
     return a;
 }
 """, "missing 'ref' keyword"),
+
+    ("bad_new_array", """
+i32 main() {
+    i32[] arr = new i32[3];
+    return 0;
+}
+""", "arrays are created empty"),
 ]
 
 # ============================================================

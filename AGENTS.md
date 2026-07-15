@@ -105,6 +105,8 @@ Source code lives under `src/`:
 ## Array / Vector Value Types
 - `T[]` compiles to the C value type `MyArray { size_t capacity; size_t length; void* data; }`.
 - The vector is not reference-counted; its data buffer is allocated with `malloc`/`realloc` and freed with `free` via `mylang_array_free`.
+- Arrays are created empty: `T[] a;` initializes `capacity = length = 0` and `data = NULL`. There is no `new T[N]` syntax.
+- To preallocate capacity use `a.reserve(n)`; to set the initial length use `a.resize(n)`.
 - Arrays cannot be returned by value, passed by value, or assigned with `=`. Use `ref T[]` parameters for mutation and `move_to(ref dst)` / `copy_to(ref dst)` for transfer or duplication.
 - Builtin vector methods: `.push(v)`, `.pop()`, `.reserve(n)`, `.resize(n)`, `.clear()`, `.compact()`, `.move_to(ref dst)`, `.copy_to(ref dst)`.
 - Element access uses `arr[i]` and is bounds-checked at runtime via `mylang_array_at()`.
@@ -128,7 +130,6 @@ Source code lives under `src/`:
 
 ## Runtime Functions
 - `mylang_new_object(sz, type_id)` — allocates ObjHeader + data, refcount=1.
-- `mylang_array_new(count, elem_size)` — allocates a standalone `MyArray` value with a zeroed data buffer.
 - `mylang_array_free(a, elem_size, elem_kind)` — releases elements according to kind and frees the data buffer.
 - `mylang_array_at(a, idx, elem_size, file, line)` — bounds-checked pointer to element.
 - `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.

@@ -102,15 +102,6 @@ void mylang_array_init(MyArray* a, size_t count, size_t elem_size) {
     }
 }
 
-MyArray mylang_array_new(size_t count, size_t elem_size) {
-    MyArray a;
-    a.capacity = 0;
-    a.length = 0;
-    a.data = NULL;
-    mylang_array_init(&a, count, elem_size);
-    return a;
-}
-
 void mylang_array_free(MyArray* a, size_t elem_size, int elem_kind) {
     (void)elem_size;
     if (a->data) {

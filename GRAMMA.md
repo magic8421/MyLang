@@ -79,15 +79,20 @@ T[]     // dynamic value-type vector
 
 Examples:
 ```my
-i32[] nums = new i32[10];
-Vec[] vs = new Vec[3];
-IShape[] shapes = new IShape[2];
-weak IShape[] weak_shapes = new weak IShape[2];
+i32[] nums;
+nums.resize(10);
+
+Vec[] vs;
+vs.resize(3);
+
+IShape[] shapes;
+shapes.resize(2);
+
+weak IShape[] weak_shapes;
+weak_shapes.resize(2);
 ```
 
-Arrays are value-type vectors: they are not reference-counted, cannot be returned or passed by value, and cannot be assigned directly. Use `ref T[]` parameters and explicit `move_to(ref)` / `copy_to(ref)` to transfer or duplicate them.
-
-`new InterfaceName[]` is allowed for dynamic arrays; `new InterfaceName` and `new StructName` are not.
+Arrays are value-type vectors: they are created empty, are not reference-counted, cannot be returned or passed by value, and cannot be assigned directly. Use `ref T[]` parameters and explicit `move_to(ref)` / `copy_to(ref)` to transfer or duplicate them.
 
 ---
 
@@ -283,16 +288,20 @@ this        // current class instance
 ### New Expression
 ```my
 new ClassName          // class instance
-new Type[N]            // dynamic array
 ```
 
 Examples:
 ```my
 Square sq = new Square;
-i32[] arr = new i32[n + 2];
-Vec[] vs = new Vec[3];
-IShape[] shapes = new IShape[2];
-weak IShape[] wshapes = new weak IShape[4];
+
+i32[] arr;
+arr.resize(n + 2);
+
+Vec[] vs;
+vs.resize(3);
+
+IShape[] shapes;
+shapes.resize(2);
 ```
 
 ### Member and Method Access

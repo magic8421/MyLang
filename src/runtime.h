@@ -103,7 +103,6 @@ int   mylang_release(void* ptr);
    runtime can copy/move/release elements correctly without storing metadata
    in the array header. */
 void  mylang_array_init(MyArray* a, size_t count, size_t elem_size);
-MyArray mylang_array_new(size_t count, size_t elem_size);
 void  mylang_array_free(MyArray* a, size_t elem_size, int elem_kind);
 void  mylang_array_reserve(MyArray* a, size_t new_capacity, size_t elem_size);
 void  mylang_array_resize(MyArray* a, size_t new_length, size_t elem_size, int elem_kind);

@@ -757,11 +757,12 @@ static void codegen_new(CodegenContext* ctx, AstNode* node, FILE* out) {
         symtab_instantiate_class_from_type(&base);
     }
     if (node->ast_child_count > 0) {
-        char elem_size[128];
-        array_elem_size_expr(&base, elem_size, sizeof(elem_size));
-        fprintf(out, "mylang_array_new(");
-        codegen_expr(ctx, node->ast_children[0], out);
-        fprintf(out, ", %s)", elem_size);
+        /* Parser rejects 'new T[N]'; arrays are created empty and grown with
+           push/reserve.  This branch is only reached on parse-error recovery. */
+        fprintf(stderr, "error at %d:%d: 'new %s[...]' is not supported; use '%s[] name; name.reserve(size)'\n",
+                node->ast_token.line, node->ast_token.col, base.class_name, base.class_name);
+        ctx->codegen_error = 1;
+        fprintf(out, "/* invalid new array */");
     } else {
         if (base.type_kind == TYPE_CLASS) {
             fprintf(out, "mylang_new_object(sizeof(%s), %u)", c_base_name(&base), (unsigned)base.type_id);
