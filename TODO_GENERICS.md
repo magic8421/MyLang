@@ -151,7 +151,7 @@
 - [x] `gen_new_constraint.my` - class with `T : new()` and `new T()`.
 - [x] `gen_multi_constraint.my` - `T : IFoo, IBar`.
 - [ ] `gen_array.my` - `T[]` and `T[N]` inside generic class.
-- [ ] `gen_weak.my` - `weak Box<i32>`.
+- [x] `gen_weak.my` - `weak Box<i32>`.
 
 ### 6.2 Add negative tests
 - [ ] `gen_bad_arity.my` - wrong number of type args.

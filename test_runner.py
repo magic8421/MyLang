@@ -1770,6 +1770,24 @@ i32 main() {
     return m.doBoth(t);
 }
 """, 42),
+
+    ("gen_weak", """
+class Box<T> {
+    T value;
+    void set(T v) { this.value = v; }
+    T get() { return this.value; }
+}
+i32 main() {
+    Box<i32> strong = new Box<i32>;
+    strong.set(42);
+    weak Box<i32> w = strong;
+    Box<i32> locked = w.lock();
+    if (locked != 0) {
+        return locked.get();
+    }
+    return 0;
+}
+""", 42),
 ]
 
 # ============================================================
