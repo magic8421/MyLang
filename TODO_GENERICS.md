@@ -185,6 +185,10 @@
 | `test/gen_*.my` | New test cases. |
 | `AGENTS.md` / `GENERICS_DESIGN.md` | Docs updates. |
 
+## Known Issues / Follow-ups
+
+- [x] Returning a `new` expression directly (e.g. `return new T;` inside a generic method, or `return new Widget;` in non-generic code) leaked one reference count. Fixed in `codegen_return_stmt` by skipping `mylang_retain` when the returned expression is `AST_NEW` or `AST_CALL`. Test coverage: `gen_new_return_direct`.
+
 ## Notes / Risks
 
 - `Type.class_name[64]` may be too small for deeply nested mangled names; monitor and enlarge if needed.

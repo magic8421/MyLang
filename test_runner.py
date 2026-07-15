@@ -1734,6 +1734,21 @@ i32 main() {
     return w.value;
 }
 """, 42),
+
+    ("gen_new_return_direct", """
+class Factory<T : new()> {
+    T make() { return new T; }
+}
+class Widget {
+    i32 value;
+}
+i32 main() {
+    Factory<Widget> f = new Factory<Widget>;
+    Widget w = f.make();
+    w.value = 42;
+    return w.value;
+}
+""", 42),
 ]
 
 # ============================================================

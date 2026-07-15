@@ -897,6 +897,14 @@ static int guard_needs_retain(AstNode* node) {
     return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
 }
 
+static int return_expr_needs_retain(AstNode* node) {
+    /* Calls/new already produce an owned (+1) reference for the caller.
+       Local variables, fields, and array elements must be retained because
+       the caller will release the returned value and the original owner still
+       holds its own reference. */
+    return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
+}
+
 /* Sub-expressions that must be hoisted into a temporary so they are evaluated
    exactly once.  Only call sites can add reference counts; lvalues, weak refs,
    arrays and 'new' are left to their surrounding statement. */
@@ -1568,9 +1576,14 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
         if (ret->ast_resolved_type.type_kind == TYPE_CLASS &&
             ctx->return_type.type_kind == TYPE_INTERFACE) {
             /* implicit class-to-interface conversion in return */
+            int needs_retain = return_expr_needs_retain(ret);
             int tid = ctx->assign_tmp_id++;
             indent_line(out, indent);
-            fprintf(out, "void* _r = mylang_retain(");
+            if (needs_retain) {
+                fprintf(out, "void* _r = mylang_retain(");
+            } else {
+                fprintf(out, "void* _r = (");
+            }
             codegen_expr(ctx, ret, out);
             fprintf(out, ");\n");
             indent_line(out, indent);
@@ -1586,8 +1599,13 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
             indent_line(out, indent);
             fprintf(out, "return _iret%d;\n", tid);
         } else if (ret->ast_resolved_type.type_kind == TYPE_CLASS) {
+            int needs_retain = return_expr_needs_retain(ret);
             indent_line(out, indent);
-            fprintf(out, "void* _r = mylang_retain(");
+            if (needs_retain) {
+                fprintf(out, "void* _r = mylang_retain(");
+            } else {
+                fprintf(out, "void* _r = (");
+            }
             codegen_expr(ctx, ret, out);
             fprintf(out, ");\n");
             cleanup_emit(ctx, out, indent);
@@ -1597,10 +1615,15 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
             fprintf(out, "return _r;\n");
         } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE && ret->ast_resolved_type.is_array) {
             /* Returning an interface array pointer (dynamic array). */
+            int needs_retain = return_expr_needs_retain(ret);
             char tbuf[128];
             c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
             indent_line(out, indent);
-            fprintf(out, "%s _r = mylang_retain(", tbuf);
+            if (needs_retain) {
+                fprintf(out, "%s _r = mylang_retain(", tbuf);
+            } else {
+                fprintf(out, "%s _r = (", tbuf);
+            }
             codegen_expr(ctx, ret, out);
             fprintf(out, ");\n");
             cleanup_emit(ctx, out, indent);
@@ -1609,6 +1632,7 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
             indent_line(out, indent);
             fprintf(out, "return _r;\n");
         } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+            int needs_retain = return_expr_needs_retain(ret);
             char tbuf[128];
             c_type_str(&ret->ast_resolved_type, tbuf, sizeof(tbuf));
             int tid = ctx->assign_tmp_id++;
@@ -1616,8 +1640,10 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, FILE* out, i
             fprintf(out, "%s _iret%d = ", tbuf, tid);
             codegen_expr(ctx, ret, out);
             fprintf(out, ";\n");
-            indent_line(out, indent);
-            fprintf(out, "mylang_retain(_iret%d.data);\n", tid);
+            if (needs_retain) {
+                indent_line(out, indent);
+                fprintf(out, "mylang_retain(_iret%d.data);\n", tid);
+            }
             cleanup_emit(ctx, out, indent);
             indent_line(out, indent);
             fprintf(out, "MY_POP();\n");
