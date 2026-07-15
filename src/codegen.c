@@ -765,7 +765,15 @@ static void codegen_new(CodegenContext* ctx, AstNode* node, FILE* out) {
         fprintf(out, "/* invalid new array */");
     } else {
         if (base.type_kind == TYPE_CLASS) {
-            fprintf(out, "mylang_new_object(sizeof(%s), %u)", c_base_name(&base), (unsigned)base.type_id);
+            char dtor_name[128];
+            ClassInfo* ci = symtab_find_class(base.class_name);
+            if (!ci) ci = symtab_find_class_by_mangled(base.class_name);
+            if (ci && ci->mangled_name[0]) {
+                snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", ci->mangled_name);
+            } else {
+                snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", c_base_name(&base));
+            }
+            fprintf(out, "mylang_new_object(sizeof(%s), %u, %s)", c_base_name(&base), (unsigned)base.type_id, dtor_name);
         } else {
             fprintf(out, "calloc(1, sizeof(%s))", c_base_name(&base));
         }
@@ -934,12 +942,48 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
                 }
             }
 
-            if (lt.type_kind == TYPE_CLASS) {
+            if (lt.is_weak && lt.type_kind == TYPE_CLASS) {
+                /* Weak class field: old WeakRef is released; RHS is weak-copied
+                   or weakified. */
+                resolve_type(rhs);
+                Type rt = rhs->ast_resolved_type;
+                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+
+                fprintf(out, "((void)mylang_weak_release(");
+                codegen_expr(ctx, lhs, out);
+                fprintf(out, "), ");
+                if (rt.is_weak) {
+                    fprintf(out, "(");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, " = mylang_weak_copy(");
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, "))");
+                } else if (rhs_owned) {
+                    int tmp_id = ctx->assign_tmp_id++;
+                    fprintf(out, "(void* _wassign%d = ", tmp_id);
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, ", ");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, " = mylang_weak_init(_wassign%d), mylang_release(_wassign%d))",
+                            tmp_id, tmp_id);
+                } else {
+                    fprintf(out, "(");
+                    codegen_expr(ctx, lhs, out);
+                    fprintf(out, " = mylang_weak_init(");
+                    codegen_expr(ctx, rhs, out);
+                    fprintf(out, "))");
+                }
+                fprintf(out, ")");
+            } else if (lt.type_kind == TYPE_CLASS) {
                 int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
                 int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
+                /* Fields own their class references, so assigning a local or
+                   parameter to a field must retain the source.  Local-to-local
+                   assignment keeps the existing borrow optimization. */
+                int lhs_is_field = (lhs->ast_kind == AST_MEMBER_ACCESS);
 
                 fprintf(out, "((");
-                if (!rhs_owned && !rhs_local) {
+                if (!rhs_owned && (!rhs_local || lhs_is_field)) {
                     fprintf(out, "(void)mylang_retain(");
                     codegen_expr(ctx, rhs, out);
                     fprintf(out, "), ");
@@ -2337,6 +2381,33 @@ static void codegen_struct_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
     fprintf(out, "} %s;\n\n", node->ast_token.text);
 }
 
+/* Emit the per-class finalizer that releases reference-counted fields before
+   the object's memory is freed by mylang_release. */
+static void codegen_class_destructor(CodegenContext* ctx, ClassInfo* ci, const char* class_c, FILE* out) {
+    (void)ctx;
+    fprintf(out, "static void _mylang_dtor_%s(%s* p) {\n", class_c, class_c);
+    int i;
+    for (i = 0; i < ci->field_count; i++) {
+        Type ft = ci->field_types[i];
+        const char* fname = ci->field_names[i];
+        if (ft.is_array) {
+            char esz[64];
+            array_elem_size_expr(&ft, esz, sizeof(esz));
+            fprintf(out, "    mylang_array_free(&p->%s, %s, %d);\n",
+                    fname, esz, array_elem_kind(&ft));
+        } else if (ft.is_weak && ft.type_kind == TYPE_INTERFACE) {
+            fprintf(out, "    mylang_weak_release(p->%s.wr);\n", fname);
+        } else if (ft.is_weak) {
+            fprintf(out, "    mylang_weak_release(p->%s);\n", fname);
+        } else if (ft.type_kind == TYPE_INTERFACE) {
+            fprintf(out, "    mylang_release(p->%s.data);\n", fname);
+        } else if (ft.type_kind == TYPE_CLASS) {
+            fprintf(out, "    mylang_release(p->%s);\n", fname);
+        }
+    }
+    fprintf(out, "}\n\n");
+}
+
 static void codegen_class_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
     ClassInfo* ci = symtab_find_class_by_mangled(node->ast_token.text);
     if (!ci) ci = symtab_find_class(node->ast_token.text);
@@ -2364,6 +2435,8 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node, FILE* out) {
         }
     }
     fprintf(out, "} %s;\n\n", class_c);
+
+    codegen_class_destructor(ctx, ci, class_c, out);
 
     /* emit method declarations */
     AstNode* m = node->ast_children[0];

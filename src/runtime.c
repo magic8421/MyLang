@@ -33,10 +33,11 @@ void my_panic(const char* msg) {
 }
 
 /* Core allocation for class/interface objects. */
-void* mylang_new_object(size_t sz, uint32_t type_id) {
+void* mylang_new_object(size_t sz, uint32_t type_id, void (*dtor)(void*)) {
     ObjHeader* h = (ObjHeader*)calloc(1, sizeof(ObjHeader) + sz);
     h->refcount = 1;
     h->type_id = type_id;
+    h->dtor = dtor;
     mylang_leak_insert(h);
     return (void*)(h + 1);
 }
@@ -53,6 +54,7 @@ int mylang_release(void* ptr) {
     if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {
         ObjHeader* h = mylang_obj_hdr(ptr);
         if (h->weak) h->weak->obj = NULL;
+        if (h->dtor) h->dtor(ptr);
         mylang_leak_remove(h);
         free(h);
     }

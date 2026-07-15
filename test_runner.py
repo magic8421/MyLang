@@ -1821,6 +1821,93 @@ i32 main() {
     return 0;
 }
 """, 42),
+
+    ("class_field_release", """
+class Inner {
+    i32 x;
+}
+class Outer {
+    Inner inner;
+}
+i32 main() {
+    Outer o = new Outer;
+    o.inner = new Inner;
+    o.inner.x = 42;
+    return o.inner.x;
+}
+""", 42),
+
+    ("array_field_release", """
+class Holder {
+    i32[] nums;
+}
+i32 main() {
+    Holder h = new Holder;
+    h.nums.resize(3);
+    h.nums[0] = 10;
+    h.nums[1] = 20;
+    h.nums[2] = 30;
+    return h.nums[0] + h.nums[1] + h.nums[2];
+}
+""", 60),
+
+    ("interface_field", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+class Wrapper {
+    IVal val;
+}
+i32 main() {
+    Wrapper w = new Wrapper;
+    Box b = new Box;
+    b.v = 7;
+    w.val = b;
+    return w.val.get();
+}
+""", 7),
+
+    ("weak_interface_field", """
+interface IVal {
+    i32 get();
+}
+class Box : IVal {
+    i32 v;
+    i32 get() { return this.v; }
+}
+class Wrapper {
+    weak IVal val;
+}
+i32 main() {
+    Wrapper w = new Wrapper;
+    Box b = new Box;
+    b.v = 9;
+    w.val = b;
+    IVal locked = w.val.lock();
+    return locked.get();
+}
+""", 9),
+
+    ("weak_class_field_release", """
+class Node {
+    i32 v;
+}
+class Holder {
+    weak Node n;
+}
+i32 main() {
+    Holder h = new Holder;
+    Node x = new Node;
+    x.v = 5;
+    h.n = x;
+    Node locked = h.n.lock();
+    return locked.v;
+}
+""", 5),
 ]
 
 # ============================================================
@@ -1841,18 +1928,6 @@ i32 main() {
     return 0;
 }
 """, "cannot create instance of interface"),
-
-    ("bad_interface_field", """
-interface IShape {
-    i32 area();
-}
-class Foo {
-    IShape s;
-}
-i32 main() {
-    return 0;
-}
-""", "class fields cannot have interface type"),
 
     ("bad_assign_to_iface", """
 interface IShape {

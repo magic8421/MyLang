@@ -875,11 +875,6 @@ static AstNode* parse_class_decl(Parser* p) {
 
         } else {
             /* FIELD */
-            if (ft.type_kind == TYPE_INTERFACE) {
-                fprintf(stderr, "error at %d:%d: class fields cannot have interface type '%s'\n",
-                        fname.line, fname.col, ft.class_name);
-                p->had_error = 1;
-            }
             expect(p, TOK_SEMI);
             symtab_add_field(info, fname.text, ft);
         }

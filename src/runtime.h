@@ -41,6 +41,9 @@ struct ObjHeaderTag {
     volatile long refcount;
     uint32_t type_id;
     WeakRef* weak;
+    /* Per-class finalizer registered by the compiler.  Called by mylang_release
+       before the object's memory is freed. */
+    void (*dtor)(void*);
     /* Leak-check fields are always present so that runtime.c and generated code
        share the same header layout regardless of the MYLANG_LEAK_CHECK macro. */
     struct ObjHeaderTag* next;
@@ -95,7 +98,7 @@ void my_panic(const char* msg);
 #define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)
 
 /* Core allocation / refcounting for class and interface objects. */
-void* mylang_new_object(size_t sz, uint32_t type_id);
+void* mylang_new_object(size_t sz, uint32_t type_id, void (*dtor)(void*));
 void* mylang_retain(void* ptr);
 int   mylang_release(void* ptr);
 

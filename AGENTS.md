@@ -76,8 +76,8 @@ Source code lives under `src/`:
 
 ## Memory Model
 - Heap objects use atomic reference counting via `ObjHeader`.
-- `ObjHeader` holds `refcount`, `type_id`, and `WeakRef* weak`.
-- Class instances are released through `mylang_release`.
+- `ObjHeader` holds `refcount`, `type_id`, `WeakRef* weak`, and a per-class destructor function pointer.
+- Class instances are released through `mylang_release`; the destructor is invoked before the object's memory is freed.
 - Arrays (`T[]`) are standalone value-type vectors with their own data buffer allocated via `malloc`/`realloc`/`free`; they are not reference-counted and are freed with `mylang_array_free`.
 - `mylang_obj_hdr(ptr)` macro subtracts `sizeof(ObjHeader)` to get the header from a user-data pointer.
 
@@ -87,6 +87,9 @@ Source code lives under `src/`:
 - **Caller retain/release for guarded args**: non-local class-valued arguments to calls get caller-side `mylang_retain` before and `mylang_release` after the call. Local variables and parameters are unguarded (optimization).
 - **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
 - **Class assignment**: RHS retained before LHS released to avoid UAF on self-assignment (`b = b.set(5)`).
+- **Class/interface fields own their values**: assigning a local or parameter to a class or interface field retains the source; the per-class destructor releases fields when the object is freed.
+- **Weak fields own their WeakRef control blocks**: weak class and weak interface fields release their `WeakRef` in the class destructor.
+- **Array fields are freed by the destructor**: `T[]` fields are released with `mylang_array_free` when the containing object is freed.
 - **Discarded class return**: `(void)mylang_release(call(...))` in expression statements.
 - **This in methods**: retained on entry, released via cleanup. Name mapped to `thiz` in generated C.
 
@@ -160,10 +163,12 @@ Source code lives under `src/`:
 - `ref` arguments must be local variables; field/array-element arguments are rejected.
 - `out`/`in` keywords were removed for simplicity.
 - Arrays cannot be returned by value, passed by value, or assigned directly; use `ref T[]` parameters and `move_to(ref)` / `copy_to(ref)`.
-- Weak references cannot be used as class fields (local variables and parameters only).
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
-- Interface variables cannot be class fields (local variables and parameters only).
-- `weak InterfaceName` variables cannot be class fields (same restriction as weak class fields).
 - Interface default method implementations not yet supported.
 - No AST deallocation function (one-shot compiler).
+
+## Class Field Destructors
+- Every concrete class has a compiler-generated finalizer that runs when the last reference to an object is released.
+- The finalizer releases class, interface, weak, and array fields so they are no longer leaked.
+- Circular references between objects still leak (there is no cycle collector); this is intentional and documented by the `circular_ref_leak` test.
