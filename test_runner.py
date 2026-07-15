@@ -1749,6 +1749,27 @@ i32 main() {
     return w.value;
 }
 """, 42),
+
+    ("gen_multi_constraint", """
+interface IFoo {
+    i32 foo();
+}
+interface IBar {
+    i32 bar();
+}
+class Multi<T : IFoo, IBar> {
+    i32 doBoth(T item) { return item.foo() + item.bar(); }
+}
+class Thing : IFoo, IBar {
+    i32 foo() { return 10; }
+    i32 bar() { return 32; }
+}
+i32 main() {
+    Multi<Thing> m = new Multi<Thing>;
+    Thing t = new Thing;
+    return m.doBoth(t);
+}
+""", 42),
 ]
 
 # ============================================================
