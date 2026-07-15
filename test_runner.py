@@ -69,7 +69,7 @@ def find_python():
 
 def compile_mylang():
     """Build mylang.exe with MSVC + ASan (release) or debug CRT (debug)."""
-    srcs = "src\\token.c src\\ast.c src\\lexer.c src\\symtab.c src\\parser.c src\\codegen.c src\\main.c"
+    srcs = "src\\token.c src\\ast.c src\\mangle.c src\\lexer.c src\\symtab.c src\\parser.c src\\codegen.c src\\main.c"
     if TEST_MODE == "debug":
         flags = "/MDd /Zi"
     else:
@@ -1697,6 +1697,25 @@ i32 main() {
     return bp.get().a;
 }
 """, 5),
+
+    ("gen_interface", """
+interface IPrintable {
+    i32 get_value();
+}
+class Printer<T : IPrintable> {
+    i32 print(T item) { return item.get_value(); }
+}
+class Num : IPrintable {
+    i32 n;
+    i32 get_value() { return this.n; }
+}
+i32 main() {
+    Printer<Num> p = new Printer<Num>;
+    Num n = new Num;
+    n.n = 42;
+    return p.print(n);
+}
+""", 42),
 ]
 
 # ============================================================

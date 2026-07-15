@@ -147,7 +147,7 @@
 - [x] `generics_pair` - `Pair<i32, i8>`.
 - [x] `generics_func` - generic class as function argument and return value.
 - [x] `generics_nested_arg` - inner generic type used only as a type argument.
-- [ ] `gen_interface.my` - class with interface constraint (`T : IPrintable`) and method call.
+- [x] `gen_interface.my` - class with interface constraint (`T : IPrintable`) and method call.
 - [ ] `gen_new_constraint.my` - class with `T : new()` and `new T()`.
 - [ ] `gen_multi_constraint.my` - `T : IFoo, IBar`.
 - [ ] `gen_array.my` - `T[]` and `T[N]` inside generic class.
