@@ -93,8 +93,8 @@
 - [ ] Emit richer MyLang source-level error messages with line/column info.
 
 ### 3.4 Interface method availability on type parameters
-- [ ] In `resolve_type()` / method lookup, when receiver type is `TYPE_TYPE_PARAM`, allow method calls only if the param has a matching interface constraint.
-- [ ] Generate interface dispatch for such calls.
+- [x] In generic method bodies, reject method calls on `T` unless `T` has a matching interface constraint (`symtab_validate_generic_method_calls`).
+- [x] Generate concrete class method dispatch after type substitution; vtable dispatch is not planned.
 
 ## Phase 4: Code Generation
 
@@ -157,7 +157,7 @@
 - [ ] `gen_bad_arity.my` - wrong number of type args.
 - [ ] `gen_bad_constraint.my` - type does not implement required interface.
 - [ ] `gen_bad_new.my` - type lacks parameterless constructor when `new()` required.
-- [ ] `gen_bad_method.my` - calling method on `T` without interface constraint.
+- [x] `gen_bad_method.my` - calling method on `T` without interface constraint.
 
 ### 6.3 Run test suite
 - [x] Run `python test_runner.py`.

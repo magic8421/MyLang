@@ -1872,6 +1872,18 @@ i32 main() {
     return 0;
 }
 """, "conflicting signatures"),
+
+    ("gen_bad_method", """
+class Bad<T> {
+    i32 doBad(T item) { return item.getValue(); }
+}
+class Thing {
+    i32 value;
+}
+i32 main() {
+    return 0;
+}
+""", "no interface constraint providing"),
 ]
 
 # ============================================================

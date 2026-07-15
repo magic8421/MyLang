@@ -840,6 +840,9 @@ static AstNode* parse_class_decl(Parser* p) {
     if (methods) node->ast_child_count = 1;
     if (info->is_generic) {
         info->generic_ast = node;
+        if (symtab_validate_generic_method_calls(info) > 0) {
+            p->had_error = 1;
+        }
     }
     return node;
 }

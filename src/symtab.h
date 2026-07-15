@@ -129,6 +129,7 @@ InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
 void symtab_add_class_impl(ClassInfo* cls, const char* iface_name);
 
 int  symtab_validate_impls(void);
+int  symtab_validate_generic_method_calls(ClassInfo* generic_def);
 
 int  symtab_next_type_id(void);
 void symtab_mark_class_generic(ClassInfo* info, AstNode* ast, int param_count, const char* params[]);

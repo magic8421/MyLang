@@ -439,6 +439,184 @@ static int type_implements_interface(const Type* t, const char* iface_name) {
     return 0;
 }
 
+/* Validate that method calls on type parameters inside a generic class are only
+   allowed when the type parameter has a matching interface constraint. */
+
+typedef struct {
+    char names[32][64];
+    Type types[32];
+    int count;
+} LocalScope;
+
+static void local_scope_push(LocalScope* scope, const char* name, Type type) {
+    if (scope->count >= 32) return;
+    CHECK_STRSCPY(strscpy(scope->names[scope->count], name, sizeof(scope->names[0])),
+                  "local scope name too long");
+    scope->types[scope->count] = type;
+    scope->count++;
+}
+
+static Type* local_scope_find(LocalScope* scope, const char* name) {
+    int i;
+    for (i = scope->count - 1; i >= 0; i--) {
+        if (strcmp(scope->names[i], name) == 0) {
+            return &scope->types[i];
+        }
+    }
+    return NULL;
+}
+
+static int class_find_field_type(ClassInfo* cls, const char* name, Type* out) {
+    int i;
+    for (i = 0; i < cls->field_count; i++) {
+        if (strcmp(cls->field_names[i], name) == 0) {
+            *out = cls->field_types[i];
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int type_param_has_interface_method(ClassInfo* cls, const char* param_name, const char* method_name) {
+    int p;
+    for (p = 0; p < cls->generic_param_count && p < MAX_GENERIC_PARAMS; p++) {
+        if (strcmp(cls->generic_params[p], param_name) != 0) continue;
+        int c;
+        for (c = 0; c < cls->generic_constraint_count[p] && c < MAX_CONSTRAINTS_PER_PARAM; c++) {
+            const char* iname = cls->generic_constraints[p][c];
+            InterfaceInfo* ii = symtab_find_interface(iname);
+            if (ii && symtab_find_interface_method(ii, method_name)) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
+static Type resolve_expr_type(AstNode* node, ClassInfo* cls, LocalScope* scope);
+
+static Type resolve_member_type(AstNode* node, ClassInfo* cls, LocalScope* scope) {
+    Type void_t = {0};
+    void_t.type_kind = TYPE_VOID;
+    if (!node) return void_t;
+    if (node->ast_kind != AST_MEMBER_ACCESS) return void_t;
+
+    AstNode* obj = node->ast_children[0];
+    const char* field = node->ast_token.text;
+
+    if (obj->ast_kind == AST_IDENT && strcmp(obj->ast_token.text, "this") == 0) {
+        Type ft;
+        if (class_find_field_type(cls, field, &ft)) return ft;
+        return void_t;
+    }
+
+    Type ot = resolve_expr_type(obj, cls, scope);
+    if (ot.type_kind == TYPE_CLASS && ot.type_arg_count == 0) {
+        ClassInfo* ci = symtab_find_class(ot.class_name);
+        Type ft;
+        if (ci && class_find_field_type(ci, field, &ft)) return ft;
+    }
+    return void_t;
+}
+
+static Type resolve_expr_type(AstNode* node, ClassInfo* cls, LocalScope* scope) {
+    Type void_t = {0};
+    void_t.type_kind = TYPE_VOID;
+    if (!node) return void_t;
+
+    switch (node->ast_kind) {
+        case AST_IDENT: {
+            Type* t = local_scope_find(scope, node->ast_token.text);
+            if (t) return *t;
+            return void_t;
+        }
+        case AST_MEMBER_ACCESS:
+            return resolve_member_type(node, cls, scope);
+        case AST_AS_CAST:
+            return node->ast_resolved_type;
+        default:
+            return void_t;
+    }
+}
+
+static int validate_generic_calls_impl(AstNode* node, ClassInfo* cls, LocalScope* scope);
+
+static int validate_generic_call(AstNode* node, ClassInfo* cls, LocalScope* scope) {
+    if (!node) return 0;
+    if (node->ast_kind != AST_CALL) return 0;
+    if (node->ast_child_count == 0) return 0;
+    AstNode* callee = node->ast_children[0];
+    if (callee->ast_kind != AST_MEMBER_ACCESS) return 0;
+
+    AstNode* mem = callee;
+    AstNode* obj = mem->ast_children[0];
+    const char* mname = mem->ast_token.text;
+
+    Type ot = resolve_expr_type(obj, cls, scope);
+    if (ot.type_kind == TYPE_TYPE_PARAM) {
+        if (!type_param_has_interface_method(cls, ot.class_name, mname)) {
+            fprintf(stderr, "error at %d:%d: type parameter '%s' has no interface constraint providing '%s()'\n",
+                    mem->ast_token.line, mem->ast_token.col, ot.class_name, mname);
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int validate_generic_calls_impl(AstNode* node, ClassInfo* cls, LocalScope* scope) {
+    if (!node) return 0;
+    int errors = 0;
+
+    errors += validate_generic_call(node, cls, scope);
+
+    if (node->ast_kind == AST_VAR_DECL) {
+        local_scope_push(scope, node->ast_token.text, node->ast_resolved_type);
+    }
+
+    int i;
+    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+        errors += validate_generic_calls_impl(node->ast_children[i], cls, scope);
+    }
+    errors += validate_generic_calls_impl(node->next, cls, scope);
+    return errors;
+}
+
+static int validate_generic_method_calls(ClassInfo* generic_def, AstNode* method) {
+    LocalScope scope = {0};
+    /* 'this' is not added; it is handled specially as a field access root. */
+
+    /* parameters */
+    if (method->ast_child_count > 0) {
+        AstNode* p = method->ast_children[0];
+        while (p) {
+            if (p->ast_kind == AST_VAR_DECL) {
+                local_scope_push(&scope, p->ast_token.text, p->ast_resolved_type);
+            }
+            p = p->next;
+        }
+    }
+
+    int errors = 0;
+    if (method->ast_child_count > 1) {
+        errors += validate_generic_calls_impl(method->ast_children[1], generic_def, &scope);
+    }
+    return errors;
+}
+
+int symtab_validate_generic_method_calls(ClassInfo* generic_def) {
+    if (!generic_def || !generic_def->is_generic || !generic_def->generic_ast) return 0;
+    AstNode* class_node = generic_def->generic_ast;
+    AstNode* methods = (class_node->ast_child_count > 0) ? class_node->ast_children[0] : NULL;
+    int errors = 0;
+    while (methods) {
+        if (methods->ast_kind == AST_FUNC_DECL) {
+            errors += validate_generic_method_calls(generic_def, methods);
+        }
+        methods = methods->next;
+    }
+    return errors;
+}
+
 ClassInfo* symtab_instantiate_class_from_type(Type* t) {
     if (t->type_kind != TYPE_CLASS || t->type_arg_count == 0) {
         return symtab_find_class(t->class_name);
