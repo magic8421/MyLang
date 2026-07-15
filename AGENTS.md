@@ -43,6 +43,13 @@ Source code lives under `src/`:
 - `x += y` is generated as `x = x + y`; the left-hand side is evaluated twice, which is safe for primitives but disallowed for non-primitives.
 - Like simple assignment (`=`), compound assignment is an expression and is not allowed in `if`/`while` conditions, variable initializers, or `return` expressions.
 
+## Increment / Decrement Operators
+- Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.
+- Operand may be a local variable, a member access (`obj.field++`), or an array element (`arr[i]++`), including `ref` parameters.
+- Only primitive numeric types support increment/decrement.
+- `++`/`--` are parsed as expressions but are only legal as top-level expression statements; they are rejected in `if`/`while` conditions, variable initializers, `return` expressions, call arguments, and nested expressions (e.g. `y = x++`).
+- In the allowed statement context, prefix and postfix forms have identical effect.
+
 ## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.

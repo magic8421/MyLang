@@ -242,6 +242,7 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_UNARY:
+        case AST_INC_DEC:
             t = resolve_type(node->ast_children[0]);
             break;
 
@@ -828,6 +829,29 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node, FILE* out) {
         case AST_UNARY:
             codegen_unary(ctx, node, out);
             break;
+        case AST_INC_DEC: {
+            AstNode* operand = node->ast_children[0];
+            resolve_type(operand);
+            Type t = operand->ast_resolved_type;
+            int is_primitive_numeric = (t.type_kind == TYPE_I8 || t.type_kind == TYPE_I16 ||
+                                        t.type_kind == TYPE_I32 || t.type_kind == TYPE_I64 ||
+                                        t.type_kind == TYPE_U8 || t.type_kind == TYPE_U16 ||
+                                        t.type_kind == TYPE_U32 || t.type_kind == TYPE_U64 ||
+                                        t.type_kind == TYPE_F32 || t.type_kind == TYPE_F64);
+            if (!is_primitive_numeric) {
+                fprintf(stderr, "error at %d:%d: increment/decrement not supported for this type\n",
+                        node->ast_token.line, node->ast_token.col);
+                ctx->codegen_error = 1;
+                fprintf(out, "0 /* invalid increment/decrement */");
+                break;
+            }
+            const char* op_text = (node->ast_token.kind == TOK_INC) ? "+" : "-";
+            codegen_expr(ctx, operand, out);
+            fprintf(out, " = ");
+            codegen_expr(ctx, operand, out);
+            fprintf(out, " %s 1", op_text);
+            break;
+        }
         case AST_ASSIGN: {
             AstNode* lhs = node->ast_children[0];
             AstNode* rhs = node->ast_children[1];

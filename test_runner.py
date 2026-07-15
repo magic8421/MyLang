@@ -209,6 +209,60 @@ f32 main() {
 }
 """, 14),
 
+    ("inc_basic", """
+i32 main() {
+    i32 x = 5;
+    x++;
+    ++x;
+    return x;
+}
+""", 7),
+
+    ("dec_basic", """
+i32 main() {
+    i32 x = 5;
+    x--;
+    --x;
+    return x;
+}
+""", 3),
+
+    ("inc_loop", """
+i32 main() {
+    i32 i = 0;
+    i32 s = 0;
+    while (i < 5) {
+        s += i;
+        i++;
+    }
+    return s;
+}
+""", 10),
+
+    ("inc_member", """
+class Counter {
+    i32 n;
+}
+i32 main() {
+    Counter c = new Counter;
+    c.n = 10;
+    c.n++;
+    ++c.n;
+    return c.n;
+}
+""", 12),
+
+    ("inc_array", """
+i32 main() {
+    i32[] arr;
+    arr.push(1);
+    arr.push(2);
+    arr[0]++;
+    ++arr[1];
+    return arr[0] + arr[1];
+}
+""", 5),
+
     ("if_else", """
 i32 main() {
     i32 x = 3;
@@ -2087,6 +2141,35 @@ i32 main() {
     return 0;
 }
 """, "compound assignment not supported"),
+
+    ("bad_inc_class", """
+class Counter {
+    i32 n;
+}
+i32 main() {
+    Counter c = new Counter;
+    c++;
+    return 0;
+}
+""", "increment/decrement not supported"),
+
+    ("bad_inc_expr", """
+i32 main() {
+    i32 x = 0;
+    i32 y = x++;
+    return y;
+}
+""", "increment/decrement not allowed"),
+
+    ("bad_inc_condition", """
+i32 main() {
+    i32 x = 0;
+    if (x++) {
+        return 1;
+    }
+    return 0;
+}
+""", "increment/decrement not allowed"),
 ]
 
 # ============================================================

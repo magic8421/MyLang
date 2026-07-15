@@ -46,6 +46,8 @@ typedef enum {
     TOK_MINUS_ASSIGN,
     TOK_STAR_ASSIGN,
     TOK_SLASH_ASSIGN,
+    TOK_INC,
+    TOK_DEC,
     TOK_NOT,
     TOK_AND,
     TOK_OR,

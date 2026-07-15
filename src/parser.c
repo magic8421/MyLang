@@ -40,6 +40,20 @@ static int expr_is_direct_assignment(AstNode* node) {
     return node && node->ast_kind == AST_ASSIGN;
 }
 
+static int expr_is_inc_dec(AstNode* node) {
+    return node && node->ast_kind == AST_INC_DEC;
+}
+
+static int expr_contains_inc_dec(AstNode* node) {
+    if (!node) return 0;
+    if (node->ast_kind == AST_INC_DEC) return 1;
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        if (expr_contains_inc_dec(node->ast_children[i])) return 1;
+    }
+    return expr_contains_inc_dec(node->next);
+}
+
 static int parser_is_type_param(const char* name);  /* defined below */
 
 static int is_type_name(const char* name) {
@@ -367,6 +381,16 @@ static AstNode* parse_postfix(Parser* p) {
             }
             expect(p, TOK_RPAREN);
             node = call;
+        } else if (check(p, TOK_INC) || check(p, TOK_DEC)) {
+            Token op = p->current; advance(p);
+            if (node->ast_kind == AST_INC_DEC) {
+                fprintf(stderr, "error at %d:%d: invalid increment/decrement expression\n",
+                        op.line, op.col);
+                p->had_error = 1;
+            }
+            AstNode* incdec = ast_new_node(AST_INC_DEC, op);
+            ast_add_child(incdec, node);
+            node = incdec;
         } else {
             break;
         }
@@ -390,6 +414,18 @@ static AstNode* parse_postfix(Parser* p) {
 }
 
 static AstNode* parse_unary(Parser* p) {
+    if (check(p, TOK_INC) || check(p, TOK_DEC)) {
+        Token op = p->current; advance(p);
+        AstNode* operand = parse_unary(p);
+        if (operand && operand->ast_kind == AST_INC_DEC) {
+            fprintf(stderr, "error at %d:%d: invalid increment/decrement expression\n",
+                    op.line, op.col);
+            p->had_error = 1;
+        }
+        AstNode* node = ast_new_node(AST_INC_DEC, op);
+        ast_add_child(node, operand);
+        return node;
+    }
     if (check(p, TOK_MINUS) || check(p, TOK_NOT)) {
         Token op = p->current; advance(p);
         AstNode* operand = parse_unary(p);
@@ -463,8 +499,8 @@ static AstNode* parse_expr(Parser* p) { return parse_assignment(p); }
 
 static AstNode* parse_expr_no_assign(Parser* p, const char* where) {
     AstNode* e = parse_expr(p);
-    if (e && expr_contains_assign(e)) {
-        fprintf(stderr, "error at %d:%d: assignment not allowed in %s\n",
+    if (e && (expr_contains_assign(e) || expr_contains_inc_dec(e))) {
+        fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in %s\n",
                 e->ast_token.line, e->ast_token.col, where);
         p->had_error = 1;
     }
@@ -529,8 +565,8 @@ static AstNode* parse_var_decl(Parser* p) {
         advance(p);
         AstNode* init = parse_expr(p);
         ast_add_child(node, init);
-        if (init && !p->had_error && !expr_is_direct_assignment(init) && expr_contains_assign(init)) {
-            fprintf(stderr, "error at %d:%d: assignment not allowed in variable initializer\n",
+        if (init && !p->had_error && !expr_is_direct_assignment(init) && (expr_contains_assign(init) || expr_contains_inc_dec(init))) {
+            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in variable initializer\n",
                     init->ast_token.line, init->ast_token.col);
             p->had_error = 1;
         }
@@ -554,8 +590,8 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
-        if (expr_contains_assign(cond)) {
-            fprintf(stderr, "error at %d:%d: assignment not allowed in if condition\n",
+        if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
+            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in if condition\n",
                     cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
@@ -577,8 +613,8 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
-        if (expr_contains_assign(cond)) {
-            fprintf(stderr, "error at %d:%d: assignment not allowed in while condition\n",
+        if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
+            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in while condition\n",
                     cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
@@ -607,10 +643,16 @@ static AstNode* parse_stmt(Parser* p) {
     /* expression statement */
     if (!check(p, TOK_EOF) && !check(p, TOK_RBRACE)) {
         AstNode* expr = parse_expr(p);
-        if (expr && !p->had_error && !expr_is_direct_assignment(expr) && expr_contains_assign(expr)) {
-            fprintf(stderr, "error at %d:%d: assignment not allowed in expression statement\n",
-                    expr->ast_token.line, expr->ast_token.col);
-            p->had_error = 1;
+        if (expr && !p->had_error) {
+            int has_assign = expr_contains_assign(expr);
+            int has_inc_dec = expr_contains_inc_dec(expr);
+            int is_direct_assign = expr_is_direct_assignment(expr);
+            int is_direct_inc_dec = expr_is_inc_dec(expr);
+            if ((!is_direct_assign && has_assign) || (!is_direct_inc_dec && has_inc_dec)) {
+                fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in expression statement\n",
+                        expr->ast_token.line, expr->ast_token.col);
+                p->had_error = 1;
+            }
         }
         if (expr) {
             AstNode* es = ast_new_node(AST_EXPR_STMT, expr->ast_token);
