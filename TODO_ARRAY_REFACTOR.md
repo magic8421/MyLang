@@ -20,7 +20,9 @@ capacity and element-size information, which blocks a proper `push`/`pop`/
 ## Goals
 
 1. Split `ObjHeader` and `ArrayHeader` so classes do not carry array metadata.
-2. Add `capacity`, `length`, and `elem_size` to `ArrayHeader`.
+2. Add `capacity` and `length` to `ArrayHeader`.  Do **not** store `elem_size`; the
+   compiler passes it as an argument for primitive/struct arrays, and class/
+   interface helpers are specialized.
 3. Extract runtime helpers into a dedicated `runtime.c` file.
 4. Remove fixed-size array syntax `T[N]` from the language.
 5. Lay the groundwork for vector methods on `T[]`:
@@ -53,7 +55,6 @@ typedef struct ArrayHeaderTag {
     ObjHeader base;      /* refcount, type_id, weak */
     size_t capacity;     /* allocated slots */
     size_t length;       /* used slots */
-    size_t elem_size;    /* bytes per slot */
 } ArrayHeader;
 ```
 
@@ -61,11 +62,21 @@ Memory layout:
 
 ```text
 class instance:  [ObjHeader][class data]
-array:           [ObjHeader][capacity][length][elem_size][array data]
+array:           [ObjHeader][capacity][length][array data]
 ```
 
 Leak-check fields (`next`, `prev`, `alloc_trace`) stay in `ObjHeader` because
 both classes and arrays are tracked allocations.
+
+`elem_size` is intentionally **not** stored in `ArrayHeader`.  The compiler
+already knows the size of every element type:
+- primitive: `sizeof(int32_t)`, etc.
+- struct: `sizeof(Point)`
+- class array: element is a pointer, `sizeof(void*)`
+- interface array: element is a fat-pointer struct, `sizeof(IFoo)`
+
+For primitive/struct helpers the compiler passes `elem_size` as a call argument;
+class/interface helpers are specialized and do not need it.
 
 ## Design Decision: Runtime Dispatch vs. Compiler Specialization
 
@@ -159,12 +170,12 @@ keep `runtime.c`/`runtime.h` in `src/` and `#include` them.
 - Add `ArrayHeader` with `base`, `capacity`, `length`, `elem_size`.
 - Update `mylang_new_object` to allocate `sizeof(ObjHeader) + sz`.
 - Update `mylang_new_array` to allocate `sizeof(ArrayHeader) + count * elem_size`
-  and set `capacity = length = count`, `elem_size = elem_size`.
+  and set `capacity = length = count`.
 - Update `mylang_obj_hdr` macro to still work for both.
 - Update `mylang_release` to use `ArrayHeader*` inside the `TYPE_IS_ARRAY`
   branch.
 - Update bounds checks to read `ArrayHeader->length`.
-- Update struct array helper to read `ArrayHeader->elem_size`.
+- Update struct array helper to receive `elem_size` as a compile-time argument.
 
 ### 1.4 Fix `type_id` flag usage
 
@@ -246,8 +257,10 @@ WeakRef* mylang_array_pop_weak_class(void* arr);
 
 ### 3.5 Shared internals
 
-All helpers use a common `mylang_array_ensure_capacity(void** arr_ptr,
-size_t needed, size_t elem_size)` that reallocates when `capacity < needed`.
+All value-type helpers use a common
+`mylang_array_ensure_capacity(void** arr_ptr, size_t needed, size_t elem_size)`
+that reallocates when `capacity < needed`.  Class/interface helpers call a
+similar helper with `elem_size = sizeof(void*)` or `sizeof(IFoo)`.
 
 ## Phase 4: Vector Methods on `T[]`
 
@@ -322,7 +335,5 @@ element type.
 
 1. Should `runtime.c` be compiled into every test binary, or linked as a static
    library?
-2. Should `ArrayHeader.elem_size` be stored for primitive arrays too, or should
-   primitive helpers derive size from `type_id`?
-3. Should `.pop()` return an owned reference for class/interface, or should it
+2. Should `.pop()` return an owned reference for class/interface, or should it
    return a borrowed reference and require the caller to retain if needed?
