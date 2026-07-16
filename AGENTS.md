@@ -25,6 +25,10 @@ Source code lives under `src/`:
 - `symtab.c/h`, `codegen.c/h`
 - `main.c`, `util.h`
 
+## Codegen Conventions
+- `CodegenContext` holds the output stream in `ctx->out`. Helper functions in `codegen.c` do not take a separate `FILE*` parameter.
+- The current source line is tracked in the thread-local `__my_line` variable. The compiler emits `MY_LOC(line)` before expressions that may trigger runtime panics (e.g., array access) so `my_panic` can report the offending line.
+
 ## Type System
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `void`.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
