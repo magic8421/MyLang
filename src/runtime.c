@@ -91,88 +91,72 @@ void mylang_print_i32(int32_t v) {
     printf("%d", (int)v);
 }
 
-/* --- Builtin StringBuilder support -------------------------------------- */
+/* --- String append support ---------------------------------------------- */
 
-static void sb_ensure_extra(StringBuilder* sb, size_t extra) {
-    size_t needed = sb->buf.length + extra;
-    if (needed > sb->buf.capacity) {
-        mylang_array_reserve(&sb->buf, needed, 1);
+static void str_ensure_extra(String* s, size_t extra) {
+    size_t needed = s->bytes.length + extra;
+    if (needed > s->bytes.capacity) {
+        mylang_array_reserve(&s->bytes, needed, 1);
     }
 }
 
-static void sb_append_bytes(StringBuilder* sb, const char* p, size_t n) {
+static void str_append_bytes(String* s, const char* p, size_t n) {
     if (n == 0) return;
-    sb_ensure_extra(sb, n);
-    memcpy((char*)sb->buf.data + sb->buf.length, p, n);
-    sb->buf.length += n;
+    str_ensure_extra(s, n);
+    memcpy((char*)s->bytes.data + s->bytes.length, p, n);
+    s->bytes.length += n;
 }
 
-void _mylang_dtor_StringBuilder(StringBuilder* p) {
-    if (p) {
-        mylang_array_free(&p->buf, 1, MYLANG_ELEM_PRIMITIVE);
-    }
-}
-
-StringBuilder* mylang_stringbuilder_new(uint32_t type_id) {
-    StringBuilder* sb = (StringBuilder*)mylang_new_object(
-        sizeof(StringBuilder), type_id,
-        (void (*)(void*))_mylang_dtor_StringBuilder);
-    return sb;
-}
-
-void StringBuilder_append_string(StringBuilder* thiz, String* s) {
+void String_append_string(String* thiz, String* s) {
     if (s && s->bytes.data) {
-        sb_append_bytes(thiz, (const char*)s->bytes.data, s->bytes.length);
+        str_append_bytes(thiz, (const char*)s->bytes.data, s->bytes.length);
     }
 }
 
-void StringBuilder_append_i32(StringBuilder* thiz, int32_t v) {
+void mylang_string_append_cstr(String* thiz, const char* cstr) {
+    if (thiz && cstr) {
+        str_append_bytes(thiz, cstr, strlen(cstr));
+    }
+}
+
+void String_append_i32(String* thiz, int32_t v) {
     char buf[16];
     int n = snprintf(buf, sizeof(buf), "%d", (int)v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_i64(StringBuilder* thiz, int64_t v) {
+void String_append_i64(String* thiz, int64_t v) {
     char buf[24];
     int n = snprintf(buf, sizeof(buf), "%lld", (long long)v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_u32(StringBuilder* thiz, uint32_t v) {
+void String_append_u32(String* thiz, uint32_t v) {
     char buf[16];
     int n = snprintf(buf, sizeof(buf), "%u", (unsigned)v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_u64(StringBuilder* thiz, uint64_t v) {
+void String_append_u64(String* thiz, uint64_t v) {
     char buf[24];
     int n = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_f32(StringBuilder* thiz, float v) {
+void String_append_f32(String* thiz, float v) {
     char buf[32];
     int n = snprintf(buf, sizeof(buf), "%g", (double)v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_f64(StringBuilder* thiz, double v) {
+void String_append_f64(String* thiz, double v) {
     char buf[32];
     int n = snprintf(buf, sizeof(buf), "%g", v);
-    if (n > 0) sb_append_bytes(thiz, buf, (size_t)n);
+    if (n > 0) str_append_bytes(thiz, buf, (size_t)n);
 }
 
-void StringBuilder_append_char(StringBuilder* thiz, int8_t c) {
-    sb_append_bytes(thiz, (const char*)&c, 1);
-}
-
-String* StringBuilder_toString(StringBuilder* thiz) {
-    String* s = mylang_string_new(TYPE_ID_STRING, "");
-    if (thiz->buf.length > 0) {
-        mylang_array_resize(&s->bytes, thiz->buf.length, 1, MYLANG_ELEM_PRIMITIVE);
-        memcpy(s->bytes.data, thiz->buf.data, thiz->buf.length);
-    }
-    return s;
+void String_append_char(String* thiz, int8_t c) {
+    str_append_bytes(thiz, (const char*)&c, 1);
 }
 
 /* --- Array helpers ------------------------------------------------------ */

@@ -73,22 +73,20 @@ String* mylang_string_new(uint32_t type_id, const char* cstr);
 void    mylang_print_string(String* s);
 void    mylang_print_i32(int32_t v);
 
-/* Builtin StringBuilder class. */
-typedef struct StringBuilder {
-    MyArray buf;
-} StringBuilder;
+/* Mutable append API on String.  These are the native implementations of the
+   String class methods registered in symtab_init. */
+void String_append_string(String* thiz, String* s);
+void String_append_i32(String* thiz, int32_t v);
+void String_append_i64(String* thiz, int64_t v);
+void String_append_u32(String* thiz, uint32_t v);
+void String_append_u64(String* thiz, uint64_t v);
+void String_append_f32(String* thiz, float v);
+void String_append_f64(String* thiz, double v);
+void String_append_char(String* thiz, int8_t c);
 
-void _mylang_dtor_StringBuilder(StringBuilder* p);
-StringBuilder* mylang_stringbuilder_new(uint32_t type_id);
-void StringBuilder_append_string(StringBuilder* thiz, String* s);
-void StringBuilder_append_i32(StringBuilder* thiz, int32_t v);
-void StringBuilder_append_i64(StringBuilder* thiz, int64_t v);
-void StringBuilder_append_u32(StringBuilder* thiz, uint32_t v);
-void StringBuilder_append_u64(StringBuilder* thiz, uint64_t v);
-void StringBuilder_append_f32(StringBuilder* thiz, float v);
-void StringBuilder_append_f64(StringBuilder* thiz, double v);
-void StringBuilder_append_char(StringBuilder* thiz, int8_t c);
-String* StringBuilder_toString(StringBuilder* thiz);
+/* Codegen-only helper: append a C string literal to a String without
+   allocating a temporary String object. */
+void mylang_string_append_cstr(String* thiz, const char* cstr);
 
 /* Stack trace support.  Defined as translation-unit globals in runtime.c;
    macros below are used by generated code. */

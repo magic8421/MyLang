@@ -2184,6 +2184,84 @@ int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
     return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
 }
 """),
+
+    ("string_append", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    string s = "ab";
+    s.append_string("cd");
+    s.append_i32(12);
+    s.append_char('X');
+    if (!a.string_equals(s, "abcd12X")) {
+        return 1;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("fstring_tostring", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+class Point : IToString {
+    i32 x;
+    i32 y;
+    string toString() {
+        string s = "(";
+        s.append_i32(this.x);
+        s.append_string(", ");
+        s.append_i32(this.y);
+        s.append_string(")");
+        return s;
+    }
+}
+Point make_point() {
+    Point p = new Point;
+    p.x = 9;
+    p.y = 8;
+    return p;
+}
+i32 main() {
+    Asserts a = new Asserts;
+    Point p = new Point;
+    p.x = 3;
+    p.y = 4;
+    if (!a.string_equals(f"p={p}", "p=(3, 4)")) {
+        return 1;
+    }
+    IToString it = p;
+    if (!a.string_equals(f"it={it}", "it=(3, 4)")) {
+        return 2;
+    }
+    if (!a.string_equals(f"m={make_point()}", "m=(9, 8)")) {
+        return 3;
+    }
+    if (!a.string_equals(f"s={p.toString()}", "s=(3, 4)")) {
+        return 4;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
 ]
 
 # ============================================================
@@ -2353,6 +2431,17 @@ i32 main() {
     return 0;
 }
 """, "expected ';'"),
+
+    ("bad_fstring_type", """
+class Foo {
+    i32 v;
+}
+i32 main() {
+    Foo f = new Foo;
+    string s = f"{f}";
+    return 0;
+}
+""", "cannot interpolate type 'Foo'"),
 ]
 
 # ============================================================

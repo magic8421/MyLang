@@ -1,5 +1,8 @@
 # Agent Notes for MyLang
 
+## Communication
+- During long-running tasks, occasionally give a brief progress update on what you are currently doing and any issues encountered.
+
 ## Comment Style
 All source comments must be written in plain English.
 Do not use emojis or non-ASCII characters in comments or identifiers.
@@ -104,10 +107,11 @@ Source code lives under `src/`:
 
 ## Strings and f-strings
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
-- `StringBuilder` is a builtin class in `runtime.h`/`runtime.c` with native append methods (`append_string`, `append_i32`, `append_char`, etc.).
+- `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`.  There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
+- `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
-- Codegen emits a temporary `StringBuilder`, appends each part, and produces the result via `StringBuilder_toString`; each interpolated expression is evaluated exactly once and in source order.
-- Supported interpolation types: `string`, integer types, floating-point types, and `i8` characters (via `append_char`).  Other types are rejected until the `IStringable` interface is implemented.
+- Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
+- Interpolation dispatch: `string` and primitive types map to `String_append_*`; class types require a `string toString()` method (IToString) which is called directly; interface values dispatch through the vtable.
 - Floating-point numeric literals (e.g. `3.14`) are not yet supported by the lexer, so `append_f32`/`append_f64` can only be exercised with expression results.
 - Escaped braces (`\{`, `\}`, `{{`, `}}`) are not yet supported; `{` always starts an interpolation expression.
 
@@ -121,8 +125,8 @@ Source code lives under `src/`:
 ## Refcounting Rules
 - **Callee retains at return**: class-valued returns go through `mylang_retain(expr)`. Caller receives +1.
 - **Caller does NOT retain call results**: `codegen_var_decl` and assignment skip retain when RHS is `AST_CALL` or `AST_NEW`.
-- **Caller retain/release for guarded args**: non-local class-valued arguments to calls get caller-side `mylang_retain` before and `mylang_release` after the call. Local variables and parameters are unguarded (optimization).
-- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
+- **Caller retain/release for guarded args**: non-local class-valued arguments to calls are evaluated once into `_gN` temporaries. Owned guarded expressions (calls, `new`, string literals) are tracked on the cleanup list and released once at scope exit — this also covers if/while/for conditions and return paths where no post-call release could be emitted. Non-owned guarded expressions (e.g. field accesses) get a caller-side `mylang_retain` before and `mylang_release` after the call. Local variables and parameters are unguarded (optimization).
+- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Expressions whose value ownership is consumed by the surrounding statement (variable initializers, return expressions, expression-statement roots, assignment RHS) are never cleanup-tracked. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
 - **Class assignment**: RHS retained before LHS released to avoid UAF on self-assignment (`b = b.set(5)`).
 - **Class/interface fields own their values**: assigning a local or parameter to a class or interface field retains the source; the per-class destructor releases fields when the object is freed.
 - **Weak fields own their WeakRef control blocks**: weak class and weak interface fields release their `WeakRef` in the class destructor.

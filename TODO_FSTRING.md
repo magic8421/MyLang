@@ -10,19 +10,22 @@ print(msg);
 ```
 
 The f-string is pure compiler syntax sugar: it is lowered at compile time into
-a sequence of `StringBuilder` append calls.  No runtime interpolation parsing,
-no C `printf`, and no variadic function support in the language are required.
+a mutable `String` accumulator and a sequence of append calls.  No runtime
+interpolation parsing, no C `printf`, and no variadic function support in the
+language are required.
 
 ## Decisions
 
 * `string` is a magic class name provided by the standard library.  It is not
   a keyword; the compiler simply knows how to treat it specially.
-* `StringBuilder` is a normal class visible to users, because it is genuinely
-  useful on its own.
+* `String` is mutable and owns the append API directly.  There is no separate
+  `StringBuilder` type: unlike Java, our `String` is already a growable buffer,
+  and mutation through aliases is consistent with how every other class
+  behaves.
 * There is no `print(...)` variadic function.  Output is `print(string)` plus
   f-strings.
 * Format specifiers such as `{x:04d}` are not supported in the first version.
-* Custom objects participate in f-strings through the `IStringable` interface.
+* Custom objects participate in f-strings through the `IToString` interface.
 
 ## Why not `printf`?
 
@@ -53,32 +56,31 @@ typedef struct String {
 * `string` can be passed by value (copying the class pointer), returned, stored
   in class fields, and pushed into arrays.
 
-## StringBuilder
+## String append API
 
-A builtin standard-library class, also used by the compiler-generated f-string
-lowering:
+`String` is mutable and has native append methods, implemented in `runtime.c`
+and registered on the builtin `String` class:
 
 ```mylang
-class StringBuilder {
-    native void append_string(string s);  // append another String object
-    native void append_i32(i32 v);
-    native void append_i64(i64 v);
-    native void append_u32(u32 v);
-    native void append_u64(u64 v);
-    native void append_f32(f32 v);
-    native void append_f64(f64 v);
-    native void append_char(i8 c);
-    native string toString();
-}
+// methods of the builtin String class
+native void append_string(string s);  // append another String object
+native void append_i32(i32 v);
+native void append_i64(i64 v);
+native void append_u32(u32 v);
+native void append_u64(u64 v);
+native void append_f32(f32 v);
+native void append_f64(f64 v);
+native void append_char(i8 c);
 ```
 
-`StringBuilder` is implemented in `runtime.c` and registered as a builtin class
-so it can be used immediately without an import/module system.
+Appending through one alias is visible through all aliases, exactly like
+mutating any other class instance through a shared reference.  There is no
+copy-on-write.
 
-## IStringable
+## IToString
 
 ```mylang
-interface IStringable {
+interface IToString {
     string toString();
 }
 ```
@@ -92,19 +94,19 @@ interface.  Codegen emits `obj.toString()` and appends the resulting `string`.
 ordered list of parts:
 
 1. string literal `"hello "`
-2. expression `name`  (resolved to `string` or `IStringable`)
+2. expression `name`  (resolved to `string` or `IToString`)
 3. string literal `", count="`
 4. expression `n`     (resolved to `i32`)
 
 Codegen rewrites it as:
 
 ```c
-StringBuilder _sb;
-_sb.append_cstr("hello ");
-_sb.append_string(name);   // or append_i32 / call toString() etc.
-_sb.append_cstr(", count=");
-_sb.append_i32(n);
-String* _s = _sb.toString();
+String* _fs = mylang_string_new(MYLANG_TID_String, "");
+mylang_string_append_cstr(_fs, "hello ");
+String_append_string(_fs, name);   // or append_i32 / call toString() etc.
+mylang_string_append_cstr(_fs, ", count=");
+String_append_i32(_fs, n);
+// _fs is the value of the f-string expression
 ```
 
 Each interpolated expression is evaluated exactly once and in source order.
@@ -130,17 +132,19 @@ Escape braces inside f-strings: not supported in the first version.  `\{` and
 ## Codegen changes
 
 * Recognize `AST_STRING_LIT` and `AST_FSTRING`.
-* For f-string, emit a unique `StringBuilder` temporary variable, emit append
-  calls for each segment, and emit `toString()` as the value of the expression.
-* Make sure the temporary `StringBuilder` is released / cleaned up if it holds
-  any owned references (it should not; it only borrows appended strings).
+* For f-string, emit a unique `String` accumulator temporary, emit append
+  calls for each segment, and use the accumulator itself as the value of the
+  expression.
+* The accumulator and any owned interpolation temporaries are released via the
+  normal cleanup list.
 * Update `c_type_str` so `string` maps to `String*`.
 
 ## Runtime additions
 
-* `String` allocation helper: `String* mylang_string_new(const char* cstr)`.
-* `StringBuilder` native methods implemented in C using a growable byte buffer.
-* Optional `mylang_print_string(String* s)` / `mylang_print_int(i32 v)` for
+* `String` allocation helper: `String* mylang_string_new(uint32_t tid, const char* cstr)`.
+* `String` native append methods implemented in C using the growable `bytes`
+  buffer, plus the codegen-only `mylang_string_append_cstr` helper.
+* Optional `mylang_print_string(String* s)` / `mylang_print_i32(i32 v)` for
   the temporary debug `Logger` class.
 
 ## Phased plan
@@ -151,17 +155,17 @@ Escape braces inside f-strings: not supported in the first version.  `\{` and
    * Add native `puts(string)` and `puti(i32)` in a debug `Logger` class
      so development can continue without f-strings.
 
-2. **StringBuilder runtime** ✅
-   * Implement `StringBuilder` as a builtin class with native append methods.
-   * Verify it can produce a `string` and that refcounting is correct.
+2. **String append runtime** ✅
+   * Implement native append methods on the builtin `String` class.
+   * Verify they can build a `string` and that refcounting is correct.
 
 3. **f-string parsing** ✅
    * Add `f"..."` tokenization and `AST_FSTRING`.
    * Lower simple f-strings with only string variables and primitive values.
 
-4. **IStringable**
+4. **IToString** ✅
    * Add the interface.
-   * Support custom object interpolation.
+   * Support custom object interpolation (class and interface values).
 
 5. **Cleanup**
    * Remove or hide the temporary `Logger` class once `print(string)` or

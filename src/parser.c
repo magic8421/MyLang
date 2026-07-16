@@ -916,7 +916,7 @@ static AstNode* parse_class_decl(Parser* p) {
     }
     Token name = p->current; advance(p);
 
-    if (strcmp(name.text, "String") == 0 || strcmp(name.text, "StringBuilder") == 0) {
+    if (strcmp(name.text, "String") == 0) {
         fprintf(stderr, "error at %d:%d: class name '%s' is reserved for a builtin type\n",
                 name.line, name.col, name.text);
         p->had_error = 1;
@@ -1151,6 +1151,12 @@ static AstNode* parse_interface_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+
+    if (strcmp(name.text, "IToString") == 0) {
+        fprintf(stderr, "error at %d:%d: interface name '%s' is reserved for a builtin type\n",
+                name.line, name.col, name.text);
+        p->had_error = 1;
+    }
 
     /* check name conflicts */
     if (symtab_find_class(name.text) || symtab_find_struct(name.text) ||

@@ -1,0 +1,41 @@
+class Logger {
+    native void puts(string s);
+    native void puti(i32 v);
+}
+
+class Point : IToString {
+    i32 x;
+    i32 y;
+    string toString() {
+        string s = "(";
+        s.append_i32(this.x);
+        s.append_string(", ");
+        s.append_i32(this.y);
+        s.append_string(")");
+        return s;
+    }
+}
+
+i32 main() {
+    Logger log = new Logger;
+
+    // String is mutable: append directly on it.
+    string s = "hello ";
+    s.append_string("world");
+    s.append_char('\n');
+    s.append_string("answer = ");
+    s.append_i32(42);
+    s.append_char('\n');
+    s.append_string("neg = ");
+    s.append_i32(-123);
+    s.append_char('\n');
+    log.puts(s);
+
+    // f-string with IToString object.
+    Point p = new Point;
+    p.x = 3;
+    p.y = 4;
+    log.puts(f"p = {p}\n");
+
+    return 0;
+}

@@ -14,29 +14,25 @@ if not exist "%VSPATH%" (
 if not exist "%VSPATH%" (
     set "VSPATH=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat"
 )
-if not exist "%VSPATH%" (
-    echo ERROR: Cannot find vcvars64.bat
-    exit /b 1
-)
 
 call "%VSPATH%" >nul 2>&1
 
 set "MYLANG=build\mylang.exe"
-set "SRC=examples\fstring_builder\fstring_builder.my"
-set "OUT=build\fstring_builder"
+set "SRC=examples\fstring_append\fstring_append.my"
+set "OUT=build\fstring_append"
 
 if not exist %OUT% mkdir %OUT%
 
-"%MYLANG%" "%SRC%" "%OUT%\fstring_builder.c"
+"%MYLANG%" "%SRC%" "%OUT%\fstring_append.c"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: mylang compilation failed
     exit /b 1
 )
 
-cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_builder.exe "%OUT%\fstring_builder.c" src\runtime.c examples\fstring_builder\fstring_native.c
+cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_append.exe "%OUT%\fstring_append.c" src\runtime.c examples\fstring_append\fstring_native.c
 if %ERRORLEVEL% neq 0 (
     echo ERROR: C compilation failed
     exit /b 1
 )
 
-echo Built: %OUT%\fstring_builder.exe
+echo Built: %OUT%\fstring_append.exe

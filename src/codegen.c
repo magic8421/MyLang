@@ -245,7 +245,7 @@ static void emit_header_postamble(CodegenContext* ctx) {
 }
 
 static int is_builtin_class(const char* name) {
-    return strcmp(name, "String") == 0 || strcmp(name, "StringBuilder") == 0;
+    return strcmp(name, "String") == 0;
 }
 
 static void emit_interface_forward_decls(CodegenContext* ctx) {
@@ -1535,28 +1535,92 @@ static int subexpr_needs_temp(AstNode* node) {
     return node->ast_kind == AST_CALL;
 }
 
+static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int is_interface);
+
+/* Returns 1 when the argument at arg_index of the call is passed to a weak
+   interface parameter.  An owned argument there is consumed by the
+   mylang_weakify_*_owned conversion (which releases it), so it must not be
+   released again via the cleanup list. */
+static int call_arg_consumed_by_weak_iface(AstNode* call, int arg_index) {
+    AstNode* callee = call->ast_children[0];
+    const Type* pt = NULL;
+    if (callee->ast_kind == AST_MEMBER_ACCESS) {
+        AstNode* obj = callee->ast_children[0];
+        const char* mname = callee->ast_token.text;
+        resolve_type(obj);
+        if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
+            ClassInfo* ci = obj->ast_resolved_type.type_arg_count > 0
+                ? symtab_instantiate_class_from_type(&obj->ast_resolved_type)
+                : symtab_find_class(obj->ast_resolved_type.class_name);
+            MethodInfo* mi = ci ? symtab_find_method_in_class(ci, mname) : NULL;
+            if (mi && arg_index < mi->param_count) pt = &mi->param_types[arg_index];
+        } else if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
+            InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, mname) : NULL;
+            if (im && arg_index < im->param_count) pt = &im->param_types[arg_index];
+        }
+    } else if (callee->ast_kind == AST_IDENT) {
+        FuncInfo* fi = symtab_find_func(callee->ast_token.text);
+        if (fi && arg_index < fi->param_count) pt = &fi->param_types[arg_index];
+    }
+    return pt && pt->is_weak && pt->type_kind == TYPE_INTERFACE;
+}
+
 /* Evaluate each guarded class subexpression into a temporary once, so we do
    not re-evaluate side-effecting expressions (e.g. method calls) when the
-   caller-side retain/release guards are emitted. */
-static void emit_guarded_temp_decls(CodegenContext* ctx, AstNode* expr, int indent) {
+   caller-side retain/release guards are emitted.
+
+   at_value_root marks positions whose value ownership is consumed by the
+   surrounding statement: the initializer of a variable declaration, the
+   expression of a return statement, the root of an expression statement, and
+   the RHS of an assignment.  Owned temporaries at those positions must NOT be
+   released locally.  Owned temporaries everywhere else (call arguments,
+   method receivers, f-string interpolation parts) are only borrowed by the
+   call, so they are tracked on the cleanup list and released once at scope
+   exit; this covers if/while/for conditions and return paths where no
+   post-call guard release is emitted.  owned_consumed marks arguments whose
+   ownership is consumed by the call itself (weak interface parameters). */
+static void emit_guarded_temp_decls_impl(CodegenContext* ctx, AstNode* expr, int indent,
+                                         int at_value_root, int owned_consumed) {
     if (!expr) return;
 
-    /* F-strings are lowered by emit_fstring_preambles. */
-    if (expr->ast_kind == AST_FSTRING) return;
+    /* F-strings are lowered by emit_fstring_preambles.  Still walk the next
+       chain so sibling arguments after an f-string are processed. */
+    if (expr->ast_kind == AST_FSTRING) {
+        emit_guarded_temp_decls_impl(ctx, expr->next, indent, at_value_root, 0);
+        return;
+    }
 
     /* Do not extract the LHS of an assignment into a temporary; it must remain
-       an lvalue so the assignment writes to the real location. */
+       an lvalue so the assignment writes to the real location.  The RHS value
+       is consumed by the assignment target. */
     if (expr->ast_kind == AST_ASSIGN) {
-        emit_guarded_temp_decls(ctx, expr->ast_children[1], indent);
-        emit_guarded_temp_decls(ctx, expr->next, indent);
+        emit_guarded_temp_decls_impl(ctx, expr->ast_children[1], indent, 1, 0);
+        emit_guarded_temp_decls_impl(ctx, expr->next, indent, at_value_root, 0);
         return;
     }
 
     int i;
     for (i = 0; i < expr->ast_child_count; i++) {
-        emit_guarded_temp_decls(ctx, expr->ast_children[i], indent);
+        if (expr->ast_kind == AST_CALL && i == 1) {
+            /* Call arguments: per-argument ownership consumption depends on
+               the target parameter type. */
+            AstNode* a = expr->ast_children[1];
+            int idx = 0;
+            while (a) {
+                AstNode* nxt = a->next;
+                a->next = NULL;
+                emit_guarded_temp_decls_impl(ctx, a, indent, 0,
+                                             call_arg_consumed_by_weak_iface(expr, idx));
+                a->next = nxt;
+                a = nxt;
+                idx++;
+            }
+        } else {
+            emit_guarded_temp_decls_impl(ctx, expr->ast_children[i], indent, 0, 0);
+        }
     }
-    emit_guarded_temp_decls(ctx, expr->next, indent);
+    emit_guarded_temp_decls_impl(ctx, expr->next, indent, at_value_root, 0);
 
     if (call_needs_guard(expr) && expr->ast_temp_name[0] == '\0') {
         int id = ctx->guard_tmp_id++;
@@ -1578,10 +1642,17 @@ static void emit_guarded_temp_decls(CodegenContext* ctx, AstNode* expr, int inde
                       "guard temporary name too long");
 
         fprintf(ctx->out, ";\n");
+
+        if (!at_value_root && !owned_consumed && expr_is_owned(expr)) {
+            cleanup_add(ctx, expr->ast_temp_name, 0,
+                        expr->ast_resolved_type.type_kind == TYPE_INTERFACE);
+        }
     }
 }
 
-static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int is_interface);
+static void emit_guarded_temp_decls(CodegenContext* ctx, AstNode* expr, int indent) {
+    emit_guarded_temp_decls_impl(ctx, expr, indent, 1, 0);
+}
 
 /* Extract an owned class/interface call into a temporary variable so it is
    evaluated exactly once.  The temporary is released via cleanup. */
@@ -1623,8 +1694,12 @@ static void emit_subexpr_temps_impl(CodegenContext* ctx, AstNode* node, int inde
     if (!node) return;
 
     /* F-strings are lowered by emit_fstring_preambles; do not extract parts
-       from inside them here. */
-    if (node->ast_kind == AST_FSTRING) return;
+       from inside them here.  Still walk the next chain so sibling arguments
+       after an f-string are processed. */
+    if (node->ast_kind == AST_FSTRING) {
+        emit_subexpr_temps_impl(ctx, node->next, indent, extract_root);
+        return;
+    }
 
     if (node->ast_kind == AST_AS_CAST) {
         emit_subexpr_temps_impl(ctx, node->ast_children[0], indent, 1);
@@ -1740,10 +1815,28 @@ static const char* fstring_temp_name(const char* prefix, int id) {
     return buf;
 }
 
-/* Emit the StringBuilder setup for an f-string before the statement that uses
-   it.  Each interpolated expression is evaluated once and in source order.
-   The AST_FSTRING node keeps the name of the temporary that holds the final
-   String result. */
+/* Look up a toString method suitable for f-string interpolation on a class
+   type.  Returns the class (instantiating generics if needed) through ci_out
+   when a matching 'string toString()' method exists. */
+static ClassInfo* fstring_find_tostring_class(Type* t) {
+    ClassInfo* ci = NULL;
+    if (t->type_arg_count > 0) {
+        ci = symtab_instantiate_class_from_type(t);
+    } else {
+        ci = symtab_find_class(t->class_name);
+    }
+    if (!ci) return NULL;
+    MethodInfo* mi = symtab_find_method_in_class(ci, "toString");
+    if (!mi || mi->param_count != 0 || !type_is_string(&mi->return_type)) {
+        return NULL;
+    }
+    return ci;
+}
+
+/* Emit the String accumulator setup for an f-string before the statement that
+   uses it.  Each interpolated expression is evaluated once and in source
+   order.  The accumulator String itself is the result; the AST_FSTRING node
+   keeps its temp name. */
 static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int indent) {
     if (!node || node->ast_kind != AST_FSTRING) return;
     if (node->ast_temp_name[0] != '\0') return;
@@ -1757,68 +1850,130 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
         part = part->next;
     }
 
-    int sb_id = ctx->fstring_tmp_id++;
-    const char* sb_name = fstring_temp_name("_fsb", sb_id);
-
+    const char* acc = fstring_temp_name("_fs", ctx->fstring_tmp_id++);
     indent_line(ctx, indent);
-    fprintf(ctx->out, "StringBuilder* %s = mylang_stringbuilder_new(MYLANG_TID_StringBuilder);\n", sb_name);
-    cleanup_add(ctx, sb_name, 0, 0);
+    fprintf(ctx->out, "String* %s = mylang_string_new(MYLANG_TID_String, \"\");\n", acc);
+    cleanup_add(ctx, acc, 0, 0);
 
     part = node->ast_children[0];
     while (part) {
         if (part->ast_kind == AST_STRING_LIT) {
-            int lit_id = ctx->fstring_tmp_id++;
-            const char* lit_name = fstring_temp_name("_fslit", lit_id);
-
+            /* Literal segments are appended directly from the C string; no
+               temporary String object is allocated. */
             indent_line(ctx, indent);
-            fprintf(ctx->out, "String* %s = mylang_string_new(MYLANG_TID_String, \"", lit_name);
+            fprintf(ctx->out, "mylang_string_append_cstr(%s, \"", acc);
             emit_c_string_literal(ctx, part->ast_token.text);
             fprintf(ctx->out, "\");\n");
-            cleanup_add(ctx, lit_name, 0, 0);
-
-            indent_line(ctx, indent);
-            fprintf(ctx->out, "StringBuilder_append_string(%s, %s);\n", sb_name, lit_name);
         } else {
-            /* Owned class/interface subexpressions inside the interpolation are
-               extracted into temporaries first so they are evaluated once.
-               Detach the part from the f-string part list so the helpers do not
-               walk into following sibling parts. */
+            /* Owned class/interface subexpressions inside the interpolation
+               are extracted into temporaries first so they are evaluated
+               once.  Detach the part from the f-string part list so the
+               helpers do not walk into following sibling parts. */
             AstNode* saved_next = part->next;
             part->next = NULL;
             emit_subexpr_temps(ctx, part, indent);
-            emit_guarded_temp_decls(ctx, part, indent);
+            /* The part value is only borrowed by the append call, so owned
+               temporaries must be released via the cleanup list. */
+            emit_guarded_temp_decls_impl(ctx, part, indent, 0, 0);
             part->next = saved_next;
 
             resolve_type(part);
             Type t = part->ast_resolved_type;
             const char* method = fstring_append_method(&t);
             if (method) {
-                if (type_is_string(&t)) {
-                    if (expr_is_owned(part)) {
-                        int expr_id = ctx->fstring_tmp_id++;
-                        const char* expr_name = fstring_temp_name("_fsexpr", expr_id);
-
-                        indent_line(ctx, indent);
-                        fprintf(ctx->out, "String* %s = ", expr_name);
-                        codegen_expr(ctx, part);
-                        fprintf(ctx->out, ";\n");
-                        cleanup_add(ctx, expr_name, 0, 0);
-
-                        indent_line(ctx, indent);
-                        fprintf(ctx->out, "StringBuilder_%s(%s, %s);\n", method, sb_name, expr_name);
-                    } else {
-                        /* Borrowed string (local variable, parameter, field):
-                           append directly without releasing the source. */
-                        indent_line(ctx, indent);
-                        fprintf(ctx->out, "StringBuilder_%s(%s, ", method, sb_name);
-                        codegen_expr(ctx, part);
-                        fprintf(ctx->out, ");\n");
-                    }
-                } else {
+                if (type_is_string(&t) && part->ast_temp_name[0] == '\0' &&
+                    expr_is_owned(part)) {
+                    /* Owned string not yet in a tracked temp (e.g. a string
+                       literal used directly as an interpolation): keep it in
+                       a cleanup-tracked temp so it is released once. */
+                    const char* expr_name = fstring_temp_name("_fse", ctx->fstring_tmp_id++);
                     indent_line(ctx, indent);
-                    fprintf(ctx->out, "StringBuilder_%s(%s, ", method, sb_name);
+                    fprintf(ctx->out, "String* %s = ", expr_name);
+                    codegen_expr(ctx, part);
+                    fprintf(ctx->out, ";\n");
+                    cleanup_add(ctx, expr_name, 0, 0);
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String_append_string(%s, %s);\n", acc, expr_name);
+                } else {
+                    /* Borrowed strings, tracked temps, and primitives are
+                       appended directly without releasing the source. */
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String_%s(%s, ", method, acc);
                     codegen_expr(ctx, part);
                     fprintf(ctx->out, ");\n");
+                }
+            } else if (t.type_kind == TYPE_CLASS) {
+                /* IToString: call the class's toString method. */
+                ClassInfo* ci = fstring_find_tostring_class(&t);
+                if (!ci) {
+                    fprintf(stderr, "error at %d:%d: cannot interpolate type '%s'; implement IToString ('string toString()')\n",
+                            part->ast_token.line, part->ast_token.col, t.class_name);
+                    ctx->codegen_error = 1;
+                } else {
+                    const char* obj_name = NULL;
+                    if (part->ast_temp_name[0] != '\0') {
+                        /* Already hoisted into a cleanup-tracked temp. */
+                        obj_name = part->ast_temp_name;
+                    } else if (expr_is_owned(part)) {
+                        obj_name = fstring_temp_name("_fso", ctx->fstring_tmp_id++);
+                        char tbuf[128];
+                        c_type_str(&t, tbuf, sizeof(tbuf));
+                        indent_line(ctx, indent);
+                        fprintf(ctx->out, "%s %s = ", tbuf, obj_name);
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ";\n");
+                        cleanup_add(ctx, obj_name, 0, 0);
+                    }
+                    const char* str_name = fstring_temp_name("_fss", ctx->fstring_tmp_id++);
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String* %s = %s_toString(", str_name, class_c_name(ci));
+                    if (obj_name) {
+                        fprintf(ctx->out, "%s", obj_name);
+                    } else {
+                        codegen_expr(ctx, part);
+                    }
+                    fprintf(ctx->out, ");\n");
+                    cleanup_add(ctx, str_name, 0, 0);
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String_append_string(%s, %s);\n", acc, str_name);
+                }
+            } else if (t.type_kind == TYPE_INTERFACE) {
+                /* IToString through dynamic dispatch. */
+                InterfaceInfo* ii = symtab_find_interface(t.class_name);
+                InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, "toString") : NULL;
+                if (!im || im->param_count != 0 || !type_is_string(&im->return_type)) {
+                    fprintf(stderr, "error at %d:%d: cannot interpolate interface '%s'; it has no 'string toString()'\n",
+                            part->ast_token.line, part->ast_token.col, t.class_name);
+                    ctx->codegen_error = 1;
+                } else {
+                    const char* obj_name = NULL;
+                    if (part->ast_temp_name[0] != '\0') {
+                        obj_name = part->ast_temp_name;
+                    } else if (expr_is_owned(part)) {
+                        obj_name = fstring_temp_name("_fso", ctx->fstring_tmp_id++);
+                        char tbuf[128];
+                        c_type_str(&t, tbuf, sizeof(tbuf));
+                        indent_line(ctx, indent);
+                        fprintf(ctx->out, "%s %s = ", tbuf, obj_name);
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ";\n");
+                        cleanup_add(ctx, obj_name, 0, 1);
+                    }
+                    const char* str_name = fstring_temp_name("_fss", ctx->fstring_tmp_id++);
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String* %s = (", str_name);
+                    if (obj_name) {
+                        fprintf(ctx->out, "%s).vtable->toString((%s).data", obj_name, obj_name);
+                    } else {
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ").vtable->toString((");
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ").data");
+                    }
+                    fprintf(ctx->out, ");\n");
+                    cleanup_add(ctx, str_name, 0, 0);
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "String_append_string(%s, %s);\n", acc, str_name);
                 }
             } else {
                 fprintf(stderr, "error at %d:%d: cannot interpolate value of type '%s' in f-string\n",
@@ -1829,14 +1984,8 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
         part = part->next;
     }
 
-    int result_id = ctx->fstring_tmp_id++;
-    const char* result_name = fstring_temp_name("_fsr", result_id);
-
-    indent_line(ctx, indent);
-    fprintf(ctx->out, "String* %s = StringBuilder_toString(%s);\n", result_name, sb_name);
-    cleanup_add(ctx, result_name, 0, 0);
-
-    CHECK_STRSCPY(strscpy(node->ast_temp_name, result_name, sizeof(node->ast_temp_name)),
+    /* The accumulator String is the result of the f-string expression. */
+    CHECK_STRSCPY(strscpy(node->ast_temp_name, acc, sizeof(node->ast_temp_name)),
                   "f-string result temp name too long");
 }
 
@@ -1861,11 +2010,14 @@ static void emit_call_guards(CodegenContext* ctx, AstNode* expr, int is_retain) 
         AstNode* callee = expr->ast_children[0];
         AstNode* args  = (expr->ast_child_count > 1) ? expr->ast_children[1] : NULL;
 
+        /* Owned arguments/receivers are tracked on the cleanup list by
+           emit_guarded_temp_decls and released at scope exit; only borrowed
+           (non-owned) ones need a retain/release pair around the call. */
         if (callee->ast_kind == AST_MEMBER_ACCESS) {
             AstNode* obj = callee->ast_children[0];
-            if (call_needs_guard(obj)) {
+            if (call_needs_guard(obj) && guard_needs_retain(obj)) {
                 if (is_retain) {
-                    if (guard_needs_retain(obj)) fprintf(ctx->out, "mylang_retain(%s); ", obj->ast_temp_name);
+                    fprintf(ctx->out, "mylang_retain(%s); ", obj->ast_temp_name);
                 } else {
                     fprintf(ctx->out, "mylang_release(%s); ", obj->ast_temp_name);
                 }
@@ -1873,9 +2025,9 @@ static void emit_call_guards(CodegenContext* ctx, AstNode* expr, int is_retain) 
         }
         AstNode* a = args;
         while (a) {
-            if (call_needs_guard(a)) {
+            if (call_needs_guard(a) && guard_needs_retain(a)) {
                 if (is_retain) {
-                    if (guard_needs_retain(a)) fprintf(ctx->out, "mylang_retain(%s); ", a->ast_temp_name);
+                    fprintf(ctx->out, "mylang_retain(%s); ", a->ast_temp_name);
                 } else {
                     fprintf(ctx->out, "mylang_release(%s); ", a->ast_temp_name);
                 }
