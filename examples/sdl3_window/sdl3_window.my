@@ -1,0 +1,31 @@
+class MySdl {
+    native i32 init();
+    native u64 createWindow(i32 w, i32 h);
+    native void pump();
+    native i32 shouldQuit();
+    native void delay(i32 ms);
+    native void destroyWindow(u64 win);
+    native void quit();
+}
+
+i32 main() {
+    MySdl sdl = new MySdl;
+    if (sdl.init() != 0) {
+        return 1;
+    }
+
+    u64 win = sdl.createWindow(800, 600);
+    if (win == 0) {
+        sdl.quit();
+        return 2;
+    }
+
+    while (sdl.shouldQuit() == 0) {
+        sdl.pump();
+        sdl.delay(16);
+    }
+
+    sdl.destroyWindow(win);
+    sdl.quit();
+    return 0;
+}
