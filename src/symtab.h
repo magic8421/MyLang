@@ -25,6 +25,8 @@ typedef struct InterfaceMethodInfo {
     int  param_count;
     char param_names[16][64];
     Type param_types[16];
+    AstNode* interface_method_default_body;
+    int  interface_method_line;
 } InterfaceMethodInfo;
 
 #define MAX_IFACE_METHODS 32
@@ -128,7 +130,8 @@ void           symtab_add_interface(const char* name, InterfaceInfo* info);
 InterfaceInfo* symtab_find_interface(const char* name);
 void           symtab_add_interface_method(InterfaceInfo* iface, const char* name,
                                            Type ret_type, int pc,
-                                           const char pn[][64], const Type pt[]);
+                                           const char pn[][64], const Type pt[],
+                                           AstNode* default_body, int line);
 InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
                                                    const char* method_name);
 

@@ -48,6 +48,7 @@ struct CodegenContext {
     int          cleanup_scope_stack[MAX_SCOPE];
     int          cleanup_scope_depth;
     int          last_loc_line;
+    int          is_interface_default_method;
 };
 
 static int s_last_codegen_error = 0;
@@ -1111,6 +1112,11 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
             break;
         case AST_IDENT: {
             if (strcmp(node->ast_token.text, "this") == 0) {
+                if (ctx->is_interface_default_method) {
+                    fprintf(stderr, "error at %d:%d: 'this' is not allowed in interface default method\n",
+                            node->ast_token.line, node->ast_token.col);
+                    ctx->codegen_error = 1;
+                }
                 fprintf(ctx->out, "thiz");
             } else {
                 SymEntry* e = symtab_lookup(node->ast_token.text);
@@ -3118,6 +3124,81 @@ static void emit_interface_c_helpers(CodegenContext* ctx) {
     }
 }
 
+static void emit_interface_default_methods(CodegenContext* ctx) {
+    extern InterfaceInfo* interface_list;
+    InterfaceInfo* ii = interface_list;
+    while (ii) {
+        int j;
+        for (j = 0; j < ii->method_count; j++) {
+            InterfaceMethodInfo* im = &ii->methods[j];
+            if (!im->interface_method_default_body) continue;
+
+            char rbuf[128];
+            c_type_str(&im->return_type, rbuf, sizeof(rbuf));
+            fprintf(ctx->out, "static %s mylang_IDefault_%s_%s(void* thiz",
+                    rbuf, ii->name, im->name);
+            int k;
+            for (k = 0; k < im->param_count; k++) {
+                char pbuf[128];
+                c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
+                if (im->param_types[k].is_ref) {
+                    fprintf(ctx->out, ", %s* %s", pbuf, im->param_names[k]);
+                } else {
+                    fprintf(ctx->out, ", %s %s", pbuf, im->param_names[k]);
+                }
+            }
+            fprintf(ctx->out, ")\n");
+
+            cleanup_push_scope(ctx);
+            fprintf(ctx->out, "{\n");
+
+            symtab_enter_scope();
+            Type prev_ret = ctx->return_type;
+            ctx->return_type = im->return_type;
+
+            /* register parameters in scope */
+            for (k = 0; k < im->param_count; k++) {
+                symtab_insert(im->param_names[k], im->param_types[k]);
+                if (im->param_types[k].is_weak && im->param_types[k].type_kind == TYPE_INTERFACE) {
+                    cleanup_add_weak_interface(ctx, im->param_names[k]);
+                } else if (im->param_types[k].is_weak) {
+                    cleanup_add(ctx, im->param_names[k], 1, 0);
+                }
+            }
+
+            /* default interface methods do not have a 'this' */
+            ctx->is_interface_default_method = 1;
+
+            indent_line(ctx, 1);
+            fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n",
+                    ii->name, im->name, ctx->source_file_escaped, im->interface_method_line);
+
+            fprintf(ctx->out, "{\n");
+            AstNode* body = im->interface_method_default_body;
+            if (body && body->ast_kind == AST_BLOCK) {
+                AstNode* s = body->ast_children[0];
+                while (s) {
+                    codegen_stmt(ctx, s, 2);
+                    s = s->next;
+                }
+            } else if (body) {
+                codegen_stmt(ctx, body, 2);
+            }
+            cleanup_pop_scope(ctx, 2);
+            fprintf(ctx->out, "}\n");
+
+            cleanup_pop_scope(ctx, 1);
+            symtab_exit_scope();
+            ctx->is_interface_default_method = 0;
+            indent_line(ctx, 1);
+            fprintf(ctx->out, "MY_POP();\n");
+            fprintf(ctx->out, "}\n\n");
+            ctx->return_type = prev_ret;
+        }
+        ii = ii->next;
+    }
+}
+
 static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci) {
     const char* class_c = class_c_name(ci);
     int i;
@@ -3126,45 +3207,57 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci) 
         InterfaceInfo* ii = symtab_find_interface(iface_name);
         if (!ii) continue;
 
-        /* emit thunk functions */
+        /* emit thunk functions only for methods implemented by the class;
+           methods with a default body are satisfied by the shared
+           mylang_IDefault_<Iface>_<method> implementation. */
         int j;
         for (j = 0; j < ii->method_count; j++) {
             InterfaceMethodInfo* im = &ii->methods[j];
-            char rbuf[128];
-            c_type_str(&im->return_type, rbuf, sizeof(rbuf));
+            MethodInfo* cls_m = symtab_find_method_in_class(ci, im->name);
+            if (cls_m) {
+                char rbuf[128];
+                c_type_str(&im->return_type, rbuf, sizeof(rbuf));
 
-            /* static RetType Class_IFace_method(void* thiz, params...) */
-            fprintf(ctx->out, "static %s %s_%s_%s(void* _p", rbuf, class_c, iface_name, im->name);
-            int k;
-            for (k = 0; k < im->param_count; k++) {
-                char pbuf[128];
-                c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
-                if (im->param_types[k].is_ref) {
-                    fprintf(ctx->out, ", %s* _a%d", pbuf, k);
-                } else {
-                    fprintf(ctx->out, ", %s _a%d", pbuf, k);
+                /* static RetType Class_IFace_method(void* thiz, params...) */
+                fprintf(ctx->out, "static %s %s_%s_%s(void* _p", rbuf, class_c, iface_name, im->name);
+                int k;
+                for (k = 0; k < im->param_count; k++) {
+                    char pbuf[128];
+                    c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
+                    if (im->param_types[k].is_ref) {
+                        fprintf(ctx->out, ", %s* _a%d", pbuf, k);
+                    } else {
+                        fprintf(ctx->out, ", %s _a%d", pbuf, k);
+                    }
                 }
-            }
-            fprintf(ctx->out, ") {\n");
+                fprintf(ctx->out, ") {\n");
 
-            /* call actual method */
-            fprintf(ctx->out, "    ");
-            if (im->return_type.type_kind != TYPE_VOID) {
-                fprintf(ctx->out, "return ");
+                /* call actual method */
+                fprintf(ctx->out, "    ");
+                if (im->return_type.type_kind != TYPE_VOID) {
+                    fprintf(ctx->out, "return ");
+                }
+                fprintf(ctx->out, "%s_%s((%s*)_p", class_c, im->name, class_c);
+                for (k = 0; k < im->param_count; k++) {
+                    fprintf(ctx->out, ", _a%d", k);
+                }
+                fprintf(ctx->out, ");\n");
+                fprintf(ctx->out, "}\n\n");
             }
-            fprintf(ctx->out, "%s_%s((%s*)_p", class_c, im->name, class_c);
-            for (k = 0; k < im->param_count; k++) {
-                fprintf(ctx->out, ", _a%d", k);
-            }
-            fprintf(ctx->out, ");\n");
-            fprintf(ctx->out, "}\n\n");
         }
 
         /* emit static vtable */
         fprintf(ctx->out, "static const %sVTable %s_%s_vtable = {\n", iface_name, class_c, iface_name);
         fprintf(ctx->out, "    .concrete_type_id = %u,\n", (unsigned)ci->type_id);
         for (j = 0; j < ii->method_count; j++) {
-            fprintf(ctx->out, "    .%s = %s_%s_%s", ii->methods[j].name, class_c, iface_name, ii->methods[j].name);
+            InterfaceMethodInfo* im = &ii->methods[j];
+            MethodInfo* cls_m = symtab_find_method_in_class(ci, im->name);
+            fprintf(ctx->out, "    .%s = ", im->name);
+            if (cls_m) {
+                fprintf(ctx->out, "%s_%s_%s", class_c, iface_name, im->name);
+            } else {
+                fprintf(ctx->out, "mylang_IDefault_%s_%s", iface_name, im->name);
+            }
             if (j < ii->method_count - 1) fprintf(ctx->out, ",");
             fprintf(ctx->out, "\n");
         }
@@ -3471,6 +3564,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     fprintf(ctx.out, "#endif\n\n");
 
     emit_interface_c_helpers(&ctx);
+    emit_interface_default_methods(&ctx);
 
     AstNode* decl = program->ast_children[0];
     while (decl) {

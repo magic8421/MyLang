@@ -1251,9 +1251,26 @@ static AstNode* parse_interface_decl(Parser* p) {
             }
         }
 
-        expect(p, TOK_SEMI);
+        AstNode* default_body = NULL;
+        if (check(p, TOK_LBRACE)) {
+            symtab_enter_scope();
+            int pi;
+            for (pi = 0; pi < mc; pi++) {
+                Type pt = mpt[pi];
+                symtab_insert(mpn[pi], pt);
+            }
+            default_body = parse_stmt(p);
+            symtab_exit_scope();
+        } else if (check(p, TOK_SEMI)) {
+            advance(p); /* ; */
+        } else {
+            fprintf(stderr, "error at %d:%d: expected ';' or '{' after interface method signature\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            break;
+        }
 
-        symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt);
+        symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt, default_body, mname.line);
     }
 
     expect(p, TOK_RBRACE);

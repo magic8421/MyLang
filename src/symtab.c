@@ -117,7 +117,7 @@ void symtab_init(void) {
         Type string_type = type_make_user(TYPE_CLASS, "String");
         string_type.is_pointer = 1;
         string_type.type_id = TYPE_ID_STRING;
-        symtab_add_interface_method(ii, "toString", string_type, 0, NULL, NULL);
+        symtab_add_interface_method(ii, "toString", string_type, 0, NULL, NULL, NULL, 0);
     }
 
     /* Builtin print(string) function.  Implemented by the runtime as
@@ -325,7 +325,8 @@ InterfaceInfo* symtab_find_interface(const char* name) {
 
 void symtab_add_interface_method(InterfaceInfo* iface, const char* name,
                                   Type ret_type, int pc,
-                                  const char pn[][64], const Type pt[]) {
+                                  const char pn[][64], const Type pt[],
+                                  AstNode* default_body, int line) {
     if (iface->method_count >= MAX_IFACE_METHODS) return;
     InterfaceMethodInfo* m = &iface->methods[iface->method_count++];
     CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "interface method name too long");
@@ -336,6 +337,8 @@ void symtab_add_interface_method(InterfaceInfo* iface, const char* name,
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
         m->param_types[i] = pt[i];
     }
+    m->interface_method_default_body = default_body;
+    m->interface_method_line = line;
 }
 
 InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
@@ -463,9 +466,13 @@ int symtab_validate_impls(void) {
                     cls_m = cls_m->next;
                 }
                 if (found == 0) {
-                    fprintf(stderr, "error: class '%s' does not implement '%s.%s()'\n",
-                            ci->name, iname, im->name);
-                    errors++;
+                    if (im->interface_method_default_body) {
+                        /* class uses interface default implementation */
+                    } else {
+                        fprintf(stderr, "error: class '%s' does not implement '%s.%s()'\n",
+                                ci->name, iname, im->name);
+                        errors++;
+                    }
                 }
             }
         }

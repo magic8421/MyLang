@@ -1337,6 +1337,98 @@ i32 main() {
 }
 """, 99),
 
+    ("iface_default_method_basic", """
+interface IShape {
+    i32 area();
+    i32 isSquare() { return 0; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Circle c = new Circle;
+    c.radius = 2;
+    IShape s = c;
+    i32 a = s.area();
+    i32 sq = s.isSquare();
+    return a + sq;
+}
+""", 12),
+
+    ("iface_default_method_override", """
+interface IShape {
+    i32 area();
+    i32 isSquare() { return 0; }
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+    i32 isSquare() { return 1; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 4;
+    IShape s = sq;
+    return s.isSquare();
+}
+""", 1),
+
+    ("iface_default_method_param", """
+interface IShape {
+    i32 area();
+    i32 scaled(i32 factor) { return factor * 2; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Circle c = new Circle;
+    c.radius = 2;
+    IShape s = c;
+    return s.scaled(5);
+}
+""", 10),
+
+    ("iface_default_method_void", """
+interface IShape {
+    i32 area();
+    void bump() { }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Circle c = new Circle;
+    c.radius = 2;
+    IShape s = c;
+    s.bump();
+    return s.area();
+}
+""", 12),
+
+    ("iface_default_method_local", """
+interface IShape {
+    i32 area();
+    i32 doubled() {
+        i32 x = 2;
+        return x * 2;
+    }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Circle c = new Circle;
+    c.radius = 2;
+    IShape s = c;
+    return s.doubled();
+}
+""", 4),
+
     ("iface_retain_class", """
 interface IFactory {
     i32 val();
@@ -2359,6 +2451,20 @@ i32 main() {
     return 0;
 }
 """, "does not implement"),
+
+    ("bad_default_method_this", """
+interface IShape {
+    i32 area();
+    i32 bad() { return this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    return 0;
+}
+""", "'this' is not allowed in interface default method"),
 
     ("bad_iface_method_conflict", """
 interface IFoo {

@@ -1,4 +1,7 @@
 build/
-test/_t*.c
-test/_t*.my
+test/*.c
+test/*.my
+test/*.h
 __pycache__/
+*.obj
+*.md

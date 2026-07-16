@@ -218,7 +218,7 @@ Source code lives under `src/`:
 - Arrays cannot be returned by value, passed by value, or assigned directly; use `ref T[]` parameters and `move_to(ref)` / `copy_to(ref)`.
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
-- Interface default method implementations not yet supported.
+- Interface default method implementations are now supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
 - No AST deallocation function (one-shot compiler).
 
 ## Class Field Destructors
