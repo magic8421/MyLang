@@ -65,7 +65,7 @@ Source code lives under `src/`:
 - `body` is a single statement or a block.
 - Variables declared in `init` are scoped to the loop (not visible after it) and are released on normal loop exit.
 - Assignment and increment/decrement are not allowed in the `condition` expression.
-- `break` and `continue` are not supported yet.
+- `break` exits the innermost loop; `continue` skips to the next iteration. Both correctly run cleanup for local variables.
 
 ## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.

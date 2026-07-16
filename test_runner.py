@@ -335,6 +335,107 @@ i32 main() {
 }
 """, 8),
 
+    ("break_while", """
+i32 main() {
+    i32 i = 0;
+    i32 s = 0;
+    while (i < 10) {
+        i = i + 1;
+        if (i > 5) { break; }
+        s = s + i;
+    }
+    return s;
+}
+""", 15),
+
+    ("break_for", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 0; i < 10; i = i + 1) {
+        if (i > 5) { break; }
+        s = s + i;
+    }
+    return s;
+}
+""", 15),
+
+    ("continue_while", """
+i32 main() {
+    i32 i = 0;
+    i32 s = 0;
+    while (i < 10) {
+        i = i + 1;
+        if (i % 2 == 0) { continue; }
+        s = s + i;
+    }
+    return s;
+}
+""", 25),
+
+    ("continue_for", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 0; i < 10; i = i + 1) {
+        if (i % 2 == 0) { continue; }
+        s = s + i;
+    }
+    return s;
+}
+""", 25),
+
+    ("break_with_cleanup", """
+class Counter {
+    i32 val;
+}
+i32 main() {
+    i32 s = 0;
+    i32 i = 0;
+    while (i < 10) {
+        Counter c = new Counter;
+        c.val = i;
+        if (i > 5) { break; }
+        s = s + c.val;
+        i = i + 1;
+    }
+    return s;
+}
+""", 15),
+
+    ("continue_with_cleanup", """
+class Counter {
+    i32 val;
+}
+i32 main() {
+    i32 s = 0;
+    i32 i = 0;
+    while (i < 10) {
+        i = i + 1;
+        Counter c = new Counter;
+        c.val = i;
+        if (i % 2 == 0) { continue; }
+        s = s + c.val;
+    }
+    return s;
+}
+""", 25),
+
+    ("break_nested", """
+i32 main() {
+    i32 s = 0;
+    i32 i = 0;
+    while (i < 3) {
+        i32 j = 0;
+        while (j < 3) {
+            s = s + 1;
+            if (j == 1) { break; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    return s;
+}
+""", 6),
+
     ("if_else", """
 i32 main() {
     i32 x = 3;
@@ -2636,6 +2737,20 @@ i32 main() {
     return 0;
 }
 """, "cannot interpolate type 'Foo'"),
+
+    ("bad_break_outside_loop", """
+i32 main() {
+    break;
+    return 0;
+}
+""", "'break' outside of loop"),
+
+    ("bad_continue_outside_loop", """
+i32 main() {
+    continue;
+    return 0;
+}
+""", "'continue' outside of loop"),
 ]
 
 # ============================================================

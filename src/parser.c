@@ -827,6 +827,18 @@ static AstNode* parse_stmt(Parser* p) {
         return node;
     }
 
+    if (check(p, TOK_KW_BREAK)) {
+        Token kw = p->current; advance(p);
+        expect(p, TOK_SEMI);
+        return ast_new_node(AST_BREAK, kw);
+    }
+
+    if (check(p, TOK_KW_CONTINUE)) {
+        Token kw = p->current; advance(p);
+        expect(p, TOK_SEMI);
+        return ast_new_node(AST_CONTINUE, kw);
+    }
+
     if (stmt_looks_like_var_decl(p)) {
         return parse_var_decl(p);
     }

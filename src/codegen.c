@@ -11,6 +11,7 @@ typedef struct CodegenContext CodegenContext;
 static void codegen_expr(CodegenContext* ctx, AstNode* node);
 static void indent_line(CodegenContext* ctx, int indent);
 static void emit_array_ptr_expr(CodegenContext* ctx, AstNode* arr_node);
+static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent);
 
 #define MAX_CLEANUP 128
 #define MAX_SCOPE 64
@@ -28,6 +29,8 @@ typedef struct {
     int         array_elem_kind;
     char        array_elem_size_expr[64];
 } CleanupEntry;
+
+#define MAX_LOOP 64
 
 struct CodegenContext {
     FILE* out;
@@ -49,6 +52,10 @@ struct CodegenContext {
     int          cleanup_scope_depth;
     int          last_loc_line;
     int          is_interface_default_method;
+    int          loop_depth;
+    int          loop_entry_cleanup_count[MAX_LOOP];
+    int          loop_break_label_id[MAX_LOOP];
+    int          loop_continue_label_id[MAX_LOOP];
 };
 
 static int s_last_codegen_error = 0;
@@ -2263,8 +2270,42 @@ static void cleanup_pop_scope(CodegenContext* ctx, int indent) {
     ctx->cleanup_count = saved;
 }
 
+static void cleanup_emit_to(CodegenContext* ctx, int target_count, int indent) {
+    int i;
+    for (i = ctx->cleanup_count - 1; i >= target_count; i--) {
+        const char* name = ctx->cleanup_entries[i].name;
+        indent_line(ctx, indent);
+        if (ctx->cleanup_entries[i].is_weak) {
+            fprintf(ctx->out, "mylang_weak_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface) {
+            fprintf(ctx->out, "mylang_weak_release(%s.wr);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        } else if (ctx->cleanup_entries[i].is_weak_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].weak_interface_array_size; j++) {
+                fprintf(ctx->out, "mylang_weak_release(%s[%d].wr);\n", name, j);
+            }
+        } else if (ctx->cleanup_entries[i].is_interface_array) {
+            int j;
+            for (j = 0; j < ctx->cleanup_entries[i].interface_array_size; j++) {
+                fprintf(ctx->out, "mylang_release(%s[%d].data);\n", name, j);
+            }
+        } else if (ctx->cleanup_entries[i].is_interface) {
+            fprintf(ctx->out, "mylang_release(%s.data);\n", name);
+        } else if (ctx->cleanup_entries[i].is_array) {
+            fprintf(ctx->out, "mylang_array_free(&%s, %s, %d);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name,
+                    ctx->cleanup_entries[i].array_elem_size_expr,
+                    ctx->cleanup_entries[i].array_elem_kind);
+        } else {
+            fprintf(ctx->out, "mylang_release(%s);\n",
+                    strcmp(name, "this") == 0 ? "thiz" : name);
+        }
+    }
+}
+
 static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent);
-static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent);
 
 static void indent_line(CodegenContext* ctx, int indent) {
     int i;
@@ -2559,11 +2600,39 @@ static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     emit_line_loc(ctx, node->ast_children[0], indent);
     prepare_expression(ctx, node->ast_children[0], indent);
     emit_bounds_checks(ctx, node->ast_children[0], indent);
+
+    int break_lbl = ctx->assign_tmp_id++;
+    int continue_lbl = ctx->assign_tmp_id++;
+    if (ctx->loop_depth < MAX_LOOP) {
+        ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
+        ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
+        ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
+    }
+    ctx->loop_depth++;
+
     indent_line(ctx, indent);
-    fprintf(ctx->out, "while (");
+    fprintf(ctx->out, "while (1)\n");
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "{\n");
+    cleanup_push_scope(ctx);
+
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "if (!(");
     codegen_expr(ctx, node->ast_children[0]);
-    fprintf(ctx->out, ")\n");
-    codegen_body(ctx, node->ast_children[1], indent);
+    fprintf(ctx->out, ")) goto _my_break%d;\n", break_lbl);
+
+    codegen_body(ctx, node->ast_children[1], indent + 1);
+
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "_my_continue%d:;\n", continue_lbl);
+
+    cleanup_pop_scope(ctx, indent + 1);
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "}\n");
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "_my_break%d:;\n", break_lbl);
+
+    ctx->loop_depth--;
 }
 
 static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
@@ -2590,34 +2659,48 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         }
     }
 
+    int break_lbl = ctx->assign_tmp_id++;
+    int continue_lbl = ctx->assign_tmp_id++;
+    if (ctx->loop_depth < MAX_LOOP) {
+        ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
+        ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
+        ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
+    }
+    ctx->loop_depth++;
+
     if (cond) {
         emit_line_loc(ctx, cond, indent + 1);
         prepare_expression(ctx, cond, indent + 1);
         emit_bounds_checks(ctx, cond, indent + 1);
     }
     indent_line(ctx, indent + 1);
-    if (cond) {
-        fprintf(ctx->out, "while (");
-        codegen_expr(ctx, cond);
-        fprintf(ctx->out, ")\n");
-    } else {
-        fprintf(ctx->out, "while (1)\n");
-    }
-
-    /* The body gets its own cleanup scope so variables declared inside it are
-       released at the end of each iteration. The step runs after the body. */
+    fprintf(ctx->out, "while (1)\n");
     indent_line(ctx, indent + 1);
     fprintf(ctx->out, "{\n");
     cleanup_push_scope(ctx);
-    if (body && body->ast_kind == AST_BLOCK) {
-        AstNode* s = body->ast_children[0];
-        while (s) {
-            codegen_stmt(ctx, s, indent + 2);
-            s = s->next;
-        }
-    } else if (body) {
-        codegen_stmt(ctx, body, indent + 2);
+
+    if (cond) {
+        indent_line(ctx, indent + 2);
+        fprintf(ctx->out, "if (!(");
+        codegen_expr(ctx, cond);
+        fprintf(ctx->out, ")) goto _my_break%d;\n", break_lbl);
     }
+
+    if (body) {
+        if (body->ast_kind == AST_BLOCK) {
+            AstNode* s = body->ast_children[0];
+            while (s) {
+                codegen_stmt(ctx, s, indent + 2);
+                s = s->next;
+            }
+        } else {
+            codegen_stmt(ctx, body, indent + 2);
+        }
+    }
+
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "_my_continue%d:;\n", continue_lbl);
+
     if (step) {
         AstNode es;
         memset(&es, 0, sizeof(es));
@@ -2627,13 +2710,48 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         es.ast_child_count = 1;
         codegen_expr_stmt(ctx, &es, indent + 2);
     }
+
     cleanup_pop_scope(ctx, indent + 2);
     indent_line(ctx, indent + 1);
     fprintf(ctx->out, "}\n");
 
+    ctx->loop_depth--;
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "_my_break%d:;\n", break_lbl);
+
     cleanup_pop_scope(ctx, indent + 1);
     indent_line(ctx, indent);
     fprintf(ctx->out, "}\n");
+}
+
+static void codegen_break_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    (void)node;
+    if (ctx->loop_depth == 0) {
+        fprintf(stderr, "error at %d:%d: 'break' outside of loop\n",
+                node->ast_token.line, node->ast_token.col);
+        ctx->codegen_error = 1;
+        return;
+    }
+    int idx = ctx->loop_depth - 1;
+    int target = ctx->loop_entry_cleanup_count[idx];
+    cleanup_emit_to(ctx, target, indent);
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "goto _my_break%d;\n", ctx->loop_break_label_id[idx]);
+}
+
+static void codegen_continue_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    (void)node;
+    if (ctx->loop_depth == 0) {
+        fprintf(stderr, "error at %d:%d: 'continue' outside of loop\n",
+                node->ast_token.line, node->ast_token.col);
+        ctx->codegen_error = 1;
+        return;
+    }
+    int idx = ctx->loop_depth - 1;
+    int target = ctx->loop_entry_cleanup_count[idx];
+    cleanup_emit_to(ctx, target, indent);
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "goto _my_continue%d;\n", ctx->loop_continue_label_id[idx]);
 }
 
 static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) {
@@ -3026,6 +3144,12 @@ static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             break;
         case AST_RETURN_STMT:
             codegen_return_stmt(ctx, node, indent);
+            break;
+        case AST_BREAK:
+            codegen_break_stmt(ctx, node, indent);
+            break;
+        case AST_CONTINUE:
+            codegen_continue_stmt(ctx, node, indent);
             break;
         case AST_EXPR_STMT:
             codegen_expr_stmt(ctx, node, indent);
