@@ -1,0 +1,22 @@
+class Logger {
+    native void puts(string s);
+    native void puti(i32 v);
+}
+
+i32 main() {
+    Logger log = new Logger;
+
+    string msg = "hello, string world!";
+    log.puts(msg);
+    log.puts("\n");
+
+    log.puts("the answer is ");
+    log.puti(42);
+    log.puts("\n");
+
+    string copy = msg;
+    log.puts(copy);
+    log.puts("\n");
+
+    return 0;
+}

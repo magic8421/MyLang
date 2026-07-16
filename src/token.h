@@ -6,6 +6,7 @@ typedef enum {
     TOK_IDENT,
     TOK_INT_LIT,
     TOK_CHAR_LIT,
+    TOK_STRING_LIT,
 
     TOK_KW_U8,
     TOK_KW_U16,
@@ -31,6 +32,7 @@ typedef enum {
     TOK_KW_INTERFACE,
     TOK_KW_AS,
     TOK_KW_NATIVE,
+    TOK_KW_STRING,
 
     TOK_PLUS,
     TOK_MINUS,

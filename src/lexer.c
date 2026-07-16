@@ -34,6 +34,7 @@ static const KeywordEntry keywords[] = {
     {"interface", TOK_KW_INTERFACE},
     {"as",        TOK_KW_AS},
     {"native",    TOK_KW_NATIVE},
+    {"string",    TOK_KW_STRING},
     {NULL,        0},
 };
 
@@ -137,6 +138,54 @@ static Token read_number(Lexer* lexer) {
     return tok;
 }
 
+static Token read_string_literal(Lexer* lexer) {
+    lexer_advance(lexer); /* skip opening " */
+
+    char buf[256];
+    int len = 0;
+    int start_line = lexer->line;
+    int start_col  = lexer->col;
+
+    while (!lexer_is_eof(lexer) && lexer_peek_char(lexer) != '"') {
+        char c = lexer_peek_char(lexer);
+        if (c == '\\') {
+            lexer_advance(lexer);
+            if (lexer_is_eof(lexer)) {
+                fprintf(stderr, "lexer error at %d:%d: unterminated string literal\n",
+                        start_line, start_col);
+                return make_token(lexer, TOK_STRING_LIT, NULL, 0, 0);
+            }
+            c = lexer_peek_char(lexer);
+            switch (c) {
+                case 'n':  c = '\n'; break;
+                case 't':  c = '\t'; break;
+                case 'r':  c = '\r'; break;
+                case '\\': c = '\\'; break;
+                case '"':  c = '"';  break;
+                case '0':  c = '\0'; break;
+                default:
+                    fprintf(stderr, "lexer warning at %d:%d: unknown escape '\\%c'\n",
+                            lexer->line, lexer->col, c);
+                    break;
+            }
+        }
+        if (len < 255) {
+            buf[len++] = c;
+        }
+        lexer_advance(lexer);
+    }
+
+    if (lexer_is_eof(lexer)) {
+        fprintf(stderr, "lexer error at %d:%d: unterminated string literal\n",
+                start_line, start_col);
+        return make_token(lexer, TOK_STRING_LIT, NULL, 0, 0);
+    }
+
+    lexer_advance(lexer); /* skip closing " */
+    buf[len] = '\0';
+    return make_token(lexer, TOK_STRING_LIT, buf, len, len + 2);
+}
+
 static Token read_char_literal(Lexer* lexer) {
     lexer_advance(lexer); /* skip opening ' */
 
@@ -199,6 +248,10 @@ Token lexer_next(Lexer* lexer) {
 
     if (c == '\'') {
         return read_char_literal(lexer);
+    }
+
+    if (c == '"') {
+        return read_string_literal(lexer);
     }
 
     /* two-character operators */

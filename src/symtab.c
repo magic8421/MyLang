@@ -26,6 +26,20 @@ void symtab_init(void) {
     current_scope = calloc(1, sizeof(Scope));
     current_scope->level = scope_counter++;
     next_type_id = TYPE_ID_CLASS_BASE;
+
+    /* Builtin String class.  Defined in runtime.h; the compiler only needs to
+       know its name, type_id, and single MyArray field. */
+    {
+        ClassInfo* str_info = (ClassInfo*)calloc(1, sizeof(ClassInfo));
+        CHECK_STRSCPY(strscpy(str_info->name, "String", sizeof(str_info->name)),
+                      "builtin class name too long");
+        str_info->type_id = TYPE_ID_STRING;
+        symtab_add_class("String", str_info);
+
+        Type bytes_type = type_make_primitive(TYPE_U8);
+        bytes_type.is_array = 1;
+        symtab_add_field(str_info, "bytes", bytes_type);
+    }
 }
 
 void symtab_enter_scope(void) {

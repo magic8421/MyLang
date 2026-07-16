@@ -98,6 +98,12 @@ static const char* class_c_name(const ClassInfo* ci) {
     return ci->name;
 }
 
+static int expr_is_owned(AstNode* node) {
+    return node && (node->ast_kind == AST_CALL ||
+                    node->ast_kind == AST_NEW ||
+                    node->ast_kind == AST_STRING_LIT);
+}
+
 static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
     snprintf(buf, bufsz, "Weak%s", t->class_name);
 }
@@ -237,29 +243,49 @@ static void emit_header_postamble(CodegenContext* ctx) {
     fprintf(ctx->header, "#endif /* %s */\n", guard);
 }
 
+static int is_builtin_class(const char* name) {
+    return strcmp(name, "String") == 0;
+}
+
+static void emit_interface_forward_decls(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    extern InterfaceInfo* interface_list;
+    InterfaceInfo* ii = interface_list;
+    while (ii) {
+        /* Forward-declare the vtable type so the fat-pointer struct can use a
+           pointer to it.  The vtable definition itself is emitted after all
+           class/struct layouts are known, because its method pointers may use
+           those value types by value. */
+        fprintf(h, "typedef struct %sVTable %sVTable;\n", ii->name, ii->name);
+        fprintf(h, "typedef struct %s {\n", ii->name);
+        fprintf(h, "    void* data;\n");
+        fprintf(h, "    const %sVTable* vtable;\n", ii->name);
+        fprintf(h, "} %s;\n\n", ii->name);
+        fprintf(h, "typedef struct Weak%s {\n", ii->name);
+        fprintf(h, "    WeakRef* wr;\n");
+        fprintf(h, "    %sVTable* vt;\n", ii->name);
+        fprintf(h, "} Weak%s;\n\n", ii->name);
+        ii = ii->next;
+    }
+}
+
 static void emit_header_forward_decls(CodegenContext* ctx) {
     FILE* h = ctx->header;
     ClassInfo* ci = class_list;
     while (ci) {
-        if (!ci->is_generic) {
+        if (!ci->is_generic && !is_builtin_class(class_c_name(ci))) {
             const char* cn = class_c_name(ci);
             fprintf(h, "typedef struct %s %s;\n", cn, cn);
         }
         ci = ci->next;
     }
-    {
-        extern InterfaceInfo* interface_list;
-        InterfaceInfo* ii = interface_list;
-        while (ii) {
-            fprintf(h, "typedef struct %s %s;\n", ii->name, ii->name);
-            ii = ii->next;
-        }
-    }
+    emit_interface_forward_decls(ctx);
     fprintf(h, "\n");
 }
 
 static void emit_class_struct_def_to_header(CodegenContext* ctx, ClassInfo* ci, const char* class_c) {
     FILE* h = ctx->header;
+    if (is_builtin_class(class_c)) return;
     fprintf(h, "typedef struct %s {\n", class_c);
     if (ci->field_count == 0) {
         fprintf(h, "    char _pad;\n");
@@ -328,7 +354,7 @@ static void emit_header_destructor_prototypes(CodegenContext* ctx) {
     FILE* h = ctx->header;
     ClassInfo* ci = class_list;
     while (ci) {
-        if (!ci->is_generic) {
+        if (!ci->is_generic && !is_builtin_class(class_c_name(ci))) {
             const char* cc = class_c_name(ci);
             fprintf(h, "void _mylang_dtor_%s(%s* p);\n", cc, cc);
         }
@@ -416,6 +442,12 @@ static Type resolve_type(AstNode* node) {
         case AST_CHAR_LIT:
             t.type_kind = TYPE_I8;
             t.type_id = TYPE_ID_I8;
+            break;
+
+        case AST_STRING_LIT:
+            t = type_make_user(TYPE_CLASS, "String");
+            t.is_pointer = 1;
+            t.type_id = TYPE_ID_STRING;
             break;
 
         case AST_IDENT: {
@@ -641,7 +673,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             codegen_expr(ctx, arg);
         } else if (rt.type_kind == TYPE_INTERFACE) {
             /* strong interface -> weak interface */
-            if (arg->ast_kind == AST_CALL || arg->ast_kind == AST_NEW) {
+            if (expr_is_owned(arg)) {
                 fprintf(ctx->out, "mylang_weakify_%s_owned(", param_type->class_name);
                 codegen_expr(ctx, arg);
                 fprintf(ctx->out, ")");
@@ -652,7 +684,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             }
         } else if (rt.type_kind == TYPE_CLASS) {
             /* class -> weak interface */
-            if (arg->ast_kind == AST_CALL || arg->ast_kind == AST_NEW) {
+            if (expr_is_owned(arg)) {
                 fprintf(ctx->out, "mylang_weakify_%s_from_ptr_owned(", param_type->class_name);
                 codegen_expr(ctx, arg);
                 fprintf(ctx->out, ", &%s_%s_vtable)", rt.class_name, param_type->class_name);
@@ -996,6 +1028,29 @@ static void codegen_char_lit(CodegenContext* ctx, AstNode* node) {
     }
 }
 
+static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
+    const char* s = node->ast_token.text;
+    fprintf(ctx->out, "mylang_string_new(MYLANG_TID_String, \"");
+    while (*s) {
+        unsigned char c = (unsigned char)*s++;
+        switch (c) {
+            case '\n': fprintf(ctx->out, "\\n"); break;
+            case '\t': fprintf(ctx->out, "\\t"); break;
+            case '\r': fprintf(ctx->out, "\\r"); break;
+            case '\\': fprintf(ctx->out, "\\\\"); break;
+            case '"':  fprintf(ctx->out, "\\\""); break;
+            default:
+                if (c >= 32 && c <= 126) {
+                    fprintf(ctx->out, "%c", (char)c);
+                } else {
+                    fprintf(ctx->out, "\\x%02X", c);
+                }
+                break;
+        }
+    }
+    fprintf(ctx->out, "\")");
+}
+
 static void codegen_expr(CodegenContext* ctx, AstNode* node) {
     if (!node) return;
     resolve_type(node);
@@ -1011,6 +1066,9 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
             break;
         case AST_CHAR_LIT:
             codegen_char_lit(ctx, node);
+            break;
+        case AST_STRING_LIT:
+            codegen_string_lit(ctx, node);
             break;
         case AST_IDENT: {
             if (strcmp(node->ast_token.text, "this") == 0) {
@@ -1101,7 +1159,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                 Type at = lhs->ast_children[0]->ast_resolved_type;
                 if (at.is_array) {
                     /* array element assignment */
-                    int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                    int rhs_owned = (expr_is_owned(rhs));
                     resolve_type(rhs);
                     Type rt = rhs->ast_resolved_type;
 
@@ -1202,7 +1260,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                    or weakified. */
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
-                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_owned = (expr_is_owned(rhs));
 
                 fprintf(ctx->out, "((void)mylang_weak_release(");
                 codegen_expr(ctx, lhs);
@@ -1230,7 +1288,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                 }
                 fprintf(ctx->out, ")");
             } else if (lt.type_kind == TYPE_CLASS) {
-                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_owned = (expr_is_owned(rhs));
                 int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
                 /* Fields own their class references, so assigning a local or
                    parameter to a field must retain the source.  Local-to-local
@@ -1253,7 +1311,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
             } else if (lt.is_weak && lt.type_kind == TYPE_INTERFACE) {
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
-                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_owned = (expr_is_owned(rhs));
 
                 /* release old weak ref first */
                 fprintf(ctx->out, "((void)mylang_weak_release(");
@@ -1322,7 +1380,7 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
             } else if (lt.type_kind == TYPE_INTERFACE) {
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
-                int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+                int rhs_owned = (expr_is_owned(rhs));
 
                 fprintf(ctx->out, "((void)");
                 if (rt.type_kind == TYPE_CLASS) {
@@ -1443,7 +1501,7 @@ static int call_needs_guard(AstNode* arg) {
 
 static int guard_needs_retain(AstNode* node) {
     /* Calls/new already return an owned (+1) reference. */
-    return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
+    return !expr_is_owned(node);
 }
 
 static int return_expr_needs_retain(AstNode* node) {
@@ -1451,7 +1509,7 @@ static int return_expr_needs_retain(AstNode* node) {
        Local variables, fields, and array elements must be retained because
        the caller will release the returned value and the original owner still
        holds its own reference. */
-    return node->ast_kind != AST_CALL && node->ast_kind != AST_NEW;
+    return !expr_is_owned(node);
 }
 
 /* Sub-expressions that must be hoisted into a temporary so they are evaluated
@@ -1928,7 +1986,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
             AstNode* init = node->ast_children[0];
             resolve_type(init);
             Type rhs_type = init->ast_resolved_type;
-            int rhs_owned = (init->ast_kind == AST_CALL || init->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(init));
 
             indent_line(ctx, indent);
             fprintf(ctx->out, "%s %s;\n", winame, node->ast_token.text);
@@ -2021,8 +2079,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
             codegen_expr(ctx, node->ast_children[0]);
             fprintf(ctx->out, ");\n");
         } else {
-            int rhs_owned = (node->ast_children[0]->ast_kind == AST_CALL ||
-                             node->ast_children[0]->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(node->ast_children[0]));
             if (rhs_owned) {
                 int tmp_id = ctx->assign_tmp_id++;
                 indent_line(ctx, indent);
@@ -2049,7 +2106,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
         if (node->ast_child_count > 0) {
             AstNode* init = node->ast_children[0];
             resolve_type(init);
-            int rhs_owned = (init->ast_kind == AST_CALL || init->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(init));
 
             if (init->ast_resolved_type.type_kind == TYPE_CLASS) {
                 indent_line(ctx, indent);
@@ -2101,8 +2158,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     }
 
     if (node->ast_child_count > 0) {
-        if (type.type_kind == TYPE_CLASS && node->ast_children[0]->ast_kind != AST_NEW
-            && node->ast_children[0]->ast_kind != AST_CALL) {
+        if (type.type_kind == TYPE_CLASS && !expr_is_owned(node->ast_children[0])) {
             fprintf(ctx->out, " = mylang_retain(");
             codegen_expr(ctx, node->ast_children[0]);
             fprintf(ctx->out, ")");
@@ -2414,7 +2470,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             emit_stmt_call_retains(ctx, expr, indent);
 
             int id = ctx->assign_tmp_id++;
-            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(rhs));
 
             indent_line(ctx, indent);
             fprintf(ctx->out, "void* _my_assign_%d = ", id);
@@ -2444,7 +2500,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             emit_stmt_call_retains(ctx, expr, indent);
             resolve_type(rhs);
             Type rt = rhs->ast_resolved_type;
-            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(rhs));
 
             /* release old weak ref first */
             indent_line(ctx, indent);
@@ -2524,7 +2580,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             Type rt = rhs->ast_resolved_type;
 
             int id = ctx->assign_tmp_id++;
-            int rhs_owned = (rhs->ast_kind == AST_CALL || rhs->ast_kind == AST_NEW);
+            int rhs_owned = (expr_is_owned(rhs));
 
             if (rt.type_kind == TYPE_CLASS) {
                 indent_line(ctx, indent);
@@ -2634,8 +2690,8 @@ static void emit_interface_header_typedefs(CodegenContext* ctx) {
     InterfaceInfo* ii = interface_list;
     while (ii) {
         FILE* h = ctx->header;
-        /* VTable typedef */
-        fprintf(h, "typedef struct %sVTable {\n", ii->name);
+        /* VTable definition. */
+        fprintf(h, "struct %sVTable {\n", ii->name);
         fprintf(h, "    uint32_t concrete_type_id;\n");
         int j;
         for (j = 0; j < ii->method_count; j++) {
@@ -2655,19 +2711,7 @@ static void emit_interface_header_typedefs(CodegenContext* ctx) {
             }
             fprintf(h, ");\n");
         }
-        fprintf(h, "} %sVTable;\n\n", ii->name);
-
-        /* Fat pointer typedef (tagged so it can be forward-declared) */
-        fprintf(h, "typedef struct %s {\n", ii->name);
-        fprintf(h, "    void* data;\n");
-        fprintf(h, "    const %sVTable* vtable;\n", ii->name);
-        fprintf(h, "} %s;\n\n", ii->name);
-
-        /* Weak fat pointer typedef */
-        fprintf(h, "typedef struct Weak%s {\n", ii->name);
-        fprintf(h, "    WeakRef* wr;\n");
-        fprintf(h, "    %sVTable* vt;\n", ii->name);
-        fprintf(h, "} Weak%s;\n\n", ii->name);
+        fprintf(h, "};\n\n");
 
         ii = ii->next;
     }
@@ -3024,8 +3068,9 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     /* ---- Emit header ---- */
     emit_header_preamble(&ctx);
     emit_header_forward_decls(&ctx);
-    emit_interface_header_typedefs(&ctx);
 
+    /* Emit struct and class definitions before interface typedefs so that
+       interface method signatures can reference value types like SdlEvent. */
     {
         AstNode* decl = program->ast_children[0];
         while (decl) {
@@ -3051,6 +3096,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
         }
     }
 
+    emit_interface_header_typedefs(&ctx);
     emit_header_type_ids(&ctx);
     emit_header_destructor_prototypes(&ctx);
     emit_header_function_prototypes(&ctx);

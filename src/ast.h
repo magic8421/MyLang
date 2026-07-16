@@ -31,6 +31,7 @@ typedef enum {
 #define TYPE_ID_U64      7
 #define TYPE_ID_F32      8
 #define TYPE_ID_F64      9
+#define TYPE_ID_STRING   10
 #define TYPE_ID_CLASS_BASE 16
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U
@@ -79,6 +80,7 @@ typedef enum {
     AST_IDENT,
     AST_INT_LIT,
     AST_CHAR_LIT,
+    AST_STRING_LIT,
     AST_AS_CAST,
     AST_REF_ARG,
     AST_OUT_ARG,

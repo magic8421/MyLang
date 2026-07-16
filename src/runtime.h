@@ -62,6 +62,17 @@ typedef struct {
     void* data;
 } MyArray;
 
+/* Builtin String class.  Defined here because it is part of the standard
+   library and its layout must be known to both runtime.c and generated code. */
+typedef struct String {
+    MyArray bytes;
+} String;
+
+void _mylang_dtor_String(String* p);
+String* mylang_string_new(uint32_t type_id, const char* cstr);
+void    mylang_print_string(String* s);
+void    mylang_print_i32(int32_t v);
+
 /* Stack trace support.  Defined as translation-unit globals in runtime.c;
    macros below are used by generated code. */
 typedef struct {

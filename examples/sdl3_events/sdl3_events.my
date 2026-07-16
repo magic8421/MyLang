@@ -1,0 +1,55 @@
+struct SdlEvent {
+    i32 type;
+    i32 code;
+}
+
+interface SdlEventListener {
+    void onEvent(SdlEvent e);
+}
+
+class Logger : SdlEventListener {
+    i32 count;
+    void onEvent(SdlEvent e) {
+        this.count = this.count + 1;
+    }
+    i32 getCount() { return this.count; }
+}
+
+class SdlApp {
+    native i32 init();
+    native u64 createWindow(i32 w, i32 h);
+    native void addListener(SdlEventListener l);
+    native void removeListener(SdlEventListener l);
+    native void pump();
+    native i32 shouldQuit();
+    native void delay(i32 ms);
+    native void destroyWindow(u64 win);
+    native void quit();
+}
+
+i32 main() {
+    SdlApp app = new SdlApp;
+    if (app.init() != 0) {
+        return 1;
+    }
+
+    u64 win = app.createWindow(640, 480);
+    if (win == 0) {
+        app.quit();
+        return 2;
+    }
+
+    Logger logger = new Logger;
+    SdlEventListener listener = logger;
+    app.addListener(listener);
+
+    while (app.shouldQuit() == 0) {
+        app.pump();
+        app.delay(16);
+    }
+
+    app.removeListener(listener);
+    app.destroyWindow(win);
+    app.quit();
+    return logger.getCount();
+}

@@ -132,6 +132,11 @@ static Type parse_base_type(Parser* p) {
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.type_kind = TYPE_VOID;
+    } else if (check(p, TOK_KW_STRING)) {
+        advance(p);
+        t = type_make_user(TYPE_CLASS, "String");
+        t.is_pointer = 1;
+        t.type_id = TYPE_ID_STRING;
     } else if (check(p, TOK_IDENT)) {
         const char* name = p->current.text;
         if (parser_is_type_param(name)) {
@@ -247,6 +252,14 @@ static AstNode* parse_primary(Parser* p) {
         AstNode* n = ast_new_node(AST_CHAR_LIT, t);
         n->ast_resolved_type.type_kind = TYPE_I8;
         n->ast_resolved_type.type_id = TYPE_ID_I8;
+        return n;
+    }
+    if (check(p, TOK_STRING_LIT)) {
+        Token t = p->current; advance(p);
+        AstNode* n = ast_new_node(AST_STRING_LIT, t);
+        n->ast_resolved_type = type_make_user(TYPE_CLASS, "String");
+        n->ast_resolved_type.is_pointer = 1;
+        n->ast_resolved_type.type_id = TYPE_ID_STRING;
         return n;
     }
     if (check(p, TOK_IDENT)) {
@@ -525,17 +538,18 @@ static AstNode* parse_block(Parser* p) {
     return block;
 }
 
-static int is_primitive_type_token(Parser* p) {
+static int is_type_token(Parser* p) {
     return check(p, TOK_KW_U8)   || check(p, TOK_KW_U16)  ||
            check(p, TOK_KW_U32)  || check(p, TOK_KW_U64)  ||
            check(p, TOK_KW_I8)   || check(p, TOK_KW_I16)  ||
            check(p, TOK_KW_I32)  || check(p, TOK_KW_I64)  ||
-           check(p, TOK_KW_F32)  || check(p, TOK_KW_F64);
+           check(p, TOK_KW_F32)  || check(p, TOK_KW_F64)  ||
+           check(p, TOK_KW_STRING);
 }
 
 static int stmt_looks_like_var_decl(Parser* p) {
     if (check(p, TOK_KW_WEAK)) return 1;
-    if (is_primitive_type_token(p)) return 1;
+    if (is_type_token(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
         if (next == TOK_IDENT) return 1;
@@ -786,6 +800,12 @@ static AstNode* parse_class_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+
+    if (strcmp(name.text, "String") == 0) {
+        fprintf(stderr, "error at %d:%d: class name 'String' is reserved for the builtin string type\n",
+                name.line, name.col);
+        p->had_error = 1;
+    }
 
     ClassInfo* info = calloc(1, sizeof(ClassInfo));
     CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
@@ -1190,7 +1210,7 @@ static AstNode* parse_top_level(Parser* p) {
         return parse_interface_decl(p);
     }
 
-    if (is_primitive_type_token(p) ||
+    if (is_type_token(p) ||
         (check(p, TOK_IDENT) && is_type_name(p->current.text)) ||
         (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {
         Type ret_type = parse_type(p);

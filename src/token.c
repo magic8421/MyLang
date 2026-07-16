@@ -6,6 +6,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_IDENT:     return "identifier";
         case TOK_INT_LIT:   return "integer literal";
         case TOK_CHAR_LIT:  return "char literal";
+        case TOK_STRING_LIT: return "string literal";
         case TOK_KW_U8:     return "u8";
         case TOK_KW_U16:    return "u16";
         case TOK_KW_U32:    return "u32";
@@ -30,6 +31,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_INTERFACE: return "interface";
         case TOK_KW_AS:     return "as";
         case TOK_KW_NATIVE: return "native";
+        case TOK_KW_STRING: return "string";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

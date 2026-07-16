@@ -1,4 +1,5 @@
 #include "runtime.h"
+#include <string.h>
 
 /* Thread-local stack trace state */
 MY_TL const char* __my_file = NULL;
@@ -59,6 +60,34 @@ int mylang_release(void* ptr) {
         free(h);
     }
     return 0;
+}
+
+/* --- Builtin String support --------------------------------------------- */
+
+void _mylang_dtor_String(String* p) {
+    if (p) {
+        mylang_array_free(&p->bytes, 1, MYLANG_ELEM_PRIMITIVE);
+    }
+}
+
+String* mylang_string_new(uint32_t type_id, const char* cstr) {
+    size_t len = cstr ? strlen(cstr) : 0;
+    String* s = (String*)mylang_new_object(sizeof(String), type_id, (void (*)(void*))_mylang_dtor_String);
+    if (len > 0) {
+        mylang_array_resize(&s->bytes, len, 1, MYLANG_ELEM_PRIMITIVE);
+        memcpy(s->bytes.data, cstr, len);
+    }
+    return s;
+}
+
+void mylang_print_string(String* s) {
+    if (s && s->bytes.data) {
+        fwrite(s->bytes.data, 1, s->bytes.length, stdout);
+    }
+}
+
+void mylang_print_i32(int32_t v) {
+    printf("%d", (int)v);
 }
 
 /* --- Array helpers ------------------------------------------------------ */
