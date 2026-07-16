@@ -52,56 +52,56 @@ void symtab_init(void) {
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "param name too long");
             pt[0] = string_type;
-            symtab_add_method(str_info, "append_string", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_string", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I32);
-            symtab_add_method(str_info, "append_i32", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_i32", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I64);
-            symtab_add_method(str_info, "append_i64", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_i64", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_U32);
-            symtab_add_method(str_info, "append_u32", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_u32", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_U64);
-            symtab_add_method(str_info, "append_u64", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_u64", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_F32);
-            symtab_add_method(str_info, "append_f32", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_f32", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_F64);
-            symtab_add_method(str_info, "append_f64", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_f64", void_type, 1, pn, pt, 1, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "c", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I8);
-            symtab_add_method(str_info, "append_char", void_type, 1, pn, pt, 1);
+            symtab_add_method(str_info, "append_char", void_type, 1, pn, pt, 1, 0);
         }
     }
 
@@ -273,12 +273,13 @@ FuncInfo* symtab_first_func(void) {
 
 void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                        int pc, const char pn[][64], const Type pt[],
-                       int is_native) {
+                       int is_native, int is_override) {
     MethodInfo* m = calloc(1, sizeof(MethodInfo));
     CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "method name too long");
     m->return_type = ret_type;
     m->param_count = pc;
     m->is_native = is_native;
+    m->is_override = is_override;
     int i;
     for (i = 0; i < pc && i < 16; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
@@ -474,6 +475,36 @@ int symtab_validate_impls(void) {
                         errors++;
                     }
                 }
+            }
+        }
+
+        /* verify methods marked 'override' actually override an interface method */
+        {
+            MethodInfo* cls_m = ci->methods;
+            while (cls_m) {
+                if (cls_m->is_override) {
+                    int found = 0;
+                    int i2;
+                    for (i2 = 0; i2 < ci->impl_count && i2 < MAX_IMPL; i2++) {
+                        InterfaceInfo* ii = ci->impl_infos[i2];
+                        if (!ii) continue;
+                        int m2;
+                        for (m2 = 0; m2 < ii->method_count; m2++) {
+                            InterfaceMethodInfo* im = &ii->methods[m2];
+                            if (strcmp(cls_m->name, im->name) == 0 && signature_matches(cls_m, im)) {
+                                found = 1;
+                                break;
+                            }
+                        }
+                        if (found) break;
+                    }
+                    if (!found) {
+                        fprintf(stderr, "error: method '%s' in class '%s' is marked 'override' but does not override any interface method\n",
+                                cls_m->name, ci->name);
+                        errors++;
+                    }
+                }
+                cls_m = cls_m->next;
             }
         }
         ci = ci->next;
@@ -820,6 +851,8 @@ ClassInfo* symtab_instantiate_class_from_type(Type* t) {
             free(rt);
             type_mangled_name(&m->return_type);
             m->param_count = gm->param_count;
+            m->is_native = gm->is_native;
+            m->is_override = gm->is_override;
             int mp;
             for (mp = 0; mp < gm->param_count && mp < 16; mp++) {
                 CHECK_STRSCPY(strscpy(m->param_names[mp], gm->param_names[mp], sizeof(m->param_names[mp])),

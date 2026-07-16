@@ -34,6 +34,7 @@ typedef enum {
     TOK_KW_AS,
     TOK_KW_NATIVE,
     TOK_KW_STRING,
+    TOK_KW_OVERRIDE,
 
     TOK_PLUS,
     TOK_MINUS,

@@ -1429,6 +1429,40 @@ i32 main() {
 }
 """, 4),
 
+    ("iface_override_basic", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    override i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    IShape s = sq;
+    return s.area();
+}
+""", 25),
+
+    ("iface_override_default", """
+interface IShape {
+    i32 area();
+    i32 isSquare() { return 0; }
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+    override i32 isSquare() { return 1; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    IShape s = sq;
+    return s.isSquare();
+}
+""", 1),
+
     ("iface_retain_class", """
 interface IFactory {
     i32 val();
@@ -2465,6 +2499,20 @@ i32 main() {
     return 0;
 }
 """, "'this' is not allowed in interface default method"),
+
+    ("bad_override_no_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+    override i32 volume() { return 0; }
+}
+i32 main() {
+    return 0;
+}
+""", "is marked 'override' but does not override any interface method"),
 
     ("bad_iface_method_conflict", """
 interface IFoo {

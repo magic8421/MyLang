@@ -16,6 +16,7 @@ typedef struct MethodInfo {
     char param_names[16][64];
     Type param_types[16];
     int  is_native;
+    int  is_override;
     struct MethodInfo* next;
 } MethodInfo;
 
@@ -107,7 +108,7 @@ StructInfo* symtab_first_struct(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
-                              int is_native);
+                              int is_native, int is_override);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {

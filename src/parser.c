@@ -1031,9 +1031,13 @@ static AstNode* parse_class_decl(Parser* p) {
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         int is_native = 0;
-        if (check(p, TOK_KW_NATIVE)) {
-            is_native = 1;
-            advance(p);
+        int is_override = 0;
+        while (check(p, TOK_KW_NATIVE) || check(p, TOK_KW_OVERRIDE)) {
+            if (check(p, TOK_KW_NATIVE)) {
+                is_native = 1; advance(p);
+            } else if (check(p, TOK_KW_OVERRIDE)) {
+                is_override = 1; advance(p);
+            }
         }
         Type ft = parse_type(p);
         if (!check(p, TOK_IDENT)) {
@@ -1121,7 +1125,7 @@ static AstNode* parse_class_decl(Parser* p) {
 
             symtab_exit_scope();
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native);
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native, is_override);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;

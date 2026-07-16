@@ -35,6 +35,7 @@ static const KeywordEntry keywords[] = {
     {"as",        TOK_KW_AS},
     {"native",    TOK_KW_NATIVE},
     {"string",    TOK_KW_STRING},
+    {"override",  TOK_KW_OVERRIDE},
     {NULL,        0},
 };
 

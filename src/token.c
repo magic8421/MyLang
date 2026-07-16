@@ -33,6 +33,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_AS:     return "as";
         case TOK_KW_NATIVE: return "native";
         case TOK_KW_STRING: return "string";
+        case TOK_KW_OVERRIDE: return "override";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

@@ -78,6 +78,7 @@ Source code lives under `src/`:
 - Implicit class-to-interface conversion on variable init (`IShape s = obj`), assignment (`s = obj`), and return (`return obj` where return type is interface).
 - Interface refcounting: the `.data` pointer holds a reference count. Create = retain, destroy = release `.data`. Cleanup uses `CleanupEntry.is_interface` flag.
 - Semantic validation (`symtab_validate_impls`): verifies at compile time that a class declares all methods required by declared interfaces with matching signatures. Aborts codegen on error.
+- `override` keyword may be used on class methods that override an interface method. When present, the compiler verifies that the method actually matches an interface method from one of the implemented interfaces. It is optional but checked.
 - Empty classes/structs emit `char _pad;` placeholder for MSVC compatibility (C requires at least one struct member).
 - `g_return_type` (static) tracks the enclosing function's return type so `codegen_return_stmt` can emit implicit class-to-interface conversion.
 - Interface parameters pass by value (struct copy). Caller-side guard extraction handles complex expressions.
