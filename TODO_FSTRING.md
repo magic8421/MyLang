@@ -118,6 +118,10 @@ Side effects are preserved.
    literal text, `{expr}`, literal text, ...
 3. Parser builds `AST_FSTRING` from the segments.
 4. Type checker resolves each expression and picks the right append method.
+5. **Add `f32`/`f64` numeric literals.**  Currently floating-point values such
+   as `3.14159` are not recognized by the lexer, so the `append_f32` and
+   `append_f64` methods can only be exercised with expression results, not
+   literals.  This also blocks `{3.14}` in f-strings.
 
 Escape braces inside f-strings: `\{` and `\}` are literal braces; `{{` and `}}`
 are also common conventions.  Pick one and document it.
