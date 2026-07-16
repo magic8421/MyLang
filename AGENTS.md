@@ -159,6 +159,15 @@ Source code lives under `src/`:
 - `p.foo(args)` emits as `ClassName_foo(p, args)`.
 - Class name registered early in symtab for self-referential method return types.
 
+## Native Methods
+- Syntax: `native RetType ClassName.method(Params);` inside a class. Method body is omitted and ends with `;`.
+- The compiler generates a header (`<out>.h`) containing the method prototype using the MyLang mangled name: `RetType ClassName_method(ClassName* thiz, ...)`.
+- The user provides a matching C implementation in a separate `.c` file (e.g. `#include "out.h"`) to call platform APIs.
+- Native methods follow the same ABI as regular methods: class/interface return values must be retained by the callee (`mylang_retain`) before returning; parameters are borrowed for the duration of the call.
+- `ref T` parameters become `T*`, `weak T` becomes `WeakRef*`, interfaces pass by value as their fat-pointer struct, and arrays `T[]` pass by value as `MyArray`.
+- Generated `.c` files `#include` the generated header, so prototypes do not need to be repeated.
+- Native methods are not automatically wrapped with `MY_PUSH`/`MY_POP` in phase 1; if a native implementation calls `my_panic`, the stack trace may stop at the MyLang caller.
+
 ## Runtime Functions
 - `mylang_new_object(sz, type_id)` — allocates ObjHeader + data, refcount=1.
 - `mylang_array_free(a, elem_size, elem_kind)` — releases elements according to kind and frees the data buffer.

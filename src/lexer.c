@@ -33,6 +33,7 @@ static const KeywordEntry keywords[] = {
     {"this",      TOK_KW_THIS},
     {"interface", TOK_KW_INTERFACE},
     {"as",        TOK_KW_AS},
+    {"native",    TOK_KW_NATIVE},
     {NULL,        0},
 };
 

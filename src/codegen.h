@@ -4,7 +4,9 @@
 #include "ast.h"
 #include <stdio.h>
 
-void codegen_program(AstNode* program, FILE* out, const char* source_file, int leak_check);
+void codegen_program(AstNode* program, FILE* out, FILE* header,
+                     const char* source_file, int leak_check,
+                     const char* header_include_name);
 int codegen_had_error(void);
 
 #endif

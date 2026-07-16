@@ -15,6 +15,7 @@ typedef struct MethodInfo {
     int  param_count;
     char param_names[16][64];
     Type param_types[16];
+    int  is_native;
     struct MethodInfo* next;
 } MethodInfo;
 
@@ -100,9 +101,11 @@ int         symtab_add_field(ClassInfo* info, const char* name, Type type);
 
 void        symtab_add_struct(const char* name, StructInfo* info);
 StructInfo* symtab_find_struct(const char* name);
+StructInfo* symtab_first_struct(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
-                              int pc, const char pn[][64], const Type pt[]);
+                              int pc, const char pn[][64], const Type pt[],
+                              int is_native);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {
@@ -117,6 +120,7 @@ typedef struct FuncInfo {
 void       symtab_add_func(const char* name, Type ret_type,
                            int pc, const char pn[][64], const Type pt[]);
 FuncInfo*  symtab_find_func(const char* name);
+FuncInfo*  symtab_first_func(void);
 
 void           symtab_add_interface(const char* name, InterfaceInfo* info);
 InterfaceInfo* symtab_find_interface(const char* name);

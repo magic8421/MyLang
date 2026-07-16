@@ -31,6 +31,8 @@ typedef struct {
 
 struct CodegenContext {
     FILE* out;
+    FILE* header;
+    const char* header_include_name;
     const char* source_file;
     char        source_file_escaped[1024];
     Type        return_type;
@@ -200,6 +202,204 @@ static void c_type_str(const Type* t, char* buf, int bufsz) {
     CHECK_SNPRINTF(n, (size_t)bufsz, "type name too long");
 }
 
+
+/* Header generation helpers ------------------------------------------------ */
+
+static void header_guard_name(const char* header_name, char* buf, size_t size) {
+    size_t i, j;
+    int n = snprintf(buf, size, "MYLANG_");
+    j = (size_t)n < size ? (size_t)n : 0;
+    for (i = 0; header_name[i] && j + 1 < size; i++) {
+        char c = header_name[i];
+        if (c >= 'a' && c <= 'z') {
+            buf[j++] = (char)(c - 'a' + 'A');
+        } else if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+            buf[j++] = c;
+        } else {
+            buf[j++] = '_';
+        }
+    }
+    buf[j] = '\0';
+}
+
+static void emit_header_preamble(CodegenContext* ctx) {
+    char guard[256];
+    header_guard_name(ctx->header_include_name, guard, sizeof(guard));
+    fprintf(ctx->header, "#ifndef %s\n#define %s\n\n", guard, guard);
+    fprintf(ctx->header, "#include \"runtime.h\"\n\n");
+    fprintf(ctx->header, "#ifdef __cplusplus\nextern \"C\" {\n#endif\n\n");
+}
+
+static void emit_header_postamble(CodegenContext* ctx) {
+    char guard[256];
+    header_guard_name(ctx->header_include_name, guard, sizeof(guard));
+    fprintf(ctx->header, "\n#ifdef __cplusplus\n}\n#endif\n\n");
+    fprintf(ctx->header, "#endif /* %s */\n", guard);
+}
+
+static void emit_header_forward_decls(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    ClassInfo* ci = class_list;
+    while (ci) {
+        if (!ci->is_generic) {
+            const char* cn = class_c_name(ci);
+            fprintf(h, "typedef struct %s %s;\n", cn, cn);
+        }
+        ci = ci->next;
+    }
+    {
+        extern InterfaceInfo* interface_list;
+        InterfaceInfo* ii = interface_list;
+        while (ii) {
+            fprintf(h, "typedef struct %s %s;\n", ii->name, ii->name);
+            ii = ii->next;
+        }
+    }
+    fprintf(h, "\n");
+}
+
+static void emit_class_struct_def_to_header(CodegenContext* ctx, ClassInfo* ci, const char* class_c) {
+    FILE* h = ctx->header;
+    fprintf(h, "typedef struct %s {\n", class_c);
+    if (ci->field_count == 0) {
+        fprintf(h, "    char _pad;\n");
+    } else {
+        int i;
+        for (i = 0; i < ci->field_count; i++) {
+            char ftype_buf[128];
+            if (ci->field_types[i].type_kind == TYPE_CLASS &&
+                ci->field_types[i].type_arg_count == 0 &&
+                strcmp(ci->field_types[i].class_name, ci->name) == 0) {
+                int n = snprintf(ftype_buf, sizeof(ftype_buf), "struct %s*", ci->field_types[i].class_name);
+                CHECK_SNPRINTF(n, (size_t)sizeof(ftype_buf), "field type name too long");
+            } else {
+                c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
+            }
+            fprintf(h, "    %s %s;\n", ftype_buf, ci->field_names[i]);
+        }
+    }
+    fprintf(h, "} %s;\n\n", class_c);
+}
+
+static void emit_struct_def_to_header(CodegenContext* ctx, StructInfo* si) {
+    FILE* h = ctx->header;
+    fprintf(h, "typedef struct %s {\n", si->name);
+    if (si->field_count == 0) {
+        fprintf(h, "    char _pad;\n");
+    } else {
+        int i;
+        for (i = 0; i < si->field_count; i++) {
+            char ftype_buf[128];
+            c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
+            fprintf(h, "    %s %s;\n", ftype_buf, si->field_names[i]);
+        }
+    }
+    fprintf(h, "} %s;\n\n", si->name);
+}
+
+static void emit_header_type_ids(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    ClassInfo* ci = class_list;
+    while (ci) {
+        if (!ci->is_generic) {
+            fprintf(h, "#define MYLANG_TID_%s %u\n", class_c_name(ci), (unsigned)ci->type_id);
+        }
+        ci = ci->next;
+    }
+    {
+        StructInfo* si = symtab_first_struct();
+        while (si) {
+            fprintf(h, "#define MYLANG_TID_%s %u\n", si->name, (unsigned)si->type_id);
+            si = si->next;
+        }
+    }
+    {
+        extern InterfaceInfo* interface_list;
+        InterfaceInfo* ii = interface_list;
+        while (ii) {
+            fprintf(h, "#define MYLANG_TID_%s %u\n", ii->name, (unsigned)ii->type_id);
+            ii = ii->next;
+        }
+    }
+    fprintf(h, "\n");
+}
+
+static void emit_header_destructor_prototypes(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    ClassInfo* ci = class_list;
+    while (ci) {
+        if (!ci->is_generic) {
+            const char* cc = class_c_name(ci);
+            fprintf(h, "void _mylang_dtor_%s(%s* p);\n", cc, cc);
+        }
+        ci = ci->next;
+    }
+    fprintf(h, "\n");
+}
+
+static void emit_function_signature(FILE* out, const char* ret_cstr, const char* func_name,
+                                    int param_count, const char param_names[][64], const Type param_types[]) {
+    fprintf(out, "%s %s(", ret_cstr, func_name);
+    int i;
+    for (i = 0; i < param_count; i++) {
+        if (i > 0) fprintf(out, ", ");
+        char pt[128];
+        c_type_str(&param_types[i], pt, sizeof(pt));
+        if (param_types[i].is_ref) {
+            fprintf(out, "%s* %s", pt, param_names[i]);
+        } else {
+            fprintf(out, "%s %s", pt, param_names[i]);
+        }
+    }
+    fprintf(out, ")");
+}
+
+static void emit_header_function_prototypes(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    FuncInfo* f = symtab_first_func();
+    while (f) {
+        if (strcmp(f->name, "main") == 0) { f = f->next; continue; }
+        char ret[128];
+        c_type_str(&f->return_type, ret, sizeof(ret));
+        emit_function_signature(h, ret, f->name, f->param_count, f->param_names, f->param_types);
+        fprintf(h, ";\n");
+        f = f->next;
+    }
+    fprintf(h, "\n");
+}
+
+static void emit_header_method_prototypes(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    ClassInfo* ci = class_list;
+    while (ci) {
+        if (ci->is_generic) { ci = ci->next; continue; }
+        const char* cc = class_c_name(ci);
+        MethodInfo* m = ci->methods;
+        while (m) {
+            char ret[128];
+            char name_buf[256];
+            c_type_str(&m->return_type, ret, sizeof(ret));
+            int n = snprintf(name_buf, sizeof(name_buf), "%s_%s", cc, m->name);
+            CHECK_SNPRINTF(n, (size_t)sizeof(name_buf), "method name too long");
+            fprintf(h, "%s %s(%s* thiz", ret, name_buf, cc);
+            {
+                int i;
+                for (i = 0; i < m->param_count; i++) {
+                    char pt[128];
+                    c_type_str(&m->param_types[i], pt, sizeof(pt));
+                    if (m->param_types[i].is_ref) {
+                        fprintf(h, ", %s* %s", pt, m->param_names[i]);
+                    } else {
+                        fprintf(h, ", %s %s", pt, m->param_names[i]);
+                    }
+                }
+            }
+            fprintf(h, ");\n");
+            m = m->next;
+        }
+        ci = ci->next;
+    }
+}
 
 static Type resolve_type(AstNode* node);
 
@@ -2429,45 +2629,54 @@ static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 
 static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* class_name);
 
-static void codegen_interface_typedefs(CodegenContext* ctx) {
+static void emit_interface_header_typedefs(CodegenContext* ctx) {
     extern InterfaceInfo* interface_list;
     InterfaceInfo* ii = interface_list;
     while (ii) {
+        FILE* h = ctx->header;
         /* VTable typedef */
-        fprintf(ctx->out, "typedef struct %sVTable {\n", ii->name);
-        fprintf(ctx->out, "    uint32_t concrete_type_id;\n");
+        fprintf(h, "typedef struct %sVTable {\n", ii->name);
+        fprintf(h, "    uint32_t concrete_type_id;\n");
         int j;
         for (j = 0; j < ii->method_count; j++) {
             InterfaceMethodInfo* im = &ii->methods[j];
             char rbuf[128];
             c_type_str(&im->return_type, rbuf, sizeof(rbuf));
-            fprintf(ctx->out, "    %s (*%s)(void* thiz", rbuf, im->name);
+            fprintf(h, "    %s (*%s)(void* thiz", rbuf, im->name);
             int k;
             for (k = 0; k < im->param_count; k++) {
                 char pbuf[128];
                 c_type_str(&im->param_types[k], pbuf, sizeof(pbuf));
                 if (im->param_types[k].is_ref) {
-                    fprintf(ctx->out, ", %s*", pbuf);
+                    fprintf(h, ", %s*", pbuf);
                 } else {
-                    fprintf(ctx->out, ", %s", pbuf);
+                    fprintf(h, ", %s", pbuf);
                 }
             }
-            fprintf(ctx->out, ");\n");
+            fprintf(h, ");\n");
         }
-        fprintf(ctx->out, "} %sVTable;\n\n", ii->name);
+        fprintf(h, "} %sVTable;\n\n", ii->name);
 
         /* Fat pointer typedef (tagged so it can be forward-declared) */
-        fprintf(ctx->out, "typedef struct %s {\n", ii->name);
-        fprintf(ctx->out, "    void* data;\n");
-        fprintf(ctx->out, "    const %sVTable* vtable;\n", ii->name);
-        fprintf(ctx->out, "} %s;\n\n", ii->name);
+        fprintf(h, "typedef struct %s {\n", ii->name);
+        fprintf(h, "    void* data;\n");
+        fprintf(h, "    const %sVTable* vtable;\n", ii->name);
+        fprintf(h, "} %s;\n\n", ii->name);
 
         /* Weak fat pointer typedef */
-        fprintf(ctx->out, "typedef struct Weak%s {\n", ii->name);
-        fprintf(ctx->out, "    WeakRef* wr;\n");
-        fprintf(ctx->out, "    %sVTable* vt;\n", ii->name);
-        fprintf(ctx->out, "} Weak%s;\n\n", ii->name);
+        fprintf(h, "typedef struct Weak%s {\n", ii->name);
+        fprintf(h, "    WeakRef* wr;\n");
+        fprintf(h, "    %sVTable* vt;\n", ii->name);
+        fprintf(h, "} Weak%s;\n\n", ii->name);
 
+        ii = ii->next;
+    }
+}
+
+static void emit_interface_c_helpers(CodegenContext* ctx) {
+    extern InterfaceInfo* interface_list;
+    InterfaceInfo* ii = interface_list;
+    while (ii) {
         /* Weak interface lock helper returns a strong fat pointer */
         fprintf(ctx->out, "static %s mylang_lock_%s(WeakRef* wr, %sVTable* vt) {\n",
                 ii->name, ii->name, ii->name);
@@ -2571,28 +2780,17 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci) 
 }
 
 static void codegen_struct_decl(CodegenContext* ctx, AstNode* node) {
-    StructInfo* si = symtab_find_struct(node->ast_token.text);
-    if (!si) return;
-
-    fprintf(ctx->out, "typedef struct %s {\n", node->ast_token.text);
-    int i;
-    if (si->field_count == 0) {
-        fprintf(ctx->out, "    char _pad;\n");
-    } else {
-        for (i = 0; i < si->field_count; i++) {
-            char ftype_buf[128];
-            c_type_str(&si->field_types[i], ftype_buf, sizeof(ftype_buf));
-            fprintf(ctx->out, "    %s %s;\n", ftype_buf, si->field_names[i]);
-        }
-    }
-    fprintf(ctx->out, "} %s;\n\n", node->ast_token.text);
+    /* Struct definitions are emitted to the generated header; the .c file
+       includes that header, so nothing needs to be written here. */
+    (void)ctx;
+    (void)node;
 }
 
 /* Emit the per-class finalizer that releases reference-counted fields before
    the object's memory is freed by mylang_release. */
 static void codegen_class_destructor(CodegenContext* ctx, ClassInfo* ci, const char* class_c) {
     (void)ctx;
-    fprintf(ctx->out, "static void _mylang_dtor_%s(%s* p) {\n", class_c, class_c);
+    fprintf(ctx->out, "void _mylang_dtor_%s(%s* p) {\n", class_c, class_c);
     int i;
     for (i = 0; i < ci->field_count; i++) {
         Type ft = ci->field_types[i];
@@ -2623,26 +2821,6 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
 
     const char* class_c = class_c_name(ci);
 
-    fprintf(ctx->out, "typedef struct %s {\n", class_c);
-    int i;
-    if (ci->field_count == 0) {
-        fprintf(ctx->out, "    char _pad;\n");
-    } else {
-        for (i = 0; i < ci->field_count; i++) {
-            char ftype_buf[128];
-            if (ci->field_types[i].type_kind == TYPE_CLASS &&
-                ci->field_types[i].type_arg_count == 0 &&
-                strcmp(ci->field_types[i].class_name, node->ast_token.text) == 0) {
-                int n = snprintf(ftype_buf, sizeof(ftype_buf), "struct %s*", ci->field_types[i].class_name);
-                CHECK_SNPRINTF(n, (size_t)sizeof(ftype_buf), "field type name too long");
-            } else {
-                c_type_str(&ci->field_types[i], ftype_buf, sizeof(ftype_buf));
-            }
-            fprintf(ctx->out, "    %s %s;\n", ftype_buf, ci->field_names[i]);
-        }
-    }
-    fprintf(ctx->out, "} %s;\n\n", class_c);
-
     codegen_class_destructor(ctx, ci, class_c);
 
     /* emit method declarations */
@@ -2662,6 +2840,11 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
         fprintf(stderr, "error at %d:%d: method '%s.%s' cannot return array by value\n",
                 node->ast_token.line, node->ast_token.col, class_name, node->ast_token.text);
         ctx->codegen_error = 1;
+    }
+    if (node->ast_is_native) {
+        /* Native methods are declared in the generated header and implemented
+           by the user in a separate .c file. */
+        return;
     }
     char ret_buf[128];
     c_type_str(&node->ast_resolved_type, ret_buf, sizeof(ret_buf));
@@ -2816,10 +2999,14 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     ctx->return_type = prev_ret;
 }
 
-void codegen_program(AstNode* program, FILE* out, const char* source_file, int leak_check) {
+void codegen_program(AstNode* program, FILE* out, FILE* header,
+                     const char* source_file, int leak_check,
+                     const char* header_include_name) {
     CodegenContext ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.out = out;
+    ctx.header = header;
+    ctx.header_include_name = header_include_name ? header_include_name : "";
     ctx.last_loc_line = -1;
     s_last_codegen_error = 0;
     ctx.source_file = source_file ? source_file : "";
@@ -2834,11 +3021,49 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
 
     preinstantiate_generic_types(program);
 
+    /* ---- Emit header ---- */
+    emit_header_preamble(&ctx);
+    emit_header_forward_decls(&ctx);
+    emit_interface_header_typedefs(&ctx);
+
+    {
+        AstNode* decl = program->ast_children[0];
+        while (decl) {
+            if (decl->ast_kind == AST_STRUCT_DECL) {
+                StructInfo* si = symtab_find_struct(decl->ast_token.text);
+                if (si) emit_struct_def_to_header(&ctx, si);
+            } else if (decl->ast_kind == AST_CLASS_DECL) {
+                ClassInfo* ci = symtab_find_class_by_mangled(decl->ast_token.text);
+                if (!ci) ci = symtab_find_class(decl->ast_token.text);
+                if (ci && !ci->is_generic) {
+                    emit_class_struct_def_to_header(&ctx, ci, class_c_name(ci));
+                }
+            }
+            decl = decl->next;
+        }
+        /* emit concrete generic class instantiations */
+        ClassInfo* ci = class_list;
+        while (ci) {
+            if (ci->is_instantiation && ci->generic_ast) {
+                emit_class_struct_def_to_header(&ctx, ci, class_c_name(ci));
+            }
+            ci = ci->next;
+        }
+    }
+
+    emit_header_type_ids(&ctx);
+    emit_header_destructor_prototypes(&ctx);
+    emit_header_function_prototypes(&ctx);
+    emit_header_method_prototypes(&ctx);
+    emit_header_postamble(&ctx);
+
+    /* ---- Emit .c ---- */
     fprintf(ctx.out, "/* Generated by MyLang compiler */\n");
     if (leak_check) {
         fprintf(ctx.out, "#define MYLANG_LEAK_CHECK\n");
     }
     fprintf(ctx.out, "#define _CRTDBG_MAP_ALLOC\n");
+    fprintf(ctx.out, "#include \"%s\"\n\n", ctx.header_include_name);
     fprintf(ctx.out, "#include <stdio.h>\n");
     fprintf(ctx.out, "#include <stdlib.h>\n");
     fprintf(ctx.out, "#include <stddef.h>\n");
@@ -2850,36 +3075,9 @@ void codegen_program(AstNode* program, FILE* out, const char* source_file, int l
     fprintf(ctx.out, "#define __debugbreak() __builtin_trap()\n");
     fprintf(ctx.out, "#endif\n\n");
 
-    fprintf(ctx.out, "#include \"runtime.h\"\n\n");
-    /* Forward-declare class and interface types so that interface vtables
-       can reference class/interface return/parameter types regardless of
-       declaration order. */
-    {
-        ClassInfo* ci = class_list;
-        while (ci) {
-            fprintf(ctx.out, "typedef struct %s %s;\n", class_c_name(ci), class_c_name(ci));
-            ci = ci->next;
-        }
-        extern InterfaceInfo* interface_list;
-        InterfaceInfo* ii = interface_list;
-        while (ii) {
-            fprintf(ctx.out, "typedef struct %s %s;\n", ii->name, ii->name);
-            ii = ii->next;
-        }
-        fprintf(ctx.out, "\n");
-    }
-
-    codegen_interface_typedefs(&ctx);
+    emit_interface_c_helpers(&ctx);
 
     AstNode* decl = program->ast_children[0];
-    while (decl) {
-        if (decl->ast_kind == AST_STRUCT_DECL) {
-            codegen_struct_decl(&ctx, decl);
-        }
-        decl = decl->next;
-    }
-
-    decl = program->ast_children[0];
     while (decl) {
         if (decl->ast_kind == AST_CLASS_DECL) {
             codegen_class_decl(&ctx, decl);

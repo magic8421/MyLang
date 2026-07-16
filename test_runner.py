@@ -83,8 +83,9 @@ def compile_mylang():
         return False
     return True
 
-def compile_c(src, exe):
-    """Compile generated C code + runtime.c with MSVC + ASan (release) or debug CRT (debug)."""
+def compile_c(src, exe, extra_sources=None):
+    """Compile generated C code + runtime.c with MSVC + ASan (release) or debug CRT (debug).
+    extra_sources: list of additional .c files to link (e.g. native implementations)."""
     exedir = os.path.dirname(exe)
     os.makedirs(exedir, exist_ok=True)
     if TEST_MODE == "debug":
@@ -92,7 +93,11 @@ def compile_c(src, exe):
     else:
         flags = "/fsanitize=address /Zi"
     runtime_c = os.path.join(SCRIPT_DIR, "src", "runtime.c")
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /Fe:{exe} {src} {runtime_c}'
+    testdir = os.path.join(SCRIPT_DIR, "test")
+    extras = ""
+    if extra_sources:
+        extras = " " + " ".join(extra_sources)
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /I"{testdir}" /Fe:{exe} {src} {runtime_c}{extras}'
     r = shell(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
@@ -2095,6 +2100,20 @@ i32 main() {
     return locked.v;
 }
 """, 5),
+
+    ("native_add", """
+class Math {
+    native i32 add(i32 a, i32 b);
+}
+i32 main() {
+    Math m = new Math;
+    return m.add(10, 20);
+}
+""", 30, """
+int32_t Math_add(Math* thiz, int32_t a, int32_t b) {
+    return a + b;
+}
+"""),
 ]
 
 # ============================================================
@@ -2246,6 +2265,24 @@ i32 main() {
     return 0;
 }
 """, "increment/decrement not allowed"),
+
+    ("bad_native_body", """
+class C {
+    native i32 f() { return 1; }
+}
+i32 main() {
+    return 0;
+}
+""", "expected ';'"),
+
+    ("bad_native_semi", """
+class C {
+    native i32 f()
+}
+i32 main() {
+    return 0;
+}
+""", "expected ';'"),
 ]
 
 # ============================================================
@@ -2272,7 +2309,7 @@ def run_negative_test(idx, name, source, expected_substring):
     return True, f"mylang exit {r.returncode}"
 
 
-def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False):
+def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native_c=None):
     testdir = os.path.join(SCRIPT_DIR, "test")
     os.makedirs(testdir, exist_ok=True)
     exedir = os.path.join(SCRIPT_DIR, "build", "test")
@@ -2293,7 +2330,15 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False):
         return False, f"mylang exit {r.returncode}: {r.stderr[-200:] if r.stderr else ''}"
 
     # Compile .c -> .exe
-    if not compile_c(c_file, exe_file):
+    extra_sources = None
+    if native_c:
+        native_file = os.path.join(testdir, f"_t{idx}_native.c")
+        with open(native_file, "w", encoding="utf-8") as f:
+            f.write(f'#include "_t{idx}.h"\n')
+            f.write(native_c.strip() + "\n")
+        extra_sources = [native_file]
+
+    if not compile_c(c_file, exe_file, extra_sources):
         return False, "C compile error"
 
     # Run
@@ -2348,13 +2393,18 @@ def main():
     failed = 0
     total = 0
 
-    for i, (name, source, expected) in enumerate(TESTS):
+    for i, t in enumerate(TESTS):
+        if len(t) == 3:
+            name, source, expected = t
+            native_c = None
+        else:
+            name, source, expected, native_c = t
         if filters:
             name_lower = name.lower()
             if not any(k in name_lower for k in filters):
                 continue
         total += 1
-        ok, msg = run_test(i, name, source, expected, asan_dll_dir, leak_check)
+        ok, msg = run_test(i, name, source, expected, asan_dll_dir, leak_check, native_c)
         status = "PASS" if ok else "FAIL"
         print(f"[{status}] {name:30s} {msg}")
         if ok:

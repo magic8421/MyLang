@@ -92,6 +92,7 @@ struct AstNode {
     AstNode* ast_children[4];
     int      ast_child_count;
     char     ast_temp_name[64];
+    int      ast_is_native;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
     /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */

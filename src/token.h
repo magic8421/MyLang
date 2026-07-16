@@ -30,6 +30,7 @@ typedef enum {
     TOK_KW_THIS,
     TOK_KW_INTERFACE,
     TOK_KW_AS,
+    TOK_KW_NATIVE,
 
     TOK_PLUS,
     TOK_MINUS,

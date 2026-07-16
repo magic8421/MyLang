@@ -122,6 +122,10 @@ StructInfo* symtab_find_struct(const char* name) {
     return NULL;
 }
 
+StructInfo* symtab_first_struct(void) {
+    return struct_list;
+}
+
 int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
     CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");
@@ -154,12 +158,18 @@ FuncInfo* symtab_find_func(const char* name) {
     return NULL;
 }
 
+FuncInfo* symtab_first_func(void) {
+    return func_list;
+}
+
 void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
-                       int pc, const char pn[][64], const Type pt[]) {
+                       int pc, const char pn[][64], const Type pt[],
+                       int is_native) {
     MethodInfo* m = calloc(1, sizeof(MethodInfo));
     CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "method name too long");
     m->return_type = ret_type;
     m->param_count = pc;
+    m->is_native = is_native;
     int i;
     for (i = 0; i < pc && i < 16; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");

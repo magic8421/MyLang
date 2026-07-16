@@ -740,6 +740,11 @@ static AstNode* parse_struct_decl(Parser* p) {
     symtab_add_struct(name.text, info);
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        int is_native = 0;
+        if (check(p, TOK_KW_NATIVE)) {
+            is_native = 1;
+            advance(p);
+        }
         Type ft = parse_type(p);
         if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_STRUCT ||
             ft.is_array || ft.array_size > 0) {
@@ -876,6 +881,11 @@ static AstNode* parse_class_decl(Parser* p) {
     AstNode* methods = NULL;
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        int is_native = 0;
+        if (check(p, TOK_KW_NATIVE)) {
+            is_native = 1;
+            advance(p);
+        }
         Type ft = parse_type(p);
         if (!check(p, TOK_IDENT)) {
             fprintf(stderr, "error at %d:%d: expected field or method name\n",
@@ -952,14 +962,21 @@ static AstNode* parse_class_decl(Parser* p) {
                 }
             }
 
-            AstNode* mbody = parse_stmt(p);
+            AstNode* mbody = NULL;
+            if (is_native) {
+                expect(p, TOK_SEMI);
+                mbody = ast_new_node(AST_BLOCK, fname);
+            } else {
+                mbody = parse_stmt(p);
+            }
 
             symtab_exit_scope();
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt);
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
+            mnode->ast_is_native = is_native;
             if (mparams) { mnode->ast_children[mnode->ast_child_count++] = mparams; }
             mnode->ast_children[mnode->ast_child_count++] = mbody;
             methods = ast_append_list(methods, mnode);
