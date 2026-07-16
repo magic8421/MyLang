@@ -33,7 +33,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_basics.exe "%OUT%\fstring_basics.c" src\runtime.c examples\fstring_basics\fstring_native.c
+cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_basics.exe "%OUT%\fstring_basics.c" src\runtime.c
 if %ERRORLEVEL% neq 0 (
     echo ERROR: C compilation failed
     exit /b 1

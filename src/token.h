@@ -7,6 +7,7 @@ typedef enum {
     TOK_INT_LIT,
     TOK_CHAR_LIT,
     TOK_STRING_LIT,
+    TOK_FLOAT_LIT,
 
     TOK_KW_U8,
     TOK_KW_U16,
@@ -75,6 +76,7 @@ typedef struct {
     int  col;
     int  int_val;
     char char_val;
+    float float_val;
 } Token;
 
 const char* token_kind_name(TokenKind kind);

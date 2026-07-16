@@ -353,6 +353,20 @@ static AstNode* parse_primary(Parser* p) {
         n->ast_resolved_type.type_id = TYPE_ID_I32;
         return n;
     }
+    if (check(p, TOK_FLOAT_LIT)) {
+        Token t = p->current; advance(p);
+        AstNode* n = ast_new_node(AST_FLOAT_LIT, t);
+        int len = (int)strlen(t.text);
+        int is_f32 = (len > 0 && (t.text[len - 1] == 'f' || t.text[len - 1] == 'F'));
+        if (is_f32) {
+            n->ast_resolved_type.type_kind = TYPE_F32;
+            n->ast_resolved_type.type_id = TYPE_ID_F32;
+        } else {
+            n->ast_resolved_type.type_kind = TYPE_F64;
+            n->ast_resolved_type.type_id = TYPE_ID_F64;
+        }
+        return n;
+    }
     if (check(p, TOK_CHAR_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_CHAR_LIT, t);
@@ -1309,7 +1323,7 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     AstNode* body = parse_stmt(p);
     symtab_exit_scope();
 
-    symtab_add_func(name.text, ret_type, pc, pn, pt);
+    symtab_add_func(name.text, ret_type, pc, pn, pt, 0);
 
     AstNode* node = ast_new_node(AST_FUNC_DECL, name);
     node->ast_resolved_type = ret_type;

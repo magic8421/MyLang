@@ -112,7 +112,9 @@ Source code lives under `src/`:
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
 - Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
 - Interpolation dispatch: `string` and primitive types map to `String_append_*`; class types require a `string toString()` method (IToString) which is called directly; interface values dispatch through the vtable.
-- Floating-point numeric literals (e.g. `3.14`) are not yet supported by the lexer, so `append_f32`/`append_f64` can only be exercised with expression results.
+- Floating-point numeric literals are supported: `3.14` defaults to `f64`, and
+  `1.5f` / `1.5F` are `f32`.  They can be used directly in f-strings (`{3.14}`)
+  and in arithmetic.
 - Escaped braces (`\{`, `\}`, `{{`, `}}`) are not yet supported; `{` always starts an interpolation expression.
 
 ## Memory Model
@@ -188,6 +190,7 @@ Source code lives under `src/`:
 - `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.
 - `mylang_array_push(a, elem_size, elem_kind, value)` / `mylang_array_pop(a, elem_size, elem_kind)` / `mylang_array_clear(a, elem_size, elem_kind)` / `mylang_array_compact(a, elem_size)` — vector methods.
 - `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.
+- `mylang_print_string(String* s)` — writes the string to stdout.  Exposed to MyLang as the builtin `print(string)` function.
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging

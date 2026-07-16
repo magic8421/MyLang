@@ -29,7 +29,7 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_append.exe "%OUT%\fstring_append.c" src\runtime.c examples\fstring_append\fstring_native.c
+cl /nologo /std:c11 /W3 /I src /I "%OUT%" /Fe:%OUT%\fstring_append.exe "%OUT%\fstring_append.c" src\runtime.c
 if %ERRORLEVEL% neq 0 (
     echo ERROR: C compilation failed
     exit /b 1

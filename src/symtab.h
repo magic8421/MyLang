@@ -114,11 +114,13 @@ typedef struct FuncInfo {
     int  param_count;
     char param_names[16][64];
     Type param_types[16];
+    int  is_builtin;
     struct FuncInfo* next;
 } FuncInfo;
 
 void       symtab_add_func(const char* name, Type ret_type,
-                           int pc, const char pn[][64], const Type pt[]);
+                           int pc, const char pn[][64], const Type pt[],
+                           int is_builtin);
 FuncInfo*  symtab_find_func(const char* name);
 FuncInfo*  symtab_first_func(void);
 

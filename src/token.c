@@ -7,6 +7,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_INT_LIT:   return "integer literal";
         case TOK_CHAR_LIT:  return "char literal";
         case TOK_STRING_LIT: return "string literal";
+        case TOK_FLOAT_LIT: return "floating-point literal";
         case TOK_KW_U8:     return "u8";
         case TOK_KW_U16:    return "u16";
         case TOK_KW_U32:    return "u32";

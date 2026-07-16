@@ -2262,6 +2262,46 @@ int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
 }
 """),
 
+    ("float_literal_arith", """
+f32 main() {
+    f32 x = 1.5f;
+    f32 y = 2.5f;
+    return x + y;
+}
+""", 4),
+
+    ("float_literal_fstring", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    f32 x = 1.5f;
+    f64 y = 2.5;
+    string s = f"{x},{y}";
+    if (!a.string_equals(s, "1.5,2.5")) {
+        return 1;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("print_builtin", """
+i32 main() {
+    print("hello\n");
+    print(f"world {42}\n");
+    return 0;
+}
+""", 0),
+
 ]
 
 # ============================================================

@@ -120,10 +120,10 @@ Side effects are preserved.
    literal text, `{expr}`, literal text, ...
 3. Parser builds `AST_FSTRING` from the segments.
 4. Type checker resolves each expression and picks the right append method.
-5. **Add `f32`/`f64` numeric literals.**  Currently floating-point values such
-   as `3.14159` are not recognized by the lexer, so the `append_f32` and
-   `append_f64` methods can only be exercised with expression results, not
-   literals.  This also blocks `{3.14}` in f-strings.
+5. **Add `f32`/`f64` numeric literals.** ✅  Added `TOK_FLOAT_LIT` and
+   `AST_FLOAT_LIT`.  Decimal literals such as `3.14159` default to `f64`;
+   a trailing `f` or `F` suffix (e.g. `1.5f`) makes them `f32`.  These can be
+   used directly in f-strings (`{3.14}`) and in arithmetic.
 
 Escape braces inside f-strings: not supported in the first version.  `\{` and
 `\}` are currently not recognized, and `{{` / `}}` are not treated specially;
@@ -144,8 +144,10 @@ Escape braces inside f-strings: not supported in the first version.  `\{` and
 * `String` allocation helper: `String* mylang_string_new(uint32_t tid, const char* cstr)`.
 * `String` native append methods implemented in C using the growable `bytes`
   buffer, plus the codegen-only `mylang_string_append_cstr` helper.
-* Optional `mylang_print_string(String* s)` / `mylang_print_i32(i32 v)` for
-  the temporary debug `Logger` class.
+* `mylang_print_string(String* s)` is implemented by the runtime and exposed
+  to MyLang as a builtin `print(string)` function; the compiler generates a
+  direct call to `mylang_print_string`.  The temporary `Logger` class has been
+  removed from the f-string examples.
 
 ## Phased plan
 
@@ -167,6 +169,9 @@ Escape braces inside f-strings: not supported in the first version.  `\{` and
    * Add the interface.
    * Support custom object interpolation (class and interface values).
 
-5. **Cleanup**
-   * Remove or hide the temporary `Logger` class once `print(string)` or
-     f-string based output is available.
+5. **Cleanup** ✅
+   * Added a builtin `print(string)` function that maps to `mylang_print_string`.
+   * Removed the temporary `Logger` class from the `fstring_basics` and
+     `fstring_append` examples; they now use `print(...)` and f-strings.
+   * The `fstring_native.c` helper files for those examples are no longer
+     needed and have been removed.

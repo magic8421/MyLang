@@ -119,6 +119,20 @@ void symtab_init(void) {
         string_type.type_id = TYPE_ID_STRING;
         symtab_add_interface_method(ii, "toString", string_type, 0, NULL, NULL);
     }
+
+    /* Builtin print(string) function.  Implemented by the runtime as
+       mylang_print_string; the compiler emits a direct call to it. */
+    {
+        Type void_type = type_make_primitive(TYPE_VOID);
+        Type string_type = type_make_user(TYPE_CLASS, "String");
+        string_type.is_pointer = 1;
+        string_type.type_id = TYPE_ID_STRING;
+        char pn[1][64];
+        Type pt[1];
+        CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "parameter name too long");
+        pt[0] = string_type;
+        symtab_add_func("print", void_type, 1, pn, pt, 1);
+    }
 }
 
 void symtab_enter_scope(void) {
@@ -228,11 +242,13 @@ int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
 }
 
 void symtab_add_func(const char* name, Type ret_type,
-                     int pc, const char pn[][64], const Type pt[]) {
+                     int pc, const char pn[][64], const Type pt[],
+                     int is_builtin) {
     FuncInfo* f = calloc(1, sizeof(FuncInfo));
     CHECK_STRSCPY(strscpy(f->name, name, sizeof(f->name)), "function name too long");
     f->return_type = ret_type;
     f->param_count = pc;
+    f->is_builtin = is_builtin;
     int i;
     for (i = 0; i < pc && i < 16; i++) {
         CHECK_STRSCPY(strscpy(f->param_names[i], pn[i], sizeof(f->param_names[i])), "parameter name too long");

@@ -81,6 +81,7 @@ typedef enum {
     AST_INT_LIT,
     AST_CHAR_LIT,
     AST_STRING_LIT,
+    AST_FLOAT_LIT,
     AST_AS_CAST,
     AST_REF_ARG,
     AST_OUT_ARG,

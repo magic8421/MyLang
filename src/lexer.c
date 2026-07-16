@@ -128,13 +128,33 @@ static Token read_identifier(Lexer* lexer) {
 
 static Token read_number(Lexer* lexer) {
     int start = lexer->pos;
+    int is_float = 0;
+
     while (!lexer_is_eof(lexer) && isdigit((unsigned char)lexer_peek_char(lexer))) {
         lexer_advance(lexer);
     }
+
+    if (!lexer_is_eof(lexer) && lexer_peek_char(lexer) == '.') {
+        is_float = 1;
+        lexer_advance(lexer);
+        while (!lexer_is_eof(lexer) && isdigit((unsigned char)lexer_peek_char(lexer))) {
+            lexer_advance(lexer);
+        }
+    }
+
+    if (!lexer_is_eof(lexer) && (lexer_peek_char(lexer) == 'f' || lexer_peek_char(lexer) == 'F')) {
+        is_float = 1;
+        lexer_advance(lexer);
+    }
+
     int len = lexer->pos - start;
     const char* s = lexer->source + start;
-    Token tok = make_token(lexer, TOK_INT_LIT, s, len, len);
-    tok.int_val = atoi(tok.text);
+    Token tok = make_token(lexer, is_float ? TOK_FLOAT_LIT : TOK_INT_LIT, s, len, len);
+    if (is_float) {
+        tok.float_val = (float)strtod(tok.text, NULL);
+    } else {
+        tok.int_val = atoi(tok.text);
+    }
     return tok;
 }
 

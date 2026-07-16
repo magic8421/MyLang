@@ -385,7 +385,7 @@ static void emit_header_function_prototypes(CodegenContext* ctx) {
     FILE* h = ctx->header;
     FuncInfo* f = symtab_first_func();
     while (f) {
-        if (strcmp(f->name, "main") == 0) { f = f->next; continue; }
+        if (strcmp(f->name, "main") == 0 || f->is_builtin) { f = f->next; continue; }
         char ret[128];
         c_type_str(&f->return_type, ret, sizeof(ret));
         emit_function_signature(h, ret, f->name, f->param_count, f->param_names, f->param_types);
@@ -439,6 +439,20 @@ static Type resolve_type(AstNode* node) {
             t.type_kind = TYPE_I32;
             t.type_id = TYPE_ID_I32;
             break;
+
+        case AST_FLOAT_LIT: {
+            int len = (int)strlen(node->ast_token.text);
+            int is_f32 = (len > 0 && (node->ast_token.text[len - 1] == 'f' ||
+                                       node->ast_token.text[len - 1] == 'F'));
+            if (is_f32) {
+                t.type_kind = TYPE_F32;
+                t.type_id = TYPE_ID_F32;
+            } else {
+                t.type_kind = TYPE_F64;
+                t.type_id = TYPE_ID_F64;
+            }
+            break;
+        }
 
         case AST_CHAR_LIT:
             t.type_kind = TYPE_I8;
@@ -925,6 +939,22 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
     if (callee->ast_kind == AST_IDENT) {
         fi = symtab_find_func(callee->ast_token.text);
     }
+    if (fi && fi->is_builtin) {
+        if (strcmp(fi->name, "print") == 0) {
+            AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+            fprintf(ctx->out, "mylang_print_string(");
+            if (args) {
+                Type expected;
+                memset(&expected, 0, sizeof(expected));
+                if (fi->param_count > 0) expected = fi->param_types[0];
+                codegen_call_arg(ctx, args, &expected);
+            } else {
+                fprintf(ctx->out, "NULL");
+            }
+            fprintf(ctx->out, ")");
+            return;
+        }
+    }
     codegen_expr(ctx, callee);
     fprintf(ctx->out, "(");
     AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
@@ -1069,6 +1099,9 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
     switch (node->ast_kind) {
         case AST_INT_LIT:
             fprintf(ctx->out, "%d", node->ast_token.int_val);
+            break;
+        case AST_FLOAT_LIT:
+            fprintf(ctx->out, "%s", node->ast_token.text);
             break;
         case AST_CHAR_LIT:
             codegen_char_lit(ctx, node);
