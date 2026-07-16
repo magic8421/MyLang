@@ -244,7 +244,7 @@ static void emit_header_postamble(CodegenContext* ctx) {
 }
 
 static int is_builtin_class(const char* name) {
-    return strcmp(name, "String") == 0;
+    return strcmp(name, "String") == 0 || strcmp(name, "StringBuilder") == 0;
 }
 
 static void emit_interface_forward_decls(CodegenContext* ctx) {

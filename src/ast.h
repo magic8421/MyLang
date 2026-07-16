@@ -31,8 +31,9 @@ typedef enum {
 #define TYPE_ID_U64      7
 #define TYPE_ID_F32      8
 #define TYPE_ID_F64      9
-#define TYPE_ID_STRING   10
-#define TYPE_ID_CLASS_BASE 16
+#define TYPE_ID_STRING          10
+#define TYPE_ID_STRING_BUILDER  11
+#define TYPE_ID_CLASS_BASE      16
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U
 #define TYPE_IS_WEAK     0x20000000U

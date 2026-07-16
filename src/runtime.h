@@ -73,6 +73,23 @@ String* mylang_string_new(uint32_t type_id, const char* cstr);
 void    mylang_print_string(String* s);
 void    mylang_print_i32(int32_t v);
 
+/* Builtin StringBuilder class. */
+typedef struct StringBuilder {
+    MyArray buf;
+} StringBuilder;
+
+void _mylang_dtor_StringBuilder(StringBuilder* p);
+StringBuilder* mylang_stringbuilder_new(uint32_t type_id);
+void StringBuilder_append_string(StringBuilder* thiz, String* s);
+void StringBuilder_append_i32(StringBuilder* thiz, int32_t v);
+void StringBuilder_append_i64(StringBuilder* thiz, int64_t v);
+void StringBuilder_append_u32(StringBuilder* thiz, uint32_t v);
+void StringBuilder_append_u64(StringBuilder* thiz, uint64_t v);
+void StringBuilder_append_f32(StringBuilder* thiz, float v);
+void StringBuilder_append_f64(StringBuilder* thiz, double v);
+void StringBuilder_append_char(StringBuilder* thiz, int8_t c);
+String* StringBuilder_toString(StringBuilder* thiz);
+
 /* Stack trace support.  Defined as translation-unit globals in runtime.c;
    macros below are used by generated code. */
 typedef struct {

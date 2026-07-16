@@ -55,12 +55,11 @@ typedef struct String {
 
 ## StringBuilder
 
-A normal standard-library class, also used by the compiler-generated f-string
+A builtin standard-library class, also used by the compiler-generated f-string
 lowering:
 
 ```mylang
 class StringBuilder {
-    native void append_cstr(i8[] s);      // append a raw C-string literal
     native void append_string(string s);  // append another String object
     native void append_i32(i32 v);
     native void append_i64(i64 v);
@@ -72,6 +71,9 @@ class StringBuilder {
     native string toString();
 }
 ```
+
+`StringBuilder` is implemented in `runtime.c` and registered as a builtin class
+so it can be used immediately without an import/module system.
 
 ## IStringable
 
@@ -138,14 +140,14 @@ are also common conventions.  Pick one and document it.
 
 ## Phased plan
 
-1. **String type and literals**
+1. **String type and literals** ✅
    * Add `string` as a built-in class-like type.
    * Add `"..."` string literals.
-   * Add native `puts(string)` and `print_int(i32)` in a debug `Logger` class
+   * Add native `puts(string)` and `puti(i32)` in a debug `Logger` class
      so development can continue without f-strings.
 
-2. **StringBuilder runtime**
-   * Implement `StringBuilder` in MyLang source with native append methods.
+2. **StringBuilder runtime** ✅
+   * Implement `StringBuilder` as a builtin class with native append methods.
    * Verify it can produce a `string` and that refcounting is correct.
 
 3. **f-string parsing**

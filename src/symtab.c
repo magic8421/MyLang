@@ -40,6 +40,84 @@ void symtab_init(void) {
         bytes_type.is_array = 1;
         symtab_add_field(str_info, "bytes", bytes_type);
     }
+
+    /* Builtin StringBuilder class. */
+    {
+        ClassInfo* sb_info = (ClassInfo*)calloc(1, sizeof(ClassInfo));
+        CHECK_STRSCPY(strscpy(sb_info->name, "StringBuilder", sizeof(sb_info->name)),
+                      "builtin class name too long");
+        sb_info->type_id = TYPE_ID_STRING_BUILDER;
+        symtab_add_class("StringBuilder", sb_info);
+
+        Type void_type = type_make_primitive(TYPE_VOID);
+        Type string_type = type_make_user(TYPE_CLASS, "String");
+        string_type.is_pointer = 1;
+        string_type.type_id = TYPE_ID_STRING;
+
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "param name too long");
+            pt[0] = string_type;
+            symtab_add_method(sb_info, "append_string", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_I32);
+            symtab_add_method(sb_info, "append_i32", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_I64);
+            symtab_add_method(sb_info, "append_i64", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_U32);
+            symtab_add_method(sb_info, "append_u32", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_U64);
+            symtab_add_method(sb_info, "append_u64", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_F32);
+            symtab_add_method(sb_info, "append_f32", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_F64);
+            symtab_add_method(sb_info, "append_f64", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "c", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_I8);
+            symtab_add_method(sb_info, "append_char", void_type, 1, pn, pt, 1);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            (void)pn;
+            (void)pt;
+            symtab_add_method(sb_info, "toString", string_type, 0, pn, pt, 1);
+        }
+    }
 }
 
 void symtab_enter_scope(void) {
