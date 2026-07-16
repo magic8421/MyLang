@@ -67,6 +67,19 @@ Source code lives under `src/`:
 - Assignment and increment/decrement are not allowed in the `condition` expression.
 - `break` exits the innermost loop; `continue` skips to the next iteration. Both correctly run cleanup for local variables.
 
+## Match Statement
+
+- Syntax: `match (expr) { ClassName var => { body } ... else => { body } }`.
+- Arms are evaluated in order; the first matching arm runs and the rest are skipped.
+- Type-pattern arms match the concrete class type of an interface or class expression:
+  - The pattern class must implement the interface when the expression is an interface.
+  - The bound variable is a class pointer that is visible only inside the arm body.
+- Integer literal arms match integer expressions.
+- `else` must be the last arm and matches any remaining value.
+- The match expression is evaluated once into a local temporary; the temporary is released
+  if it is owned by the expression.
+- Binding variables are scoped to the arm body and do not participate in reference counting.
+
 ## Interface System (Phase 1 + Phase 2 weak interfaces)
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.

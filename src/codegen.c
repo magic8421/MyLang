@@ -2305,6 +2305,7 @@ static void cleanup_emit_to(CodegenContext* ctx, int target_count, int indent) {
     }
 }
 
+static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent);
 static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent);
 
 static void indent_line(CodegenContext* ctx, int indent) {
@@ -2754,6 +2755,205 @@ static void codegen_continue_stmt(CodegenContext* ctx, AstNode* node, int indent
     fprintf(ctx->out, "goto _my_continue%d;\n", ctx->loop_continue_label_id[idx]);
 }
 
+static void codegen_match_arm_body(CodegenContext* ctx, AstNode* arm, AstNode* body,
+                                    const char* temp_name, Type* expr_type, int indent) {
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "{\n");
+    cleanup_push_scope(ctx);
+    symtab_enter_scope();
+
+    Type pat_type = arm->ast_resolved_type;
+    if (pat_type.type_kind == TYPE_CLASS) {
+        char pat_cbuf[128];
+        c_type_str(&pat_type, pat_cbuf, sizeof(pat_cbuf));
+        indent_line(ctx, indent + 1);
+        fprintf(ctx->out, "%s %s = ", pat_cbuf, arm->ast_token.text);
+        if (expr_type->type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "(%s*)(%s.data);\n", pat_type.class_name, temp_name);
+        } else {
+            fprintf(ctx->out, "(%s*)(%s);\n", pat_type.class_name, temp_name);
+        }
+        symtab_insert(arm->ast_token.text, pat_type);
+    }
+
+    if (body && body->ast_kind == AST_BLOCK) {
+        AstNode* s = body->ast_children[0];
+        while (s) {
+            codegen_stmt(ctx, s, indent + 1);
+            s = s->next;
+        }
+    } else {
+        codegen_stmt(ctx, body, indent + 1);
+    }
+
+    symtab_exit_scope();
+    cleanup_pop_scope(ctx, indent + 1);
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "}\n");
+}
+
+static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    AstNode* expr = node->ast_children[0];
+    AstNode* arms = node->ast_children[1];
+
+    emit_line_loc(ctx, node, indent);
+    if (expr) {
+        prepare_expression(ctx, expr, indent);
+        emit_bounds_checks(ctx, expr, indent);
+    }
+
+    Type expr_type;
+    memset(&expr_type, 0, sizeof(expr_type));
+    if (expr) {
+        expr_type = resolve_type(expr);
+    }
+
+    int expr_owned = expr && expr_is_owned(expr);
+    int expr_extracted = expr && (expr->ast_temp_name[0] != '\0');
+
+    int tmp_id = ctx->assign_tmp_id++;
+    CHECK_STRSCPY(strscpy(node->ast_temp_name, "_m", sizeof(node->ast_temp_name)),
+                  "match temp name too long");
+    {
+        char suffix[32];
+        int n = snprintf(suffix, sizeof(suffix), "%d", tmp_id);
+        CHECK_SNPRINTF(n, sizeof(suffix), "match temp id too long");
+        CHECK_STRSCPY(strscpy(node->ast_temp_name + 2, suffix, sizeof(node->ast_temp_name) - 2),
+                      "match temp name too long");
+    }
+    const char* temp_name = node->ast_temp_name;
+
+    char tbuf[128];
+    c_type_str(&expr_type, tbuf, sizeof(tbuf));
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "%s %s = ", tbuf, temp_name);
+    if (expr) {
+        codegen_expr(ctx, expr);
+    } else {
+        fprintf(ctx->out, "0");
+    }
+    fprintf(ctx->out, ";\n");
+
+    /* If the expression is owned and was not hoisted into a subexpression
+       temporary, this local holds the only reference and must be released. */
+    if (expr_owned && !expr_extracted) {
+        if (expr_type.type_kind == TYPE_INTERFACE) {
+            cleanup_add(ctx, temp_name, 0, 1);
+        } else if (expr_type.type_kind == TYPE_CLASS) {
+            cleanup_add(ctx, temp_name, 0, 0);
+        }
+    }
+
+    int is_first = 1;
+    AstNode* arm = arms;
+    while (arm) {
+        Type pat_type = arm->ast_resolved_type;
+
+        if (pat_type.type_kind == TYPE_VOID) {
+            /* else arm */
+            if (is_first) {
+                codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+            } else {
+                indent_line(ctx, indent);
+                fprintf(ctx->out, "else\n");
+                codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+            }
+            break;
+        }
+
+        if (pat_type.type_kind == TYPE_I32) {
+            if (expr_type.type_kind != TYPE_I32 &&
+                expr_type.type_kind != TYPE_I8 &&
+                expr_type.type_kind != TYPE_I16 &&
+                expr_type.type_kind != TYPE_I64 &&
+                expr_type.type_kind != TYPE_U8 &&
+                expr_type.type_kind != TYPE_U16 &&
+                expr_type.type_kind != TYPE_U32 &&
+                expr_type.type_kind != TYPE_U64) {
+                fprintf(stderr, "error at %d:%d: integer match pattern cannot match expression of type '%s'\n",
+                        arm->ast_token.line, arm->ast_token.col, type_name(&expr_type));
+                ctx->codegen_error = 1;
+            }
+            indent_line(ctx, indent);
+            if (is_first) {
+                fprintf(ctx->out, "if (%s == %d)\n", temp_name, arm->ast_token.int_val);
+            } else {
+                fprintf(ctx->out, "else if (%s == %d)\n", temp_name, arm->ast_token.int_val);
+            }
+            codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+        } else if (pat_type.type_kind == TYPE_CLASS) {
+            if (expr_type.type_kind == TYPE_INTERFACE) {
+                ClassInfo* cls = symtab_find_class(pat_type.class_name);
+                InterfaceInfo* iface = symtab_find_interface(expr_type.class_name);
+                int implements = 0;
+                if (cls && iface) {
+                    int i;
+                    for (i = 0; i < cls->impl_count && i < MAX_IMPL; i++) {
+                        if (strcmp(cls->impl_names[i], expr_type.class_name) == 0) {
+                            implements = 1;
+                            break;
+                        }
+                    }
+                }
+                if (!implements) {
+                    fprintf(stderr, "error at %d:%d: class '%s' does not implement interface '%s'\n",
+                            arm->ast_token.line, arm->ast_token.col,
+                            pat_type.class_name, expr_type.class_name);
+                    ctx->codegen_error = 1;
+                }
+                indent_line(ctx, indent);
+                if (is_first) {
+                    fprintf(ctx->out, "if (%s.vtable->concrete_type_id == MYLANG_TID_%s)\n",
+                            temp_name, pat_type.class_name);
+                } else {
+                    fprintf(ctx->out, "else if (%s.vtable->concrete_type_id == MYLANG_TID_%s)\n",
+                            temp_name, pat_type.class_name);
+                }
+            } else if (expr_type.type_kind == TYPE_CLASS) {
+                if (strcmp(expr_type.class_name, pat_type.class_name) != 0) {
+                    fprintf(stderr, "error at %d:%d: match pattern type '%s' does not match expression type '%s'\n",
+                            arm->ast_token.line, arm->ast_token.col,
+                            pat_type.class_name, expr_type.class_name);
+                    ctx->codegen_error = 1;
+                }
+                indent_line(ctx, indent);
+                if (is_first) {
+                    fprintf(ctx->out, "if (mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
+                            temp_name, pat_type.class_name);
+                } else {
+                    fprintf(ctx->out, "else if (mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
+                            temp_name, pat_type.class_name);
+                }
+            } else {
+                fprintf(stderr, "error at %d:%d: class match pattern cannot match expression of type '%s'\n",
+                        arm->ast_token.line, arm->ast_token.col, type_name(&expr_type));
+                ctx->codegen_error = 1;
+                indent_line(ctx, indent);
+                if (is_first) {
+                    fprintf(ctx->out, "if (0)\n");
+                } else {
+                    fprintf(ctx->out, "else if (0)\n");
+                }
+            }
+            codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+        } else {
+            fprintf(stderr, "error at %d:%d: unsupported match pattern type\n",
+                    arm->ast_token.line, arm->ast_token.col);
+            ctx->codegen_error = 1;
+            indent_line(ctx, indent);
+            if (is_first) {
+                fprintf(ctx->out, "if (0)\n");
+            } else {
+                fprintf(ctx->out, "else if (0)\n");
+            }
+            codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+        }
+
+        is_first = 0;
+        arm = arm->next;
+    }
+}
+
 static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     if (node->ast_child_count > 0) {
         AstNode* ret = node->ast_children[0];
@@ -3141,6 +3341,9 @@ static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             break;
         case AST_FOR_STMT:
             codegen_for_stmt(ctx, node, indent);
+            break;
+        case AST_MATCH:
+            codegen_match_stmt(ctx, node, indent);
             break;
         case AST_RETURN_STMT:
             codegen_return_stmt(ctx, node, indent);

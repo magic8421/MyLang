@@ -36,6 +36,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_OVERRIDE: return "override";
         case TOK_KW_BREAK:  return "break";
         case TOK_KW_CONTINUE: return "continue";
+    case TOK_KW_MATCH:  return "match";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";
@@ -57,6 +58,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_NOT:       return "!";
         case TOK_AND:       return "&&";
         case TOK_OR:        return "||";
+        case TOK_FATARROW: return "=>";
         case TOK_LPAREN:    return "(";
         case TOK_RPAREN:    return ")";
         case TOK_LBRACE:    return "{";

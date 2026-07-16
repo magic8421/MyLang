@@ -2529,6 +2529,118 @@ i32 main() {
 }
 """, 0),
 
+
+    ("match_iface_type", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 classify(IShape s) {
+    match (s) {
+        Square sq => { return sq.side; }
+        Circle ci => { return ci.radius; }
+        else => { return 0; }
+    }
+    return -1;
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 5;
+    IShape s = sq;
+    return classify(s);
+}
+""", 5),
+
+    ("match_int", """
+i32 main() {
+    i32 x = 2;
+    match (x) {
+        1 => { return 10; }
+        2 => { return 20; }
+        else => { return 0; }
+    }
+    return -1;
+}
+""", 20),
+
+    ("match_iface_else", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 7;
+    IShape s = sq;
+    match (s) {
+        Circle ci => { return 99; }
+        else => { return 42; }
+    }
+    return -1;
+}
+""", 42),
+
+    ("match_iface_call", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle : IShape {
+    i32 radius;
+    i32 area() { return 3 * this.radius * this.radius; }
+}
+i32 classify(IShape s) {
+    match (s) {
+        Square sq => { return sq.side; }
+        Circle ci => { return ci.radius; }
+        else => { return 0; }
+    }
+    return -1;
+}
+IShape makeSquare(i32 side) {
+    Square sq = new Square;
+    sq.side = side;
+    return sq;
+}
+i32 main() {
+    return classify(makeSquare(4));
+}
+""", 4),
+
+    ("match_int_in_loop", """
+i32 main() {
+    i32 s = 0;
+    i32 i = 0;
+    while (i < 5) {
+        match (i) {
+            1 => { s = s + 1; }
+            2 => { s = s + 10; }
+            else => { s = s + 100; }
+        }
+        i = i + 1;
+    }
+    return s;
+}
+""", 311),
+
+
 ]
 
 # ============================================================
@@ -2751,6 +2863,48 @@ i32 main() {
     return 0;
 }
 """, "'continue' outside of loop"),
+
+    ("bad_match_not_impl", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+class Circle {
+    i32 radius;
+}
+i32 main() {
+    Square sq = new Square;
+    IShape s = sq;
+    match (s) {
+        Circle ci => { return ci.radius; }
+        else => { return 0; }
+    }
+    return -1;
+}
+""", "does not implement interface"),
+
+    ("bad_match_int_on_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    IShape s = sq;
+    match (s) {
+        1 => { return 1; }
+        else => { return 0; }
+    }
+    return -1;
+}
+""", "integer match pattern cannot match"),
+
 ]
 
 # ============================================================

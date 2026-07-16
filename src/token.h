@@ -37,6 +37,7 @@ typedef enum {
     TOK_KW_OVERRIDE,
     TOK_KW_BREAK,
     TOK_KW_CONTINUE,
+    TOK_KW_MATCH,
 
     TOK_PLUS,
     TOK_MINUS,
@@ -59,6 +60,7 @@ typedef enum {
     TOK_NOT,
     TOK_AND,
     TOK_OR,
+    TOK_FATARROW,
 
     TOK_LPAREN,
     TOK_RPAREN,

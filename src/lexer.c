@@ -38,6 +38,7 @@ static const KeywordEntry keywords[] = {
     {"override",  TOK_KW_OVERRIDE},
     {"break",     TOK_KW_BREAK},
     {"continue",  TOK_KW_CONTINUE},
+    {"match",     TOK_KW_MATCH},
     {NULL,        0},
 };
 
@@ -278,6 +279,10 @@ Token lexer_next(Lexer* lexer) {
     }
 
     /* two-character operators */
+    if (c == '=' && lexer_peek_ahead(lexer, 1) == '>') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_FATARROW, "=>", 2, 2);
+    }
     if (c == '=' && lexer_peek_ahead(lexer, 1) == '=') {
         lexer_advance(lexer); lexer_advance(lexer);
         return make_token(lexer, TOK_EQ, "==", 2, 2);

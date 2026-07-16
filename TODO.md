@@ -51,6 +51,31 @@ Fix summary:
 - Local array variables enter the cleanup list and are released with
   `mylang_release` at scope exit.
 
+## Match Statement [DONE]
+
+Implemented a basic `match` statement for interface type matching and integer
+literal matching.
+
+Syntax:
+```mylang
+match (expr) {
+    ClassName var => { ... }
+    42 => { ... }
+    else => { ... }
+}
+```
+
+- Type-pattern arms match the concrete class type of an interface or class
+  expression and bind the cast pointer to a local variable inside the arm body.
+- Integer literal arms match integer expressions.
+- `else` must be the last arm.
+- The match expression is evaluated once into a temporary and released if owned.
+
+Future extensions (planned):
+- Match on string literals.
+- Match on enum values with Rust-like pattern matching.
+- Guards and nested patterns.
+
 ### 6. Add explicit fixed-width primitive types  [FIXED]
 
 Implemented value types that do not participate in reference counting:

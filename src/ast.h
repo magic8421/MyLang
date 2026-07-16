@@ -71,6 +71,8 @@ typedef enum {
     AST_RETURN_STMT,
     AST_BREAK,
     AST_CONTINUE,
+    AST_MATCH,
+    AST_MATCH_ARM,
     AST_EXPR_STMT,
     AST_ASSIGN,
     AST_BINARY,
@@ -98,6 +100,7 @@ struct AstNode {
     AstNode* ast_children[4];
     int      ast_child_count;
     char     ast_temp_name[64];
+    char     ast_match_var[64];
     int      ast_is_native;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */

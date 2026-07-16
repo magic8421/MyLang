@@ -68,6 +68,7 @@ static int is_type_name(const char* name) {
    ================================================================ */
 
 static AstNode* parse_stmt(Parser* p);
+static AstNode* parse_match_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 
@@ -768,6 +769,89 @@ static AstNode* parse_for_stmt(Parser* p) {
     return node;
 }
 
+static AstNode* parse_match_stmt(Parser* p) {
+    Token kw = p->current;
+    advance(p); /* match */
+    expect(p, TOK_LPAREN);
+
+    AstNode* expr = parse_expr(p);
+    if (expr && (expr_contains_assign(expr) || expr_contains_inc_dec(expr))) {
+        fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in match expression\n",
+                expr->ast_token.line, expr->ast_token.col);
+        p->had_error = 1;
+    }
+    expect(p, TOK_RPAREN);
+    expect(p, TOK_LBRACE);
+
+    AstNode* arms = NULL;
+    int saw_else = 0;
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        AstNode* arm = NULL;
+        if (saw_else) {
+            fprintf(stderr, "error at %d:%d: arm after 'else' is not allowed\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        }
+        if (check(p, TOK_KW_ELSE)) {
+            Token else_tok = p->current;
+            advance(p);
+            arm = ast_new_node(AST_MATCH_ARM, else_tok);
+            arm->ast_resolved_type.type_kind = TYPE_VOID;
+            saw_else = 1;
+        } else if (check(p, TOK_INT_LIT)) {
+            Token lit = p->current;
+            advance(p);
+            arm = ast_new_node(AST_MATCH_ARM, lit);
+            arm->ast_resolved_type = type_make_primitive(TYPE_I32);
+        } else if (check(p, TOK_IDENT)) {
+            /* Type pattern: ClassName var */
+            Type pattern_type = parse_base_type(p);
+            if (pattern_type.type_kind != TYPE_CLASS) {
+                fprintf(stderr, "error at %d:%d: match type pattern must be a class name\n",
+                        p->current.line, p->current.col);
+                p->had_error = 1;
+            }
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "error at %d:%d: expected variable name after type pattern\n",
+                        p->current.line, p->current.col);
+                p->had_error = 1;
+                if (check(p, TOK_FATARROW)) { advance(p); }
+                parse_stmt(p);
+                continue;
+            }
+            Token var = p->current;
+            advance(p);
+            arm = ast_new_node(AST_MATCH_ARM, var);
+            arm->ast_resolved_type = pattern_type;
+            CHECK_STRSCPY(strscpy(arm->ast_match_var, pattern_type.class_name, sizeof(arm->ast_match_var)),
+                          "match type name too long");
+            /* Bind the variable for the arm body. */
+            symtab_enter_scope();
+            symtab_insert(var.text, pattern_type);
+        } else {
+            fprintf(stderr, "error at %d:%d: expected 'else', integer literal, or type pattern in match arm\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            if (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) { advance(p); }
+            continue;
+        }
+        expect(p, TOK_FATARROW);
+        AstNode* body = parse_stmt(p);
+        ast_add_child(arm, body);
+        arms = ast_append_list(arms, arm);
+        if (arm && arm->ast_resolved_type.type_kind != TYPE_VOID) {
+            /* Close the arm scope that was opened for the type pattern. */
+            symtab_exit_scope();
+        }
+    }
+    expect(p, TOK_RBRACE);
+
+    AstNode* node = ast_new_node(AST_MATCH, kw);
+    ast_add_child(node, expr);
+    ast_add_child(node, arms);
+    return node;
+}
+
 static AstNode* parse_stmt(Parser* p) {
     if (check(p, TOK_LBRACE)) {
         return parse_block(p);
@@ -837,6 +921,10 @@ static AstNode* parse_stmt(Parser* p) {
         Token kw = p->current; advance(p);
         expect(p, TOK_SEMI);
         return ast_new_node(AST_CONTINUE, kw);
+    }
+
+    if (check(p, TOK_KW_MATCH)) {
+        return parse_match_stmt(p);
     }
 
     if (stmt_looks_like_var_decl(p)) {
