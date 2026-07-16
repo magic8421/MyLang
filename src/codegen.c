@@ -44,6 +44,7 @@ struct CodegenContext {
     int          cleanup_count;
     int          assign_tmp_id;
     int          subexpr_tmp_id;
+    int          fstring_tmp_id;
     int          cleanup_scope_stack[MAX_SCOPE];
     int          cleanup_scope_depth;
     int          last_loc_line;
@@ -445,6 +446,7 @@ static Type resolve_type(AstNode* node) {
             break;
 
         case AST_STRING_LIT:
+        case AST_FSTRING:
             t = type_make_user(TYPE_CLASS, "String");
             t.is_pointer = 1;
             t.type_id = TYPE_ID_STRING;
@@ -1028,9 +1030,7 @@ static void codegen_char_lit(CodegenContext* ctx, AstNode* node) {
     }
 }
 
-static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
-    const char* s = node->ast_token.text;
-    fprintf(ctx->out, "mylang_string_new(MYLANG_TID_String, \"");
+static void emit_c_string_literal(CodegenContext* ctx, const char* s) {
     while (*s) {
         unsigned char c = (unsigned char)*s++;
         switch (c) {
@@ -1048,6 +1048,12 @@ static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
                 break;
         }
     }
+}
+
+static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
+    const char* s = node->ast_token.text;
+    fprintf(ctx->out, "mylang_string_new(MYLANG_TID_String, \"");
+    emit_c_string_literal(ctx, s);
     fprintf(ctx->out, "\")");
 }
 
@@ -1432,6 +1438,10 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
         case AST_NEW:
             codegen_new(ctx, node);
             break;
+        case AST_FSTRING:
+            /* Lowered to a temporary by emit_fstring_preambles. */
+            fprintf(ctx->out, "%s", node->ast_temp_name);
+            break;
         case AST_AS_CAST: {
             AstNode* obj = node->ast_children[0];
             resolve_type(obj);
@@ -1531,6 +1541,9 @@ static int subexpr_needs_temp(AstNode* node) {
 static void emit_guarded_temp_decls(CodegenContext* ctx, AstNode* expr, int indent) {
     if (!expr) return;
 
+    /* F-strings are lowered by emit_fstring_preambles. */
+    if (expr->ast_kind == AST_FSTRING) return;
+
     /* Do not extract the LHS of an assignment into a temporary; it must remain
        an lvalue so the assignment writes to the real location. */
     if (expr->ast_kind == AST_ASSIGN) {
@@ -1608,6 +1621,10 @@ static void extract_owned_call_temp(CodegenContext* ctx, AstNode* node, int inde
    are left for emit_guarded_temp_decls to handle. */
 static void emit_subexpr_temps_impl(CodegenContext* ctx, AstNode* node, int indent, int extract_root) {
     if (!node) return;
+
+    /* F-strings are lowered by emit_fstring_preambles; do not extract parts
+       from inside them here. */
+    if (node->ast_kind == AST_FSTRING) return;
 
     if (node->ast_kind == AST_AS_CAST) {
         emit_subexpr_temps_impl(ctx, node->ast_children[0], indent, 1);
@@ -1693,6 +1710,149 @@ static void emit_subexpr_temps_impl(CodegenContext* ctx, AstNode* node, int inde
 
 static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, int indent) {
     emit_subexpr_temps_impl(ctx, node, indent, 1);
+}
+
+static int type_is_string(const Type* t) {
+    return t->type_kind == TYPE_CLASS && strcmp(t->class_name, "String") == 0;
+}
+
+static const char* fstring_append_method(const Type* t) {
+    if (type_is_string(t)) return "append_string";
+    switch (t->type_kind) {
+        case TYPE_I8:  return "append_char";
+        case TYPE_I16:
+        case TYPE_I32: return "append_i32";
+        case TYPE_I64: return "append_i64";
+        case TYPE_U8:
+        case TYPE_U16:
+        case TYPE_U32: return "append_u32";
+        case TYPE_U64: return "append_u64";
+        case TYPE_F32: return "append_f32";
+        case TYPE_F64: return "append_f64";
+        default:       return NULL;
+    }
+}
+
+static const char* fstring_temp_name(const char* prefix, int id) {
+    char* buf = (char*)malloc(64);
+    int n = snprintf(buf, 64, "%s%d", prefix, id);
+    CHECK_SNPRINTF(n, 64, "f-string temp name too long");
+    return buf;
+}
+
+/* Emit the StringBuilder setup for an f-string before the statement that uses
+   it.  Each interpolated expression is evaluated once and in source order.
+   The AST_FSTRING node keeps the name of the temporary that holds the final
+   String result. */
+static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int indent) {
+    if (!node || node->ast_kind != AST_FSTRING) return;
+    if (node->ast_temp_name[0] != '\0') return;
+
+    /* Nested f-strings inside interpolated expressions are lowered first. */
+    AstNode* part = node->ast_children[0];
+    while (part) {
+        if (part->ast_kind == AST_FSTRING) {
+            codegen_fstring_preamble(ctx, part, indent);
+        }
+        part = part->next;
+    }
+
+    int sb_id = ctx->fstring_tmp_id++;
+    const char* sb_name = fstring_temp_name("_fsb", sb_id);
+
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "StringBuilder* %s = mylang_stringbuilder_new(MYLANG_TID_StringBuilder);\n", sb_name);
+    cleanup_add(ctx, sb_name, 0, 0);
+
+    part = node->ast_children[0];
+    while (part) {
+        if (part->ast_kind == AST_STRING_LIT) {
+            int lit_id = ctx->fstring_tmp_id++;
+            const char* lit_name = fstring_temp_name("_fslit", lit_id);
+
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "String* %s = mylang_string_new(MYLANG_TID_String, \"", lit_name);
+            emit_c_string_literal(ctx, part->ast_token.text);
+            fprintf(ctx->out, "\");\n");
+            cleanup_add(ctx, lit_name, 0, 0);
+
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "StringBuilder_append_string(%s, %s);\n", sb_name, lit_name);
+        } else {
+            /* Owned class/interface subexpressions inside the interpolation are
+               extracted into temporaries first so they are evaluated once.
+               Detach the part from the f-string part list so the helpers do not
+               walk into following sibling parts. */
+            AstNode* saved_next = part->next;
+            part->next = NULL;
+            emit_subexpr_temps(ctx, part, indent);
+            emit_guarded_temp_decls(ctx, part, indent);
+            part->next = saved_next;
+
+            resolve_type(part);
+            Type t = part->ast_resolved_type;
+            const char* method = fstring_append_method(&t);
+            if (method) {
+                if (type_is_string(&t)) {
+                    if (expr_is_owned(part)) {
+                        int expr_id = ctx->fstring_tmp_id++;
+                        const char* expr_name = fstring_temp_name("_fsexpr", expr_id);
+
+                        indent_line(ctx, indent);
+                        fprintf(ctx->out, "String* %s = ", expr_name);
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ";\n");
+                        cleanup_add(ctx, expr_name, 0, 0);
+
+                        indent_line(ctx, indent);
+                        fprintf(ctx->out, "StringBuilder_%s(%s, %s);\n", method, sb_name, expr_name);
+                    } else {
+                        /* Borrowed string (local variable, parameter, field):
+                           append directly without releasing the source. */
+                        indent_line(ctx, indent);
+                        fprintf(ctx->out, "StringBuilder_%s(%s, ", method, sb_name);
+                        codegen_expr(ctx, part);
+                        fprintf(ctx->out, ");\n");
+                    }
+                } else {
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "StringBuilder_%s(%s, ", method, sb_name);
+                    codegen_expr(ctx, part);
+                    fprintf(ctx->out, ");\n");
+                }
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot interpolate value of type '%s' in f-string\n",
+                        part->ast_token.line, part->ast_token.col, type_name(&t));
+                ctx->codegen_error = 1;
+            }
+        }
+        part = part->next;
+    }
+
+    int result_id = ctx->fstring_tmp_id++;
+    const char* result_name = fstring_temp_name("_fsr", result_id);
+
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "String* %s = StringBuilder_toString(%s);\n", result_name, sb_name);
+    cleanup_add(ctx, result_name, 0, 0);
+
+    CHECK_STRSCPY(strscpy(node->ast_temp_name, result_name, sizeof(node->ast_temp_name)),
+                  "f-string result temp name too long");
+}
+
+/* Lower every f-string contained in a statement before the statement is
+   emitted.  codegen_expr for AST_FSTRING then just outputs the result temp. */
+static void emit_fstring_preambles(CodegenContext* ctx, AstNode* node, int indent) {
+    if (!node) return;
+    if (node->ast_kind == AST_FSTRING) {
+        codegen_fstring_preamble(ctx, node, indent);
+        return;
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        emit_fstring_preambles(ctx, node->ast_children[i], indent);
+    }
+    emit_fstring_preambles(ctx, node->next, indent);
 }
 
 static void emit_call_guards(CodegenContext* ctx, AstNode* expr, int is_retain) {
@@ -1920,6 +2080,14 @@ static void indent_line(CodegenContext* ctx, int indent) {
     for (i = 0; i < indent; i++) fprintf(ctx->out, "    ");
 }
 
+/* Prepare an expression for codegen: lower any f-strings, then extract owned
+   subexpression temporaries and caller-side guarded temporaries. */
+static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
+    emit_fstring_preambles(ctx, expr, indent);
+    emit_subexpr_temps(ctx, expr, indent);
+    emit_guarded_temp_decls(ctx, expr, indent);
+}
+
 /* Update the thread-local line marker when the source line changes. The file
    is already set by MY_PUSH at function entry, so only the line needs to be
    tracked. */
@@ -1957,7 +2125,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     emit_line_loc(ctx, node, indent);
 
     if (node->ast_child_count > 0) {
-        emit_subexpr_temps(ctx, node->ast_children[0], indent);
+        prepare_expression(ctx, node->ast_children[0], indent);
     }
 
     symtab_insert(node->ast_token.text, type);
@@ -2181,7 +2349,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
 
 static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     emit_line_loc(ctx, node->ast_children[0], indent);
-    emit_subexpr_temps(ctx, node->ast_children[0], indent);
+    prepare_expression(ctx, node->ast_children[0], indent);
     emit_bounds_checks(ctx, node->ast_children[0], indent);
     indent_line(ctx, indent);
     fprintf(ctx->out, "if (");
@@ -2198,7 +2366,7 @@ static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 
 static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     emit_line_loc(ctx, node->ast_children[0], indent);
-    emit_subexpr_temps(ctx, node->ast_children[0], indent);
+    prepare_expression(ctx, node->ast_children[0], indent);
     emit_bounds_checks(ctx, node->ast_children[0], indent);
     indent_line(ctx, indent);
     fprintf(ctx->out, "while (");
@@ -2233,7 +2401,7 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 
     if (cond) {
         emit_line_loc(ctx, cond, indent + 1);
-        emit_subexpr_temps(ctx, cond, indent + 1);
+        prepare_expression(ctx, cond, indent + 1);
         emit_bounds_checks(ctx, cond, indent + 1);
     }
     indent_line(ctx, indent + 1);
@@ -2281,7 +2449,7 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
     if (node->ast_child_count > 0) {
         AstNode* ret = node->ast_children[0];
         emit_line_loc(ctx, ret, indent);
-        emit_subexpr_temps(ctx, ret, indent);
+        prepare_expression(ctx, ret, indent);
         emit_bounds_checks(ctx, ret, indent);
         resolve_type(ret);
 
@@ -2414,13 +2582,9 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     /* Update the panic location before any runtime call in this statement. */
     emit_line_loc(ctx, expr, indent);
 
-    /* Extract owned class/interface subexpressions (e.g. inside 'as' casts or
-       comparisons) into temporaries so they are evaluated once and released. */
-    emit_subexpr_temps(ctx, expr, indent);
-
-    /* Extract guarded class subexpressions into temporaries so side-effecting
-       arguments (e.g. method calls) are evaluated exactly once. */
-    emit_guarded_temp_decls(ctx, expr, indent);
+    /* Prepare the expression: lower f-strings, extract owned subexpressions,
+       and extract guarded class subexpressions. */
+    prepare_expression(ctx, expr, indent);
 
     /* class/array assignment: evaluate RHS first, release old LHS, then assign.
        This avoids use-after-free when RHS aliases LHS (e.g. b = b.set(5)). */

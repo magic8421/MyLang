@@ -102,6 +102,15 @@ Source code lives under `src/`:
 - Struct fields are restricted to primitive types only.
 - The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements correctly.
 
+## Strings and f-strings
+- `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
+- `StringBuilder` is a builtin class in `runtime.h`/`runtime.c` with native append methods (`append_string`, `append_i32`, `append_char`, etc.).
+- f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
+- Codegen emits a temporary `StringBuilder`, appends each part, and produces the result via `StringBuilder_toString`; each interpolated expression is evaluated exactly once and in source order.
+- Supported interpolation types: `string`, integer types, floating-point types, and `i8` characters (via `append_char`).  Other types are rejected until the `IStringable` interface is implemented.
+- Floating-point numeric literals (e.g. `3.14`) are not yet supported by the lexer, so `append_f32`/`append_f64` can only be exercised with expression results.
+- Escaped braces (`\{`, `\}`, `{{`, `}}`) are not yet supported; `{` always starts an interpolation expression.
+
 ## Memory Model
 - Heap objects use atomic reference counting via `ObjHeader`.
 - `ObjHeader` holds `refcount`, `type_id`, `WeakRef* weak`, and a per-class destructor function pointer.

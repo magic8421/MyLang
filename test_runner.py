@@ -2114,6 +2114,76 @@ int32_t Math_add(Math* thiz, int32_t a, int32_t b) {
     return a + b;
 }
 """),
+
+    ("fstring_basic", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    i32 n = 42;
+    string name = "world";
+    string msg = f"hello {name}, n={n}\\n";
+    if (!a.string_equals(msg, "hello world, n=42\\n")) {
+        return 1;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("fstring_types", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    i8 c = 'X';
+    i32 n = -123;
+    string s = f"{c}:{n}";
+    if (!a.string_equals(s, "X:-123")) {
+        return 1;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("fstring_arg", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    i32 n = 7;
+    if (!a.string_equals(f"n={n}", "n=7")) {
+        return 1;
+    }
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
 ]
 
 # ============================================================

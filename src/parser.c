@@ -239,6 +239,112 @@ static Type parse_type(Parser* p) {
 }
 
 
+/* Parse a small expression snippet (used for f-string interpolation). */
+static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, int col) {
+    Lexer sub_lexer;
+    lexer_init(&sub_lexer, text);
+    Parser sub;
+    parser_init(&sub, &sub_lexer);
+    AstNode* e = parse_expr(&sub);
+    if (parser_had_error(&sub)) {
+        outer->had_error = 1;
+    }
+    (void)line;
+    (void)col;
+    return e;
+}
+
+/* Parse an f-string after the leading 'f' has been consumed.  The string token
+   text already has escape sequences resolved; braces introduce interpolation. */
+static AstNode* parse_fstring(Parser* p, Token str_tok) {
+    AstNode* node = ast_new_node(AST_FSTRING, str_tok);
+    Type string_type = type_make_user(TYPE_CLASS, "String");
+    string_type.is_pointer = 1;
+    string_type.type_id = TYPE_ID_STRING;
+    node->ast_resolved_type = string_type;
+
+    AstNode* parts = NULL;
+    const char* s = str_tok.text;
+    int n = (int)strlen(s);
+    int i = 0;
+    int start = 0;
+
+    while (i < n) {
+        if (s[i] == '{') {
+            if (i > start) {
+                Token lit = str_tok;
+                lit.kind = TOK_STRING_LIT;
+                int len = i - start;
+                if (len > 255) len = 255;
+                memcpy(lit.text, s + start, len);
+                lit.text[len] = '\0';
+                AstNode* ln = ast_new_node(AST_STRING_LIT, lit);
+                ln->ast_resolved_type = string_type;
+                parts = ast_append_list(parts, ln);
+            }
+            i++;
+            int depth = 1;
+            int expr_start = i;
+            while (i < n && depth > 0) {
+                if (s[i] == '{') depth++;
+                else if (s[i] == '}') depth--;
+                i++;
+            }
+            if (depth != 0) {
+                fprintf(stderr, "error at %d:%d: unclosed expression in f-string\n",
+                        str_tok.line, str_tok.col);
+                p->had_error = 1;
+                break;
+            }
+            int expr_len = i - expr_start - 1;
+            if (expr_len <= 0) {
+                fprintf(stderr, "error at %d:%d: empty expression in f-string\n",
+                        str_tok.line, str_tok.col);
+                p->had_error = 1;
+            } else {
+                char* expr_text = (char*)malloc(expr_len + 1);
+                if (!expr_text) {
+                    fprintf(stderr, "error: out of memory parsing f-string\n");
+                    p->had_error = 1;
+                } else {
+                    memcpy(expr_text, s + expr_start, expr_len);
+                    expr_text[expr_len] = '\0';
+                    AstNode* expr = parse_expr_from_text(p, expr_text, str_tok.line,
+                                                         str_tok.col + expr_start);
+                    free(expr_text);
+                    if (expr) {
+                        if (expr_contains_assign(expr) || expr_contains_inc_dec(expr)) {
+                            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in f-string expression\n",
+                                    expr->ast_token.line, expr->ast_token.col);
+                            p->had_error = 1;
+                        }
+                        parts = ast_append_list(parts, expr);
+                    }
+                }
+            }
+            start = i;
+        } else {
+            i++;
+        }
+    }
+
+    if (!p->had_error && i > start) {
+        Token lit = str_tok;
+        lit.kind = TOK_STRING_LIT;
+        int len = i - start;
+        if (len > 255) len = 255;
+        memcpy(lit.text, s + start, len);
+        lit.text[len] = '\0';
+        AstNode* ln = ast_new_node(AST_STRING_LIT, lit);
+        ln->ast_resolved_type = string_type;
+        parts = ast_append_list(parts, ln);
+    }
+
+    node->ast_children[0] = parts;
+    node->ast_child_count = 1;
+    return node;
+}
+
 static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_INT_LIT)) {
         Token t = p->current; advance(p);
@@ -253,6 +359,15 @@ static AstNode* parse_primary(Parser* p) {
         n->ast_resolved_type.type_kind = TYPE_I8;
         n->ast_resolved_type.type_id = TYPE_ID_I8;
         return n;
+    }
+    if (check(p, TOK_IDENT) && strcmp(p->current.text, "f") == 0 &&
+        p->peek.kind == TOK_STRING_LIT) {
+        Token ftok = p->current;
+        advance(p);
+        Token str_tok = p->current;
+        advance(p);
+        (void)ftok;
+        return parse_fstring(p, str_tok);
     }
     if (check(p, TOK_STRING_LIT)) {
         Token t = p->current; advance(p);

@@ -86,6 +86,7 @@ typedef enum {
     AST_REF_ARG,
     AST_OUT_ARG,
     AST_INC_DEC,
+    AST_FSTRING,
 } AstKind;
 
 struct AstNode {

@@ -123,8 +123,9 @@ Side effects are preserved.
    `append_f64` methods can only be exercised with expression results, not
    literals.  This also blocks `{3.14}` in f-strings.
 
-Escape braces inside f-strings: `\{` and `\}` are literal braces; `{{` and `}}`
-are also common conventions.  Pick one and document it.
+Escape braces inside f-strings: not supported in the first version.  `\{` and
+`\}` are currently not recognized, and `{{` / `}}` are not treated specially;
+`{` always starts an interpolation expression.
 
 ## Codegen changes
 
@@ -154,7 +155,7 @@ are also common conventions.  Pick one and document it.
    * Implement `StringBuilder` as a builtin class with native append methods.
    * Verify it can produce a `string` and that refcounting is correct.
 
-3. **f-string parsing**
+3. **f-string parsing** ✅
    * Add `f"..."` tokenization and `AST_FSTRING`.
    * Lower simple f-strings with only string variables and primitive values.
 
