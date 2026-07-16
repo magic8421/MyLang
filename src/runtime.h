@@ -145,6 +145,7 @@ void  mylang_array_compact(MyArray* a, size_t elem_size);
 
 /* Weak references. */
 WeakRef* mylang_weak_init(void* ptr);
+WeakRef* mylang_weak_init_owned(void* ptr);
 WeakRef* mylang_weak_copy(WeakRef* wr);
 void*    mylang_lock(WeakRef* wr);
 void     mylang_weak_release(WeakRef* wr);

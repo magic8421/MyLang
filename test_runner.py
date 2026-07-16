@@ -904,6 +904,159 @@ i32 main() {
 }
 """, 7),
 
+    ("iface_array_push", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    IShape[] arr;
+    Square sq = new Square;
+    sq.side = 3;
+    IShape s = sq;
+    arr.push(s);
+    arr.push(s);
+    arr.push(s);
+    arr.push(s);
+    arr.push(s);
+    return arr[0].area() + arr[4].area();
+}
+""", 18),
+
+    ("weak_class_array_push", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    weak Node[] arr;
+    Node a = new Node;
+    a.v = 5;
+    Node b = new Node;
+    b.v = 7;
+    weak Node wa = a;
+    weak Node wb = b;
+    arr.push(wa);
+    arr.push(wb);
+    arr.push(wa);
+    arr.push(wb);
+    arr.push(wa);
+    Node s1 = arr[4].lock();
+    Node s2 = arr[1].lock();
+    if (!s1) return 0;
+    if (!s2) return 0;
+    return s1.v + s2.v;
+}
+""", 12),
+
+    ("weak_iface_array_push", """
+interface IBox {
+    i32 get();
+}
+class Box : IBox {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    weak IBox[] arr;
+    Box a = new Box;
+    a.v = 4;
+    Box b = new Box;
+    b.v = 6;
+    weak IBox wa = a;
+    weak IBox wb = b;
+    arr.push(wa);
+    arr.push(wb);
+    arr.push(wa);
+    arr.push(wb);
+    arr.push(wb);
+    IBox s = arr[4].lock();
+    return s.get() + arr.length;
+}
+""", 11),
+
+    ("weak_class_array_elem_assign", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    weak Node[] arr;
+    arr.resize(2);
+    Node a = new Node;
+    a.v = 5;
+    Node b = new Node;
+    b.v = 7;
+    weak Node wa = a;
+    weak Node wb = b;
+    arr[0] = wa;
+    arr[1] = wb;
+    Node s1 = arr[0].lock();
+    Node s2 = arr[1].lock();
+    if (!s1) return 0;
+    if (!s2) return 0;
+    return s1.v + s2.v;
+}
+""", 12),
+
+    ("weak_class_array_elem_assign_strong", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    weak Node[] arr;
+    arr.resize(1);
+    Node a = new Node;
+    a.v = 9;
+    arr[0] = a;
+    Node s = arr[0].lock();
+    if (!s) return 0;
+    return s.v;
+}
+""", 9),
+
+    ("weak_class_array_elem_assign_owned", """
+class Node {
+    i32 v;
+}
+Node make() {
+    Node n = new Node;
+    n.v = 4;
+    return n;
+}
+i32 main() {
+    weak Node[] arr;
+    arr.resize(1);
+    arr[0] = make();
+    Node s = arr[0].lock();
+    if (!s) return 1;
+    return 0;
+}
+""", 1),
+
+    ("weak_iface_array_elem_assign", """
+interface IBox {
+    i32 get();
+}
+class Box : IBox {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    weak IBox[] arr;
+    arr.resize(2);
+    Box a = new Box;
+    a.v = 3;
+    weak IBox wa = a;
+    arr[0] = wa;
+    arr[1] = wa;
+    IBox s1 = arr[0].lock();
+    IBox s2 = arr[1].lock();
+    return s1.get() + s2.get();
+}
+""", 6),
+
     ("fixed_width_basic", """
 i32 main() {
     u8  a = 200;
@@ -2904,6 +3057,25 @@ i32 main() {
     return -1;
 }
 """, "integer match pattern cannot match"),
+
+    ("too_many_generic_params", """
+class Nine<A, B, C, D, E, F, G, H, I> {
+}
+i32 main() {
+    return 0;
+}
+""", "too many generic parameters"),
+
+    ("too_many_generic_params_constraint", """
+interface IFoo {
+    void foo();
+}
+class Nine<A, B, C, D, E, F, G, H, I : IFoo> {
+}
+i32 main() {
+    return 0;
+}
+""", "too many generic parameters"),
 
 ]
 

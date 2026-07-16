@@ -301,18 +301,20 @@ void mylang_array_push(MyArray* a, size_t elem_size, int elem_kind, const void* 
                 *(void**)slot = mylang_retain(*(void**)value);
                 break;
             case MYLANG_ELEM_INTERFACE:
-                mylang_release(((AnyInterface*)slot)->data);
+                /* The slot is fresh, uninitialized memory: never release its
+                   old contents here.  Store the new value, then take our own
+                   reference. */
                 memcpy(slot, value, elem_size);
                 mylang_retain(((AnyInterface*)slot)->data);
                 break;
             case MYLANG_ELEM_WEAK_CLASS:
-                mylang_weak_release(*(WeakRef**)slot);
-                memcpy(slot, value, elem_size);
+                *(WeakRef**)slot = mylang_weak_copy(*(WeakRef* const*)value);
                 break;
             case MYLANG_ELEM_WEAK_IFACE: {
                 typedef struct { WeakRef* wr; const void* vt; } AnyWeakInterface;
-                mylang_weak_release(((AnyWeakInterface*)slot)->wr);
                 memcpy(slot, value, elem_size);
+                ((AnyWeakInterface*)slot)->wr =
+                    mylang_weak_copy(((AnyWeakInterface*)slot)->wr);
                 break;
             }
             case MYLANG_ELEM_PRIMITIVE:
@@ -367,6 +369,14 @@ WeakRef* mylang_weak_init(void* ptr) {
 
 WeakRef* mylang_weak_copy(WeakRef* wr) {
     if (wr) mylang_atomic_inc(&wr->refcount);
+    return wr;
+}
+
+/* Weakify an owned strong reference: takes a WeakRef share for the caller
+   and releases the caller's strong reference. */
+WeakRef* mylang_weak_init_owned(void* ptr) {
+    WeakRef* wr = mylang_weak_init(ptr);
+    mylang_release(ptr);
     return wr;
 }
 

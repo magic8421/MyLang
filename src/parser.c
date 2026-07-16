@@ -1049,6 +1049,12 @@ static AstNode* parse_class_decl(Parser* p) {
         char params[MAX_GENERIC_PARAMS][64];
         int param_count = 0;
         do {
+            if (param_count >= MAX_GENERIC_PARAMS) {
+                fprintf(stderr, "error at %d:%d: too many generic parameters for class '%s' (max %d)\n",
+                        p->current.line, p->current.col, name.text, MAX_GENERIC_PARAMS);
+                p->had_error = 1;
+                break;
+            }
             if (!check(p, TOK_IDENT)) {
                 fprintf(stderr, "error at %d:%d: expected type parameter name\n",
                         p->current.line, p->current.col);

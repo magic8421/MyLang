@@ -156,6 +156,7 @@ Source code lives under `src/`:
 - `WeakRef` holds `{volatile long refcount, ObjHeader* obj}`. refcount enables sharing across multiple weak variables.
 - `mylang_lock(wr)`: CAS loop on `ObjHeader::refcount`. Returns retained (+1) strong pointer, or NULL if object is dead.
 - `mylang_weak_init(ptr)`: creates or reuses the WeakRef for an object.
+- `mylang_weak_init_owned(ptr)`: weakifies an owned strong reference — takes a WeakRef share, then releases the strong reference (used when the statement consumes RHS ownership, e.g. weak array element assignment from a call result).
 - `mylang_weak_copy(wr)`: increments WeakRef.refcount (for weak-to-weak copy).
 - `mylang_weak_release(wr)`: decrements WeakRef.refcount, frees on zero, sets `obj->weak = NULL`.
 - On `mylang_release` refcount drop to zero: `h->weak->obj = NULL` (O(1) single assignment) before `free(h)`.

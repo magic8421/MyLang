@@ -132,7 +132,10 @@ static void c_array_elem_type_name(const Type* arr_type, char* buf, int bufsz) {
         char winame[128];
         c_weak_interface_name(&et, winame, sizeof(winame));
         snprintf(buf, bufsz, "%s", winame);
-    } else if (et.type_kind == TYPE_CLASS && !et.is_weak) {
+    } else if (et.is_weak) {
+        /* weak class arrays store WeakRef pointers */
+        snprintf(buf, bufsz, "WeakRef*");
+    } else if (et.type_kind == TYPE_CLASS) {
         /* class array stores pointers to objects */
         snprintf(buf, bufsz, "%s*", c_base_name(&et));
     } else {
@@ -1261,8 +1264,15 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                         codegen_array_access(ctx, lhs);
                         fprintf(ctx->out, " = ");
                         if (rt.is_weak && rt.type_kind == TYPE_INTERFACE) {
-                            /* weak-to-weak: copy the whole WeakIFoo value */
+                            /* weak-to-weak: copy the struct value and take
+                               our own share of the WeakRef control block. */
+                            char winame[128];
+                            c_weak_interface_name(&lt, winame, sizeof(winame));
+                            fprintf(ctx->out, "(%s){ mylang_weak_copy(", winame);
                             codegen_expr(ctx, rhs);
+                            fprintf(ctx->out, ".wr), ");
+                            codegen_expr(ctx, rhs);
+                            fprintf(ctx->out, ".vt }");
                         } else if (rt.type_kind == TYPE_INTERFACE) {
                             /* strong interface -> weak interface */
                             if (rhs_owned) {
@@ -1284,18 +1294,29 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                         }
                         fprintf(ctx->out, ")");
                     } else if (lt.is_weak) {
-                        /* weak class element */
+                        /* weak class element: release the old WeakRef, then
+                           weak-copy (weak-to-weak) or weakify (strong RHS). */
                         fprintf(ctx->out, "((void)mylang_weak_release(");
                         codegen_array_access(ctx, lhs);
                         fprintf(ctx->out, "), ");
-                        codegen_array_access(ctx, lhs);
-                        fprintf(ctx->out, " = ");
-                        if (rhs_owned) {
-                            fprintf(ctx->out, "mylang_weak_init(");
+                        if (rt.is_weak) {
+                            fprintf(ctx->out, "(");
+                            codegen_array_access(ctx, lhs);
+                            fprintf(ctx->out, " = mylang_weak_copy(");
                             codegen_expr(ctx, rhs);
-                            fprintf(ctx->out, ")");
+                            fprintf(ctx->out, "))");
+                        } else if (rhs_owned) {
+                            fprintf(ctx->out, "(");
+                            codegen_array_access(ctx, lhs);
+                            fprintf(ctx->out, " = mylang_weak_init_owned(");
+                            codegen_expr(ctx, rhs);
+                            fprintf(ctx->out, "))");
                         } else {
+                            fprintf(ctx->out, "(");
+                            codegen_array_access(ctx, lhs);
+                            fprintf(ctx->out, " = mylang_weak_init(");
                             codegen_expr(ctx, rhs);
+                            fprintf(ctx->out, "))");
                         }
                         fprintf(ctx->out, ")");
                     } else {
