@@ -436,6 +436,55 @@ i32 main() {
 }
 """, 6),
 
+    ("while_cond_call", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node a = new Node;
+    Node b = new Node;
+    weak Node w = a;
+    i32 iters = 0;
+    while (w.lock()) {
+        iters = iters + 1;
+        if (iters == 3) { a = b; }
+        if (iters > 10) { return 100; }
+    }
+    return iters;
+}
+""", 3),
+
+    ("for_cond_call", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node a = new Node;
+    Node b = new Node;
+    weak Node w = a;
+    i32 last = -1;
+    for (i32 i = 0; w.lock(); i = i + 1) {
+        last = i;
+        if (i == 2) { a = b; }
+        if (i > 10) { return 100; }
+    }
+    return last;
+}
+""", 2),
+
+    ("if_cond_call", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node a = new Node;
+    weak Node w = a;
+    i32 x = 0;
+    if (w.lock()) { x = 1; } else { x = 2; }
+    return x;
+}
+""", 1),
+
     ("if_else", """
 i32 main() {
     i32 x = 3;

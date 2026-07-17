@@ -787,6 +787,7 @@ static AstNode* parse_match_stmt(Parser* p) {
     int saw_else = 0;
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         AstNode* arm = NULL;
+        int arm_scope_entered = 0;
         if (saw_else) {
             fprintf(stderr, "error at %d:%d: arm after 'else' is not allowed\n",
                     p->current.line, p->current.col);
@@ -827,6 +828,7 @@ static AstNode* parse_match_stmt(Parser* p) {
                           "match type name too long");
             /* Bind the variable for the arm body. */
             symtab_enter_scope();
+            arm_scope_entered = 1;
             symtab_insert(var.text, pattern_type);
         } else {
             fprintf(stderr, "error at %d:%d: expected 'else', integer literal, or type pattern in match arm\n",
@@ -839,7 +841,7 @@ static AstNode* parse_match_stmt(Parser* p) {
         AstNode* body = parse_stmt(p);
         ast_add_child(arm, body);
         arms = ast_append_list(arms, arm);
-        if (arm && arm->ast_resolved_type.type_kind != TYPE_VOID) {
+        if (arm_scope_entered) {
             /* Close the arm scope that was opened for the type pattern. */
             symtab_exit_scope();
         }

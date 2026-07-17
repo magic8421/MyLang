@@ -2342,6 +2342,17 @@ static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
     emit_guarded_temp_decls(ctx, expr, indent);
 }
 
+/* Prepare a loop condition expression.  Unlike prepare_expression, an owned
+   root temporary (e.g. a call result used directly as the condition) is
+   tracked on the cleanup list: the value is consumed by the condition test,
+   not by an enclosing statement, so it must be released at the end of each
+   iteration. */
+static void prepare_condition(CodegenContext* ctx, AstNode* cond, int indent) {
+    emit_fstring_preambles(ctx, cond, indent);
+    emit_subexpr_temps(ctx, cond, indent);
+    emit_guarded_temp_decls_impl(ctx, cond, indent, 0, 0);
+}
+
 /* Update the thread-local line marker when the source line changes. The file
    is already set by MY_PUSH at function entry, so only the line needs to be
    tracked. */
@@ -2602,8 +2613,12 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
 }
 
 static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    /* Give the condition its own cleanup scope: an owned root temporary
+       (e.g. a call result used directly as the condition) is consumed by the
+       condition test and must be released when the if/else statement ends. */
+    cleanup_push_scope(ctx);
     emit_line_loc(ctx, node->ast_children[0], indent);
-    prepare_expression(ctx, node->ast_children[0], indent);
+    prepare_condition(ctx, node->ast_children[0], indent);
     emit_bounds_checks(ctx, node->ast_children[0], indent);
     indent_line(ctx, indent);
     fprintf(ctx->out, "if (");
@@ -2616,13 +2631,10 @@ static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         fprintf(ctx->out, "else\n");
         codegen_body(ctx, node->ast_children[2], indent);
     }
+    cleanup_pop_scope(ctx, indent);
 }
 
 static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, int indent) {
-    emit_line_loc(ctx, node->ast_children[0], indent);
-    prepare_expression(ctx, node->ast_children[0], indent);
-    emit_bounds_checks(ctx, node->ast_children[0], indent);
-
     int break_lbl = ctx->assign_tmp_id++;
     int continue_lbl = ctx->assign_tmp_id++;
     if (ctx->loop_depth < MAX_LOOP) {
@@ -2638,10 +2650,27 @@ static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     fprintf(ctx->out, "{\n");
     cleanup_push_scope(ctx);
 
+    /* Evaluate the condition inside the loop: guarded temporaries (calls
+       returning class/interface values) must be re-evaluated on every
+       iteration and released at the end of it. */
+    int cond_cleanup_base = ctx->cleanup_count;
+    emit_line_loc(ctx, node->ast_children[0], indent + 1);
+    prepare_condition(ctx, node->ast_children[0], indent + 1);
+    emit_bounds_checks(ctx, node->ast_children[0], indent + 1);
+
     indent_line(ctx, indent + 1);
     fprintf(ctx->out, "if (!(");
     codegen_expr(ctx, node->ast_children[0]);
-    fprintf(ctx->out, ")) goto _my_break%d;\n", break_lbl);
+    fprintf(ctx->out, "))\n");
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "{\n");
+    /* The false path skips the cleanup at the end of the loop body, so
+       release this iteration's condition temporaries before leaving. */
+    cleanup_emit_to(ctx, cond_cleanup_base, indent + 2);
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "goto _my_break%d;\n", break_lbl);
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "}\n");
 
     codegen_body(ctx, node->ast_children[1], indent + 1);
 
@@ -2690,11 +2719,6 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     }
     ctx->loop_depth++;
 
-    if (cond) {
-        emit_line_loc(ctx, cond, indent + 1);
-        prepare_expression(ctx, cond, indent + 1);
-        emit_bounds_checks(ctx, cond, indent + 1);
-    }
     indent_line(ctx, indent + 1);
     fprintf(ctx->out, "while (1)\n");
     indent_line(ctx, indent + 1);
@@ -2702,10 +2726,27 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     cleanup_push_scope(ctx);
 
     if (cond) {
+        /* Evaluate the condition inside the loop: guarded temporaries (calls
+           returning class/interface values) must be re-evaluated on every
+           iteration and released at the end of it. */
+        int cond_cleanup_base = ctx->cleanup_count;
+        emit_line_loc(ctx, cond, indent + 2);
+        prepare_condition(ctx, cond, indent + 2);
+        emit_bounds_checks(ctx, cond, indent + 2);
+
         indent_line(ctx, indent + 2);
         fprintf(ctx->out, "if (!(");
         codegen_expr(ctx, cond);
-        fprintf(ctx->out, ")) goto _my_break%d;\n", break_lbl);
+        fprintf(ctx->out, "))\n");
+        indent_line(ctx, indent + 2);
+        fprintf(ctx->out, "{\n");
+        /* The false path skips the cleanup at the end of the loop body, so
+           release this iteration's condition temporaries before leaving. */
+        cleanup_emit_to(ctx, cond_cleanup_base, indent + 3);
+        indent_line(ctx, indent + 3);
+        fprintf(ctx->out, "goto _my_break%d;\n", break_lbl);
+        indent_line(ctx, indent + 2);
+        fprintf(ctx->out, "}\n");
     }
 
     if (body) {
