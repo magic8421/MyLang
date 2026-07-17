@@ -20,6 +20,7 @@ typedef enum {
     TYPE_F32,
     TYPE_F64,
     TYPE_BOOL,
+    TYPE_OBJECT,   /* top reference type: any class or interface value (C void*) */
     TYPE_NULL,   /* compile-time only: the type of the 'null' literal */
 } TypeKind;
 
@@ -35,6 +36,7 @@ typedef enum {
 #define TYPE_ID_F64      9
 #define TYPE_ID_STRING          10
 #define TYPE_ID_BOOL            11
+#define TYPE_ID_OBJECT          12
 #define TYPE_ID_CLASS_BASE      16
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U

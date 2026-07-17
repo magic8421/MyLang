@@ -35,8 +35,9 @@ Source code lives under `src/`:
 ## Type System
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `bool`, `void`.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
-- Type IDs: primitives use 0-15 (`bool` = 11); classes, structs, and interfaces share a counter starting at 16.
+- Type IDs: primitives use 0-15 (`bool` = 11, `object` = 12); classes, structs, and interfaces share a counter starting at 16.
 - `TYPE_NULL` is a compile-time-only `TypeKind` for the `null` literal; it has no runtime type_id.
+- `TYPE_OBJECT` is the top reference type (`void*` in C); see "The object Type" section.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`, `TYPE_IS_UNOWNED = 0x08000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `is_unowned`, `type_id`.
 - `T[]` is a value-type vector (`MyArray`), not reference-counted and not copyable by assignment. Transfer is explicit via `move_to(ref)` and `copy_to(ref)`.
@@ -56,6 +57,16 @@ Source code lives under `src/`:
 - Interface/null comparison emits `.data == NULL`; weak interface/null emits `.wr == NULL`.
 - null is rejected at compile time for: primitive/bool/struct/array targets, `unowned` references (declaration, assignment, argument), arithmetic and relational operators, member access and method calls, array indexing, `as` casts, `match` expressions, and f-string interpolation.
 - `mylang_weak_init(NULL)` returns NULL (guard in runtime.c), which makes the weak-class codegen paths (init, assignment, array elements, push) safe without special-casing.
+
+## The object Type
+- `object` is a top reference type (C `void*`): any class (including `string`) or interface value converts to it implicitly. Interface values contribute their `.data` pointer; the vtable is dropped.
+- Refcounting is identical to class references (same `ObjHeader`): local variables are cleanup-tracked, class destructors release `object` fields, and `object[]` arrays use `MYLANG_ELEM_CLASS` (elements are retained/released by the runtime).
+- Converting back is explicit only:
+  - `o as ClassName` checks `mylang_obj_hdr(o)->type_id` and yields `(ClassName*)o` or `null` (null-safe). `as` to an interface is not supported — cast to a concrete class first.
+  - `match (o)` works with class pattern arms via the same type_id cascade (a NULL value falls through to `else`).
+- object has no members: `o.field` and `o.method()` are compile errors ("cast it with 'as' first"). There are no `weak object` / `unowned object`, and `new object` is rejected.
+- Assigning object back to a class type without `as` is a compile error at var init, assignment, call arguments, and return (C would silently convert `void*` to any pointer).
+- f-string interpolation and `print` do not accept object (cast and use IToString instead).
 
 ## Access Modifiers (public/private)
 - Per-member modifiers on class fields and methods: `private i32 x;`, `private i32 helper() { ... }`. Parsed in the same modifier loop as `native`/`override`, in any order.

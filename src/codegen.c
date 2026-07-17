@@ -94,6 +94,7 @@ static const char* c_base_name(const Type* t) {
         case TYPE_F32:   return "float";
         case TYPE_F64:   return "double";
         case TYPE_BOOL:  return "int";
+        case TYPE_OBJECT: return "void";
         case TYPE_CLASS:
         case TYPE_STRUCT:
         case TYPE_INTERFACE:
@@ -127,7 +128,8 @@ static int type_is_null(const Type* t) {
 
 static int type_accepts_null(const Type* t) {
     if (t->is_array || t->is_unowned) return 0;
-    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE;
+    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
+           t->type_kind == TYPE_OBJECT;
 }
 
 /* Strict bool rule: bool and numeric types do not implicitly convert.
@@ -165,8 +167,8 @@ static void c_array_elem_type_name(const Type* arr_type, char* buf, int bufsz) {
     } else if (et.is_weak) {
         /* weak class arrays store WeakRef pointers */
         snprintf(buf, bufsz, "WeakRef*");
-    } else if (et.type_kind == TYPE_CLASS) {
-        /* class array stores pointers to objects */
+    } else if (et.type_kind == TYPE_CLASS || et.type_kind == TYPE_OBJECT) {
+        /* class/object arrays store pointers to objects */
         snprintf(buf, bufsz, "%s*", c_base_name(&et));
     } else {
         snprintf(buf, bufsz, "%s", c_base_name(&et));
@@ -175,7 +177,7 @@ static void c_array_elem_type_name(const Type* arr_type, char* buf, int bufsz) {
 
 static void array_elem_size_expr(const Type* arr_type, char* buf, int bufsz) {
     Type et = array_elem_type(arr_type);
-    if (et.type_kind == TYPE_CLASS && !et.is_weak) {
+    if ((et.type_kind == TYPE_CLASS || et.type_kind == TYPE_OBJECT) && !et.is_weak) {
         snprintf(buf, bufsz, "sizeof(void*)");
     } else if (et.type_kind == TYPE_INTERFACE && !et.is_weak) {
         snprintf(buf, bufsz, "sizeof(%s)", c_base_name(&et));
@@ -197,7 +199,7 @@ static int array_elem_kind(const Type* arr_type) {
         return MYLANG_ELEM_WEAK_CLASS;
     }
     if (et.type_kind == TYPE_INTERFACE) return MYLANG_ELEM_INTERFACE;
-    if (et.type_kind == TYPE_CLASS) return MYLANG_ELEM_CLASS;
+    if (et.type_kind == TYPE_CLASS || et.type_kind == TYPE_OBJECT) return MYLANG_ELEM_CLASS;
     if (et.type_kind == TYPE_STRUCT) return MYLANG_ELEM_STRUCT;
     return MYLANG_ELEM_PRIMITIVE;
 }
@@ -562,7 +564,7 @@ static Type resolve_type(AstNode* node) {
                (class or weak class) remain pointers; everything else is a value. */
             t.is_array = 0;
             t.array_size = 0;
-            if (t.type_kind != TYPE_CLASS) {
+            if (t.type_kind != TYPE_CLASS && t.type_kind != TYPE_OBJECT) {
                 t.is_pointer = 0;
             }
             break;
@@ -700,7 +702,8 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
         } else if (nt.type_kind == TYPE_INTERFACE && nt.is_weak) {
             codegen_expr(ctx, ne);
             fprintf(ctx->out, ".wr %s NULL)", node->ast_token.text);
-        } else if (nt.type_kind == TYPE_CLASS || type_is_null(&nt)) {
+        } else if (nt.type_kind == TYPE_CLASS || nt.type_kind == TYPE_OBJECT ||
+                   type_is_null(&nt)) {
             if (type_is_null(&lt)) {
                 fprintf(ctx->out, "NULL %s ", node->ast_token.text);
                 codegen_expr(ctx, ne);
@@ -804,9 +807,10 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             } else if (param_type->type_kind == TYPE_INTERFACE) {
                 fprintf(ctx->out, "(%s){ NULL, NULL }", param_type->class_name);
             } else if (param_type->type_kind == TYPE_CLASS ||
+                       param_type->type_kind == TYPE_OBJECT ||
                        param_type->type_kind == TYPE_VOID) {
-                /* class (including weak class and string); TYPE_VOID means the
-                   callee signature is unknown, so pass NULL through as-is. */
+                /* class (including weak class and string) and object; TYPE_VOID
+                   means the callee signature is unknown, so pass NULL as-is. */
                 fprintf(ctx->out, "NULL");
             } else {
                 fprintf(stderr, "error at %d:%d: cannot pass null to '%s' parameter\n",
@@ -824,6 +828,32 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
                     type_name(&at), type_name(param_type));
             ctx->codegen_error = 1;
             fprintf(ctx->out, "0 /* invalid bool argument */");
+            return;
+        }
+
+        /* A class parameter does not accept object; cast with 'as' first. */
+        if (param_type->type_kind == TYPE_CLASS && at.type_kind == TYPE_OBJECT) {
+            fprintf(stderr, "error at %d:%d: cannot pass 'object' to '%s' parameter; cast with 'as' first\n",
+                    arg->ast_token.line, arg->ast_token.col, type_name(param_type));
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, "0 /* invalid object argument */");
+            return;
+        }
+
+        /* object parameter: an interface argument contributes its .data
+           pointer; class and object arguments pass through unchanged. */
+        if (param_type->type_kind == TYPE_OBJECT) {            if (at.type_kind == TYPE_INTERFACE && !at.is_weak) {
+                fprintf(ctx->out, "(");
+                codegen_expr(ctx, arg);
+                fprintf(ctx->out, ").data");
+            } else if (at.type_kind == TYPE_CLASS || at.type_kind == TYPE_OBJECT) {
+                codegen_expr(ctx, arg);
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot pass '%s' to 'object' parameter\n",
+                        arg->ast_token.line, arg->ast_token.col, type_name(&at));
+                ctx->codegen_error = 1;
+                fprintf(ctx->out, "0 /* invalid object argument */");
+            }
             return;
         }
     }
@@ -926,10 +956,32 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
             fprintf(ctx->out, "0 /* missing push value */");
             return;
         }
+        /* object arrays take interface values through their .data pointer
+           and reject non-reference values. */
+        int obj_iface_arg = 0;
+        Type et = array_elem_type(&arr_type);
+        if (et.type_kind == TYPE_OBJECT) {
+            resolve_type(args);
+            Type at = args->ast_resolved_type;
+            if (at.type_kind == TYPE_INTERFACE && !at.is_weak) {
+                obj_iface_arg = 1;
+            } else if (at.type_kind != TYPE_CLASS && at.type_kind != TYPE_OBJECT &&
+                       !type_is_null(&at)) {
+                fprintf(stderr, "error at %d:%d: cannot push '%s' to an 'object' array\n",
+                        args->ast_token.line, args->ast_token.col, type_name(&at));
+                ctx->codegen_error = 1;
+            }
+        }
         fprintf(ctx->out, "mylang_array_push(");
         emit_array_ptr_expr(ctx, arr);
         fprintf(ctx->out, ", %s, %d, (%s[]){", elem_size, kind, elem_type);
-        codegen_expr(ctx, args);
+        if (obj_iface_arg) {
+            fprintf(ctx->out, "(void*)(");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, ").data");
+        } else {
+            codegen_expr(ctx, args);
+        }
         fprintf(ctx->out, "})");
     } else if (strcmp(mname, "pop") == 0) {
         fprintf(ctx->out, "mylang_array_pop(");
@@ -1170,6 +1222,13 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
                 node->ast_token.line, node->ast_token.col, node->ast_token.text);
         ctx->codegen_error = 1;
         fprintf(ctx->out, "0 /* invalid null member access */");
+        return;
+    }
+    if (obj->ast_resolved_type.type_kind == TYPE_OBJECT && !obj->ast_resolved_type.is_array) {
+        fprintf(stderr, "error at %d:%d: cannot access member '%s' on object; cast it with 'as' first\n",
+                node->ast_token.line, node->ast_token.col, node->ast_token.text);
+        ctx->codegen_error = 1;
+        fprintf(ctx->out, "0 /* invalid object member access */");
         return;
     }
     if (obj->ast_resolved_type.is_array) {
@@ -1463,6 +1522,38 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                             fprintf(ctx->out, ")");
                         }
                         fprintf(ctx->out, ")");
+                    } else if (lt.type_kind == TYPE_OBJECT) {
+                        /* object array element: an interface RHS contributes
+                           its .data pointer. */
+                        int rhs_iface = (rt.type_kind == TYPE_INTERFACE && !rt.is_weak);
+                        if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
+                            rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
+                            fprintf(stderr, "error at %d:%d: cannot assign '%s' to 'object' array element\n",
+                                    node->ast_token.line, node->ast_token.col, type_name(&rt));
+                            ctx->codegen_error = 1;
+                            fprintf(ctx->out, "0 /* invalid object element assignment */");
+                        } else {
+                            fprintf(ctx->out, "((void)mylang_release(");
+                            codegen_array_access(ctx, lhs);
+                            fprintf(ctx->out, "), ");
+                            codegen_array_access(ctx, lhs);
+                            fprintf(ctx->out, " = ");
+                            if (rhs_owned) {
+                                if (rhs_iface) {
+                                    fprintf(ctx->out, "(void*)(");
+                                    codegen_expr(ctx, rhs);
+                                    fprintf(ctx->out, ").data");
+                                } else {
+                                    codegen_expr(ctx, rhs);
+                                }
+                            } else {
+                                fprintf(ctx->out, "mylang_retain(");
+                                codegen_expr(ctx, rhs);
+                                if (rhs_iface) fprintf(ctx->out, ".data");
+                                fprintf(ctx->out, ")");
+                            }
+                            fprintf(ctx->out, ")");
+                        }
                     } else if (lt.type_kind == TYPE_INTERFACE && !lt.is_weak) {
                         fprintf(ctx->out, "((void)mylang_release(");
                         codegen_array_access(ctx, lhs);
@@ -1622,6 +1713,14 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 }
                 fprintf(ctx->out, ")");
             } else if (lt.type_kind == TYPE_CLASS) {
+                resolve_type(rhs);
+                if (rhs->ast_resolved_type.type_kind == TYPE_OBJECT) {
+                    fprintf(stderr, "error at %d:%d: cannot assign 'object' to '%s'; cast with 'as' first\n",
+                            node->ast_token.line, node->ast_token.col, type_name(&lt));
+                    ctx->codegen_error = 1;
+                    fprintf(ctx->out, "0 /* invalid object assignment */");
+                    break;
+                }
                 int rhs_owned = (expr_is_owned(rhs));
                 int rhs_local = (rhs->ast_kind == AST_IDENT && symtab_lookup(rhs->ast_token.text) != NULL);
                 /* Fields own their class references, so assigning a local or
@@ -1641,6 +1740,42 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 codegen_expr(ctx, lhs);
                 fprintf(ctx->out, " = ");
                 codegen_expr(ctx, rhs);
+                fprintf(ctx->out, ")))");
+            } else if (lt.type_kind == TYPE_OBJECT) {
+                /* Same retain-then-release shape as class assignment; an
+                   interface RHS contributes its .data pointer. */
+                resolve_type(rhs);
+                Type rt = rhs->ast_resolved_type;
+                int rhs_owned = (expr_is_owned(rhs));
+                int rhs_iface = (rt.type_kind == TYPE_INTERFACE && !rt.is_weak);
+
+                if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
+                    rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
+                    fprintf(stderr, "error at %d:%d: cannot assign '%s' to 'object'\n",
+                            node->ast_token.line, node->ast_token.col, type_name(&rt));
+                    ctx->codegen_error = 1;
+                    fprintf(ctx->out, "0 /* invalid object assignment */");
+                    break;
+                }
+
+                fprintf(ctx->out, "((");
+                if (!rhs_owned) {
+                    fprintf(ctx->out, "(void)mylang_retain(");
+                    codegen_expr(ctx, rhs);
+                    if (rhs_iface) fprintf(ctx->out, ".data");
+                    fprintf(ctx->out, "), ");
+                }
+                fprintf(ctx->out, "(void)mylang_release(");
+                codegen_expr(ctx, lhs);
+                fprintf(ctx->out, "), (");
+                codegen_expr(ctx, lhs);
+                fprintf(ctx->out, " = (void*)(");
+                codegen_expr(ctx, rhs);
+                if (rhs_iface) {
+                    fprintf(ctx->out, ").data");
+                } else {
+                    fprintf(ctx->out, ")");
+                }
                 fprintf(ctx->out, ")))");
             } else if (lt.is_weak && lt.type_kind == TYPE_INTERFACE) {
                 resolve_type(rhs);
@@ -1809,6 +1944,23 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                         node->ast_token.line, node->ast_token.col);
                 ctx->codegen_error = 1;
                 fprintf(ctx->out, "NULL /* invalid null cast */");
+            } else if (target.type_kind == TYPE_CLASS &&
+                       obj->ast_resolved_type.type_kind == TYPE_OBJECT) {
+                /* object -> class: check the concrete type id in the object
+                   header; a null object casts to NULL. */
+                ClassInfo* ci = symtab_find_class(target.class_name);
+                const char* obj_name = (obj->ast_temp_name[0] != '\0') ? obj->ast_temp_name : NULL;
+                fprintf(ctx->out, "((");
+                if (obj_name) fprintf(ctx->out, "%s", obj_name);
+                else codegen_expr(ctx, obj);
+                fprintf(ctx->out, ") == NULL ? NULL : (mylang_obj_hdr(");
+                if (obj_name) fprintf(ctx->out, "%s", obj_name);
+                else codegen_expr(ctx, obj);
+                fprintf(ctx->out, ")->type_id == %u ? (%s*)(",
+                        ci ? (unsigned)ci->type_id : 0, target.class_name);
+                if (obj_name) fprintf(ctx->out, "%s", obj_name);
+                else codegen_expr(ctx, obj);
+                fprintf(ctx->out, ") : NULL))");
             } else if (target.type_kind == TYPE_CLASS) {
                 ClassInfo* ci = symtab_find_class(target.class_name);
                 /* Use a temporary if the object expression was hoisted by
@@ -1865,7 +2017,7 @@ static int call_needs_guard(AstNode* arg) {
     if (arg->ast_kind == AST_REF_ARG) return 0;
     resolve_type(arg);
     TypeKind k = arg->ast_resolved_type.type_kind;
-    if (k != TYPE_CLASS && k != TYPE_INTERFACE) return 0;
+    if (k != TYPE_CLASS && k != TYPE_INTERFACE && k != TYPE_OBJECT) return 0;
     /* unowned reads are borrowed and side-effect-free; they are checked
        inline at the use site and never need a guard temporary. */
     if (arg->ast_resolved_type.is_unowned) return 0;
@@ -1897,7 +2049,8 @@ static int subexpr_needs_temp(AstNode* node) {
     Type* t = &node->ast_resolved_type;
     if (t->is_weak || t->is_unowned) return 0;
     if (t->is_array) return 0;
-    if (t->type_kind != TYPE_CLASS && t->type_kind != TYPE_INTERFACE) return 0;
+    if (t->type_kind != TYPE_CLASS && t->type_kind != TYPE_INTERFACE &&
+        t->type_kind != TYPE_OBJECT) return 0;
     return node->ast_kind == AST_CALL;
 }
 
@@ -2942,9 +3095,42 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
         resolve_type(init);
         Type it = init->ast_resolved_type;
         if (type_is_null(&it)) {
-            /* Only strong class references reach here with a null initializer;
+            /* Only reference types reach here with a null initializer;
                all other targets were rejected above. */
             fprintf(ctx->out, " = NULL");
+        } else if (type.type_kind == TYPE_OBJECT) {
+            /* object accepts any class, interface, or object value. */
+            if (it.type_kind == TYPE_INTERFACE && !it.is_weak) {
+                /* interface -> object: keep .data, drop the vtable */
+                if (expr_is_owned(init)) {
+                    fprintf(ctx->out, " = (void*)(");
+                    codegen_expr(ctx, init);
+                    fprintf(ctx->out, ").data");
+                } else {
+                    fprintf(ctx->out, " = mylang_retain((");
+                    codegen_expr(ctx, init);
+                    fprintf(ctx->out, ").data)");
+                }
+            } else if (it.type_kind == TYPE_CLASS || it.type_kind == TYPE_OBJECT) {
+                if (expr_is_owned(init)) {
+                    fprintf(ctx->out, " = ");
+                    codegen_expr(ctx, init);
+                } else {
+                    fprintf(ctx->out, " = mylang_retain(");
+                    codegen_expr(ctx, init);
+                    fprintf(ctx->out, ")");
+                }
+            } else {
+                fprintf(stderr, "error at %d:%d: cannot initialize 'object' with '%s'\n",
+                        node->ast_token.line, node->ast_token.col, type_name(&it));
+                ctx->codegen_error = 1;
+                fprintf(ctx->out, " = NULL /* invalid object initializer */");
+            }
+        } else if (type.type_kind == TYPE_CLASS && it.type_kind == TYPE_OBJECT) {
+            fprintf(stderr, "error at %d:%d: cannot initialize '%s' with 'object'; cast with 'as' first\n",
+                    node->ast_token.line, node->ast_token.col, type_name(&type));
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, " = NULL /* invalid object initializer */");
         } else if (type.type_kind == TYPE_CLASS && !expr_is_owned(init)) {
             fprintf(ctx->out, " = mylang_retain(");
             codegen_expr(ctx, init);
@@ -2965,7 +3151,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     }
     fprintf(ctx->out, ";\n");
 
-    if (type.type_kind == TYPE_CLASS && type.is_pointer) {
+    if ((type.type_kind == TYPE_CLASS || type.type_kind == TYPE_OBJECT) && type.is_pointer) {
         cleanup_add(ctx, node->ast_token.text, 0, 0);
     }
     if (type.is_weak) {
@@ -3272,7 +3458,8 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     if (expr_owned && !expr_extracted) {
         if (expr_type.type_kind == TYPE_INTERFACE) {
             cleanup_add(ctx, temp_name, 0, 1);
-        } else if (expr_type.type_kind == TYPE_CLASS) {
+        } else if (expr_type.type_kind == TYPE_CLASS ||
+                   expr_type.type_kind == TYPE_OBJECT) {
             cleanup_add(ctx, temp_name, 0, 0);
         }
     }
@@ -3342,8 +3529,13 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                     fprintf(ctx->out, "else if (%s.vtable->concrete_type_id == MYLANG_TID_%s)\n",
                             temp_name, pat_type.class_name);
                 }
-            } else if (expr_type.type_kind == TYPE_CLASS) {
-                if (strcmp(expr_type.class_name, pat_type.class_name) != 0) {
+            } else if (expr_type.type_kind == TYPE_CLASS ||
+                       expr_type.type_kind == TYPE_OBJECT) {
+                /* object matches any class pattern through the concrete type
+                   id in the object header; a plain class expression keeps the
+                   exact-name requirement. */
+                if (expr_type.type_kind == TYPE_CLASS &&
+                    strcmp(expr_type.class_name, pat_type.class_name) != 0) {
                     fprintf(stderr, "error at %d:%d: match pattern type '%s' does not match expression type '%s'\n",
                             arm->ast_token.line, arm->ast_token.col,
                             pat_type.class_name, expr_type.class_name);
@@ -3351,11 +3543,11 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 }
                 indent_line(ctx, indent);
                 if (is_first) {
-                    fprintf(ctx->out, "if (mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
-                            temp_name, pat_type.class_name);
+                    fprintf(ctx->out, "if (%s != NULL && mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
+                            temp_name, temp_name, pat_type.class_name);
                 } else {
-                    fprintf(ctx->out, "else if (mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
-                            temp_name, pat_type.class_name);
+                    fprintf(ctx->out, "else if (%s != NULL && mylang_obj_hdr(%s)->type_id == MYLANG_TID_%s)\n",
+                            temp_name, temp_name, pat_type.class_name);
                 }
             } else {
                 fprintf(stderr, "error at %d:%d: class match pattern cannot match expression of type '%s'\n",
@@ -3432,6 +3624,15 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             ctx->codegen_error = 1;
         }
 
+        /* object converts back to a concrete type only through 'as'. */
+        if (ret->ast_resolved_type.type_kind == TYPE_OBJECT &&
+            ctx->return_type.type_kind != TYPE_OBJECT) {
+            fprintf(stderr, "error at %d:%d: cannot return 'object' from function returning '%s'; cast with 'as' first\n",
+                    ret->ast_token.line, ret->ast_token.col,
+                    type_name(&ctx->return_type));
+            ctx->codegen_error = 1;
+        }
+
         if (ret->ast_resolved_type.type_kind == TYPE_CLASS &&
             ctx->return_type.type_kind == TYPE_INTERFACE) {
             /* implicit class-to-interface conversion in return */
@@ -3457,7 +3658,8 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             fprintf(ctx->out, "MY_POP();\n");
             indent_line(ctx, indent);
             fprintf(ctx->out, "return _iret%d;\n", tid);
-        } else if (ret->ast_resolved_type.type_kind == TYPE_CLASS) {
+        } else if (ret->ast_resolved_type.type_kind == TYPE_CLASS ||
+                   ret->ast_resolved_type.type_kind == TYPE_OBJECT) {
             int needs_retain = return_expr_needs_retain(ret);
             indent_line(ctx, indent);
             if (needs_retain) {
@@ -3467,6 +3669,23 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             }
             codegen_expr(ctx, ret);
             fprintf(ctx->out, ");\n");
+            cleanup_emit(ctx, indent);
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "MY_POP();\n");
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "return _r;\n");
+        } else if (ret->ast_resolved_type.type_kind == TYPE_INTERFACE &&
+                   ctx->return_type.type_kind == TYPE_OBJECT) {
+            /* interface -> object in return: keep .data, drop the vtable */
+            int needs_retain = return_expr_needs_retain(ret);
+            indent_line(ctx, indent);
+            if (needs_retain) {
+                fprintf(ctx->out, "void* _r = mylang_retain((");
+            } else {
+                fprintf(ctx->out, "void* _r = (void*)(");
+            }
+            codegen_expr(ctx, ret);
+            fprintf(ctx->out, ").data);\n");
             cleanup_emit(ctx, indent);
             indent_line(ctx, indent);
             fprintf(ctx->out, "MY_POP();\n");
@@ -4107,7 +4326,7 @@ static void codegen_class_destructor(CodegenContext* ctx, ClassInfo* ci, const c
             fprintf(ctx->out, "    mylang_weak_release(p->%s);\n", fname);
         } else if (ft.type_kind == TYPE_INTERFACE) {
             fprintf(ctx->out, "    mylang_release(p->%s.data);\n", fname);
-        } else if (ft.type_kind == TYPE_CLASS) {
+        } else if (ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_OBJECT) {
             fprintf(ctx->out, "    mylang_release(p->%s);\n", fname);
         }
     }

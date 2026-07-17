@@ -3325,6 +3325,164 @@ i32 main() {
 }
 """, 9),
 
+    ("object_basic", """
+class Node {
+    i32 v;
+}
+class Other {
+    i32 w;
+}
+i32 main() {
+    Node n = new Node;
+    n.v = 5;
+    object o = n;
+    if (o == null) { return 0; }
+    Node m = o as Node;
+    if (m == null) { return 0; }
+    if (m.v != 5) { return 0; }
+    Other x = o as Other;
+    if (x != null) { return 0; }
+    return 7;
+}
+""", 7),
+
+    ("object_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+i32 main() {
+    Square sq = new Square;
+    sq.side = 4;
+    IShape s = sq;
+    object o = s;
+    Square back = o as Square;
+    if (back == null) { return 0; }
+    return back.area();
+}
+""", 16),
+
+    ("object_null", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    object o = null;
+    if (o != null) { return 0; }
+    Node n = new Node;
+    o = n;
+    if (o == null) { return 0; }
+    o = null;
+    if (o == null) { return 3; }
+    return 1;
+}
+""", 3),
+
+    ("object_string", """
+i32 main() {
+    string s = "abc";
+    object o = s;
+    String back = o as String;
+    if (back == null) { return 0; }
+    return back.bytes.length;
+}
+""", 3),
+
+    ("object_arg_return", """
+class Node {
+    i32 v;
+}
+object wrap(Node n) {
+    return n;
+}
+Node unwrap(object o) {
+    return o as Node;
+}
+i32 main() {
+    Node n = new Node;
+    n.v = 11;
+    object o = wrap(n);
+    Node m = unwrap(o);
+    if (m == null) { return 0; }
+    return m.v;
+}
+""", 11),
+
+    ("object_field", """
+class Node {
+    i32 v;
+}
+class Holder {
+    object item;
+}
+i32 main() {
+    Holder h = new Holder;
+    Node n = new Node;
+    n.v = 6;
+    h.item = n;
+    Node m = h.item as Node;
+    if (m == null) { return 0; }
+    h.item = null;
+    if (h.item != null) { return 0; }
+    return m.v;
+}
+""", 6),
+
+    ("object_array", """
+class Node {
+    i32 v;
+}
+interface IBox {
+    i32 get();
+}
+class Box : IBox {
+    i32 get() { return 9; }
+}
+i32 main() {
+    object[] arr;
+    Node n = new Node;
+    n.v = 1;
+    arr.push(n);
+    Box b = new Box;
+    IBox ib = b;
+    arr.push(ib);
+    arr.push(null);
+    Node r = arr[0] as Node;
+    if (r == null) { return 0; }
+    Box rb = arr[1] as Box;
+    if (rb == null) { return 0; }
+    if (arr[2] != null) { return 0; }
+    arr[0] = null;
+    if (arr[0] != null) { return 0; }
+    return r.v + rb.get() + arr.length;
+}
+""", 13),
+
+    ("object_match", """
+class A {
+    i32 x;
+}
+class B {
+    i32 y;
+}
+i32 classify(object o) {
+    match (o) {
+        A a => { return 1; }
+        B b => { return 2; }
+        else => { return 3; }
+    }
+    return 0;
+}
+i32 main() {
+    A a = new A;
+    B b = new B;
+    return classify(a) * 100 + classify(b) * 10 + classify(null);
+}
+""", 123),
+
 
 ]
 
@@ -3944,6 +4102,97 @@ i32 main() {
     return 0;
 }
 """, "access modifiers are not allowed in interfaces"),
+
+    ("bad_object_primitive", """
+i32 main() {
+    object o = 5;
+    return 0;
+}
+""", "cannot initialize 'object' with 'i32'"),
+
+    ("bad_object_member", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    object o = n;
+    return o.v;
+}
+""", "cannot access member 'v' on object"),
+
+    ("bad_object_method", """
+class Node {
+    i32 foo() { return 1; }
+}
+i32 main() {
+    Node n = new Node;
+    object o = n;
+    return o.foo();
+}
+""", "cannot access member 'foo' on object"),
+
+    ("bad_object_as_iface", """
+interface IShape {
+    i32 area();
+}
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    object o = n;
+    IShape s = o as IShape;
+    return 0;
+}
+""", "'as' target must be a class type"),
+
+    ("bad_object_weak", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    weak object w = n;
+    return 0;
+}
+""", "weak requires a class or interface type"),
+
+    ("bad_object_new", """
+i32 main() {
+    object o = new object;
+    return 0;
+}
+""", "cannot use 'new' on 'object'"),
+
+    ("bad_object_arg_primitive", """
+void foo(object o) { }
+i32 main() {
+    foo(5);
+    return 0;
+}
+""", "cannot pass 'i32' to 'object' parameter"),
+
+    ("bad_object_struct", """
+struct S {
+    object o;
+}
+i32 main() {
+    return 0;
+}
+""", "struct fields must be primitive types"),
+
+    ("bad_object_to_class", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    object o = n;
+    Node m = o;
+    return 0;
+}
+""", "cast with 'as' first"),
 
 ]
 

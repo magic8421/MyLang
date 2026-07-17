@@ -43,6 +43,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_FALSE:  return "false";
         case TOK_KW_PUBLIC:  return "public";
         case TOK_KW_PRIVATE: return "private";
+        case TOK_KW_OBJECT:  return "object";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

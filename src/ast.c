@@ -41,6 +41,7 @@ const char* type_name(const Type* t) {
         case TYPE_F32:   return "f32";
         case TYPE_F64:   return "f64";
         case TYPE_BOOL:  return "bool";
+        case TYPE_OBJECT: return "object";
         case TYPE_NULL:  return "null";
         case TYPE_VOID:  return "void";
         case TYPE_TYPE_PARAM: return t->class_name;

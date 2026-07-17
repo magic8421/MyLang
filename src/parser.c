@@ -133,6 +133,11 @@ static Type parse_base_type(Parser* p) {
     } else if (check(p, TOK_KW_BOOL)) {
         advance(p);
         t = type_make_primitive(TYPE_BOOL);
+    } else if (check(p, TOK_KW_OBJECT)) {
+        advance(p);
+        t.type_kind = TYPE_OBJECT;
+        t.is_pointer = 1;
+        t.type_id = TYPE_ID_OBJECT;
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.type_kind = TYPE_VOID;
@@ -528,6 +533,10 @@ static AstNode* parse_primary(Parser* p) {
             fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
                     new_tok.line, new_tok.col, base.class_name);
             p->had_error = 1;
+        } else if (base.type_kind == TYPE_OBJECT) {
+            fprintf(stderr, "error at %d:%d: cannot use 'new' on 'object'; instantiate a concrete class instead\n",
+                    new_tok.line, new_tok.col);
+            p->had_error = 1;
         } else if (base.type_kind == TYPE_STRUCT) {
             fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value\n",
                     new_tok.line, new_tok.col);
@@ -752,6 +761,7 @@ static int is_type_token(Parser* p) {
            check(p, TOK_KW_I32)  || check(p, TOK_KW_I64)  ||
            check(p, TOK_KW_F32)  || check(p, TOK_KW_F64)  ||
            check(p, TOK_KW_BOOL) ||
+           check(p, TOK_KW_OBJECT) ||
            check(p, TOK_KW_STRING);
 }
 
@@ -1078,7 +1088,7 @@ static AstNode* parse_struct_decl(Parser* p) {
         }
         Type ft = parse_type(p);
         if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_STRUCT ||
-            ft.is_array || ft.array_size > 0) {
+            ft.type_kind == TYPE_OBJECT || ft.is_array || ft.array_size > 0) {
             fprintf(stderr, "error at %d:%d: struct fields must be primitive types in this phase\n",
                     p->current.line, p->current.col);
             p->had_error = 1;

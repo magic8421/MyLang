@@ -46,6 +46,7 @@ static const KeywordEntry keywords[] = {
     {"false",     TOK_KW_FALSE},
     {"public",    TOK_KW_PUBLIC},
     {"private",   TOK_KW_PRIVATE},
+    {"object",    TOK_KW_OBJECT},
     {NULL,        0},
 };
 
