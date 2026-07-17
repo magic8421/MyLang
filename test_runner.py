@@ -3564,6 +3564,42 @@ i32 main() {
 }
 """, 7),
 
+    ("const_local", """
+i32 main() {
+    const u32 x = 7;
+    const i32 y = x * 2 + 1;
+    u32 z = x + y;
+    if (z != 22) { return 0; }
+    return z;
+}
+""", 22),
+
+    ("const_param", """
+i32 twice(const i32 v) {
+    return v + v;
+}
+class Calc {
+    i32 base;
+    i32 add(const i32 d) { return this.base + d; }
+}
+i32 main() {
+    Calc c = new Calc;
+    c.base = 10;
+    const u32 k = 5;
+    return twice(k) + c.add(3);
+}
+""", 23),
+
+    ("const_bool_float", """
+i32 main() {
+    const f64 pi = 3.5;
+    const bool flag = true;
+    f64 area = pi * 4;
+    if (flag && area == 14.0) { return 8; }
+    return 0;
+}
+""", 8),
+
 
 ]
 
@@ -4325,6 +4361,84 @@ i32 main() {
     return 0;
 }
 """, "compound assignment not supported for this type"),
+
+    ("bad_const_assign", """
+i32 main() {
+    const u32 x = 5;
+    x = 2;
+    return 0;
+}
+""", "cannot assign to const variable 'x'"),
+
+    ("bad_const_compound", """
+i32 main() {
+    const i32 x = 5;
+    x += 1;
+    return 0;
+}
+""", "cannot assign to const variable 'x'"),
+
+    ("bad_const_inc", """
+i32 main() {
+    const i32 x = 5;
+    x++;
+    return 0;
+}
+""", "cannot modify const variable 'x'"),
+
+    ("bad_const_noinit", """
+i32 main() {
+    const u32 x;
+    return 0;
+}
+""", "const variable 'x' requires an initializer"),
+
+    ("bad_const_ref", """
+void inc(ref i32 v) { v = v + 1; }
+i32 main() {
+    const i32 x = 5;
+    inc(ref x);
+    return 0;
+}
+""", "cannot pass const variable 'x' to ref parameter"),
+
+    ("bad_const_class", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    const Node n = new Node;
+    return 0;
+}
+""", "const is only supported on primitive value types"),
+
+    ("bad_const_param_assign", """
+i32 f(const i32 v) {
+    v = 10;
+    return v;
+}
+i32 main() {
+    return f(1);
+}
+""", "cannot assign to const variable 'v'"),
+
+    ("bad_const_field", """
+class C {
+    const i32 x;
+}
+i32 main() {
+    return 0;
+}
+""", "const fields are not supported"),
+
+    ("bad_const_ref_const", """
+i32 f(ref const u32 x) {
+    return 0;
+}
+i32 main() {
+    return 0;
+}
+""", "ref parameters cannot be const"),
 
 ]
 

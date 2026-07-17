@@ -222,9 +222,18 @@ static Type parse_base_type(Parser* p) {
     return t;
 }
 
+static int type_is_primitive_value(TypeKind k) {
+    return (k >= TYPE_I8 && k <= TYPE_F64) || k == TYPE_BOOL;
+}
+
 static Type parse_type(Parser* p) {
     int is_weak = 0;
     int is_unowned = 0;
+    int is_const = 0;
+    if (check(p, TOK_KW_CONST)) {
+        is_const = 1;
+        advance(p);
+    }
     if (check(p, TOK_KW_WEAK)) {
         is_weak = 1;
         advance(p);
@@ -275,6 +284,16 @@ static Type parse_type(Parser* p) {
             expect(p, TOK_RBRACKET);
         }
         t.mangled_name[0] = '\0';
+    }
+
+    if (is_const) {
+        if (t.is_array || t.is_weak || t.is_unowned || !type_is_primitive_value(t.type_kind)) {
+            fprintf(stderr, "error at %d:%d: const is only supported on primitive value types\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        } else {
+            t.is_const = 1;
+        }
     }
     return t;
 }
@@ -786,6 +805,7 @@ static int is_type_token(Parser* p) {
 static int stmt_looks_like_var_decl(Parser* p) {
     if (check(p, TOK_KW_WEAK)) return 1;
     if (check(p, TOK_KW_UNOWNED)) return 1;
+    if (check(p, TOK_KW_CONST)) return 1;
     if (is_type_token(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
@@ -1319,6 +1339,11 @@ static AstNode* parse_class_decl(Parser* p) {
                     }
                     Type pt = parse_type(p);
                     pt.is_ref = is_ref;
+                    if (is_ref && pt.is_const) {
+                        fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
+                                p->current.line, p->current.col);
+                        p->had_error = 1;
+                    }
                     if (!check(p, TOK_IDENT)) {
                         fprintf(stderr, "error at %d:%d: expected parameter name\n",
                                 p->current.line, p->current.col);
@@ -1382,6 +1407,11 @@ static AstNode* parse_class_decl(Parser* p) {
 
         } else {
             /* FIELD */
+            if (ft.is_const) {
+                fprintf(stderr, "error at %d:%d: const fields are not supported\n",
+                        fname.line, fname.col);
+                p->had_error = 1;
+            }
             expect(p, TOK_SEMI);
             symtab_add_field(info, fname.text, ft, is_private);
         }
@@ -1481,6 +1511,11 @@ static AstNode* parse_interface_decl(Parser* p) {
                 }
                 Type pt = parse_type(p);
                 pt.is_ref = is_ref;
+                if (is_ref && pt.is_const) {
+                    fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
+                            p->current.line, p->current.col);
+                    p->had_error = 1;
+                }
                 if (!check(p, TOK_IDENT)) {
                     fprintf(stderr, "error at %d:%d: expected parameter name in interface method\n",
                             p->current.line, p->current.col);
@@ -1563,6 +1598,11 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
             }
             Type param_type = parse_type(p);
             param_type.is_ref = is_ref;
+            if (is_ref && param_type.is_const) {
+                fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
+                        p->current.line, p->current.col);
+                p->had_error = 1;
+            }
             if (!check(p, TOK_IDENT)) {
                 fprintf(stderr, "error at %d:%d: expected parameter name\n",
                         p->current.line, p->current.col);

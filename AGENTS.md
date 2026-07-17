@@ -92,6 +92,13 @@ Source code lives under `src/`:
 - bool logic continues to use `&&`, `||`, `!`; there are no bool `&`/`|` operators.
 - Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) require integer types; see "Compound Assignment Operators".
 
+## Const Value Types
+- `const <primitive> name = expr;` declares a read-only local: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `bool`. An initializer is required.
+- Parameters may also be const (`f(const u32 x)`); `ref` + `const` is a compile error. Reading a const value is unrestricted.
+- Compile-time enforcement: assignment (including compound forms) to a const variable, `++`/`--` on it, and passing it to a `ref` parameter are all errors; a missing initializer is an error.
+- `const` is rejected on class/interface/object/struct/array/weak/unowned types and on class/struct fields (no constructors or field initializers exist, so a const field could only ever be zero).
+- Representation: `Type.is_const`; `type_equal` ignores it (top-level const on values does not affect type compatibility or interface signature matching). Generated C is unchanged — enforcement lives entirely in the compiler front end.
+
 ## Increment / Decrement Operators
 - Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.
 - Operand may be a local variable, a member access (`obj.field++`), or an array element (`arr[i]++`), including `ref` parameters.
@@ -290,6 +297,7 @@ Source code lives under `src/`:
 - `match` does not support `true`/`false` literal arms; `match (null)` is a compile error.
 - Mixed arithmetic containing bool operands (e.g. `1 + (a < b)`) is not checked at the operand level; C promotion rules apply. The strict bool rule is enforced only at assignment boundaries.
 - Access modifiers are class-only: structs, interfaces, and top-level declarations do not accept `public`/`private`. Enforcement is compile-time only; generated C does not hide private members.
+- `const` covers only primitive value types; const fields and const-qualified reference types are not supported yet.
 - No AST deallocation function (one-shot compiler).
 
 ## Class Field Destructors

@@ -55,6 +55,7 @@ typedef struct Type {
     int      is_ref;       /* by-reference parameter */
     int      is_weak;      /* weak reference */
     int      is_unowned;   /* unowned reference (non-owning, checked on read) */
+    int      is_const;     /* const value: cannot be reassigned (primitive types only) */
     int      type_id;
 
     int      type_arg_count;

@@ -835,6 +835,13 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             fprintf(ctx->out, "0 /* invalid ref argument */");
             return;
         }
+        if (e->type.is_const) {
+            fprintf(stderr, "error at %d:%d: cannot pass const variable '%s' to ref parameter\n",
+                    arg->ast_token.line, arg->ast_token.col, var->ast_token.text);
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, "0 /* const ref argument */");
+            return;
+        }
         if (type_is_ref(&e->type)) {
             fprintf(ctx->out, "%s", var->ast_token.text);
         } else {
@@ -1498,6 +1505,13 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 fprintf(ctx->out, "0 /* invalid increment/decrement */");
                 break;
             }
+            if (t.is_const) {
+                fprintf(stderr, "error at %d:%d: cannot modify const variable '%s'\n",
+                        node->ast_token.line, node->ast_token.col, operand->ast_token.text);
+                ctx->codegen_error = 1;
+                fprintf(ctx->out, "0 /* invalid const increment/decrement */");
+                break;
+            }
             const char* op_text = (node->ast_token.kind == TOK_INC) ? "+" : "-";
             codegen_expr(ctx, operand);
             fprintf(ctx->out, " = ");
@@ -1524,6 +1538,14 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                         node->ast_token.line, node->ast_token.col);
                 ctx->codegen_error = 1;
                 fprintf(ctx->out, "0 /* invalid assignment target */");
+                break;
+            }
+
+            if (lt.is_const) {
+                fprintf(stderr, "error at %d:%d: cannot assign to const variable '%s'\n",
+                        node->ast_token.line, node->ast_token.col, lhs->ast_token.text);
+                ctx->codegen_error = 1;
+                fprintf(ctx->out, "0 /* invalid const assignment */");
                 break;
             }
 
@@ -3138,6 +3160,12 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
         char typename_buf[128];
         c_type_str(&type, typename_buf, sizeof(typename_buf));
         fprintf(ctx->out, "%s %s", typename_buf, node->ast_token.text);
+    }
+
+    if (type.is_const && node->ast_child_count == 0) {
+        fprintf(stderr, "error at %d:%d: const variable '%s' requires an initializer\n",
+                node->ast_token.line, node->ast_token.col, node->ast_token.text);
+        ctx->codegen_error = 1;
     }
 
     if (node->ast_child_count > 0) {

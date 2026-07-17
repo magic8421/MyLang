@@ -46,6 +46,7 @@ typedef enum {
     TOK_KW_PUBLIC,
     TOK_KW_PRIVATE,
     TOK_KW_OBJECT,
+    TOK_KW_CONST,
 
     TOK_PLUS,
     TOK_MINUS,
