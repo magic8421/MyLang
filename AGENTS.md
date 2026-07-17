@@ -161,7 +161,8 @@ Source code lives under `src/`:
 - `mylang_weak_copy(wr)`: increments WeakRef.refcount (for weak-to-weak copy).
 - `mylang_weak_release(wr)`: decrements WeakRef.refcount; on zero it frees the object memory (destructor has already run) and the WeakRef itself.
 - On `mylang_release` refcount drop to zero: run the destructor, then drop the implicit weak share if `h->weak` exists (ownership of the object memory passes to the weak side); otherwise `free(h)` directly.
-- Future threads: `ObjHeader::weak` installation in `mylang_weak_init` still needs a CAS (race loser frees its extra WeakRef), and a memory-ordering audit is due; today programs are single-threaded.
+- `mylang_weak_init` installs `ObjHeader::weak` with a CAS (`mylang_atomic_cas_ptr`); the race loser frees its extra WeakRef and retries. The NULL -> wr transition happens at most once per object, so there is no ABA. Reusing an installed WeakRef is a plain atomic inc: the caller holds a strong reference, so the object is alive and the implicit share pins the WeakRef (no revive-from-zero race).
+- Threads: with atomic counts, the CAS install and implicit-share pinning, the refcount/weak protocol itself is thread-safe. Actual multithreading still needs language-level support (thread APIs, shared-variable semantics).
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
 

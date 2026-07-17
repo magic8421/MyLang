@@ -13,11 +13,14 @@
 #define mylang_atomic_inc(p) InterlockedIncrement(p)
 #define mylang_atomic_dec(p) InterlockedDecrement(p)
 #define mylang_atomic_cas(p, n, o) InterlockedCompareExchange(p, n, o)
+#define mylang_atomic_cas_ptr(p, n, o) \
+    ((void*)InterlockedCompareExchangePointer((PVOID volatile*)(p), (PVOID)(n), (PVOID)(o)))
 #else
 #include <stdatomic.h>
 #define mylang_atomic_inc(p) (atomic_fetch_add(p, 1) + 1)
 #define mylang_atomic_dec(p) (atomic_fetch_sub(p, 1) - 1)
 #define mylang_atomic_cas(p, n, o) __sync_val_compare_and_swap(p, o, n)
+#define mylang_atomic_cas_ptr(p, n, o) __sync_val_compare_and_swap((p), (o), (n))
 #endif
 
 /* Element kind constants for array helpers.

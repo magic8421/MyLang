@@ -363,20 +363,27 @@ void mylang_array_compact(MyArray* a, size_t elem_size) {
 
 WeakRef* mylang_weak_init(void* ptr) {
     ObjHeader* h = mylang_obj_hdr(ptr);
-    if (h->weak) {
-        mylang_atomic_inc(&h->weak->refcount);
-        return h->weak;
+    for (;;) {
+        WeakRef* wr = h->weak;
+        if (wr) {
+            /* The caller holds a strong reference, so the object is alive
+               and the implicit share keeps this WeakRef pinned: this inc can
+               never race with a free. */
+            mylang_atomic_inc(&wr->refcount);
+            return wr;
+        }
+        wr = (WeakRef*)calloc(1, sizeof(WeakRef));
+        /* One share for the caller plus one implicit share held by the object
+           itself; the implicit share is dropped in mylang_release. */
+        wr->refcount = 2;
+        wr->obj = h;
+        /* h->weak transitions NULL -> wr at most once per object (no ABA),
+           so a plain CAS installs it; the race loser frees its extra WeakRef
+           and retries to reuse the winner. */
+        if (mylang_atomic_cas_ptr(&h->weak, wr, NULL) == NULL)
+            return wr;
+        free(wr);
     }
-    WeakRef* wr = (WeakRef*)calloc(1, sizeof(WeakRef));
-    /* One share for the caller plus one implicit share held by the object
-       itself; the implicit share is dropped in mylang_release. */
-    wr->refcount = 2;
-    wr->obj = h;
-    /* Future threads: h->weak must be installed with a CAS here and the race
-       loser must free its extra WeakRef.  Safe as a plain store today because
-       programs are single-threaded. */
-    h->weak = wr;
-    return wr;
 }
 
 WeakRef* mylang_weak_copy(WeakRef* wr) {
