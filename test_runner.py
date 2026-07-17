@@ -2755,6 +2755,72 @@ int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
 }
 """),
 
+    ("fstring_escape_dbl_braces", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    i32 n = 42;
+    if (!a.string_equals(f"{{{n}}}", "{42}")) return 1;
+    if (!a.string_equals(f"a{{b}}c", "a{b}c")) return 2;
+    if (!a.string_equals(f"}}", "}")) return 3;
+    if (!a.string_equals(f"lone } brace", "lone } brace")) return 4;
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("fstring_escape_bs_braces", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    i32 n = 42;
+    if (!a.string_equals(f"\\{n\\}={n}", "{n}=42")) return 1;
+    if (!a.string_equals(f"a\\{b", "a{b")) return 2;
+    if (!a.string_equals(f"b\\}c", "b}c")) return 3;
+    if (!a.string_equals(f"\\\\{{", "\\\\{")) return 4;
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
+    ("string_escape_braces", """
+class Asserts {
+    native i32 string_equals(string a, string b);
+}
+i32 main() {
+    Asserts a = new Asserts;
+    if (!a.string_equals("x\\{y\\}z", "x{y}z")) return 1;
+    if (!a.string_equals("{{not collapsed}}", "{{not collapsed}}")) return 2;
+    return 0;
+}
+""", 0, """
+#include <string.h>
+int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
+    (void)thiz;
+    if (!a || !b) return a == b;
+    if (a->bytes.length != b->bytes.length) return 0;
+    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
+}
+"""),
+
     ("string_append", """
 class Asserts {
     native i32 string_equals(string a, string b);

@@ -192,6 +192,10 @@ static Token read_string_literal(Lexer* lexer) {
                 case '\\': c = '\\'; break;
                 case '"':  c = '"';  break;
                 case '0':  c = '\0'; break;
+                /* Escaped braces survive as sentinel bytes so the f-string
+                   parser can still see them (see token.h). */
+                case '{':  c = TOK_ESC_LBRACE; break;
+                case '}':  c = TOK_ESC_RBRACE; break;
                 default:
                     fprintf(stderr, "lexer warning at %d:%d: unknown escape '\\%c'\n",
                             lexer->line, lexer->col, c);

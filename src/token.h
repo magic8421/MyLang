@@ -89,6 +89,13 @@ typedef struct {
     float float_val;
 } Token;
 
+/* Sentinel bytes used inside string-literal token text: the lexer maps the
+   escapes '\{' and '\}' to these so the f-string parser can tell escaped
+   braces apart from real interpolation braces.  The parser converts them
+   back to '{' and '}' before the text reaches codegen. */
+#define TOK_ESC_LBRACE '\x01'
+#define TOK_ESC_RBRACE '\x02'
+
 const char* token_kind_name(TokenKind kind);
 
 #endif

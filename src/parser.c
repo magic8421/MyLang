@@ -278,8 +278,33 @@ static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, 
     return e;
 }
 
+/* Append a literal text segment to an f-string part list. */
+static AstNode* fstring_append_literal(AstNode* parts, Token str_tok,
+                                       const char* text, int len, Type string_type) {
+    Token lit = str_tok;
+    lit.kind = TOK_STRING_LIT;
+    if (len > 255) len = 255;
+    memcpy(lit.text, text, len);
+    lit.text[len] = '\0';
+    AstNode* ln = ast_new_node(AST_STRING_LIT, lit);
+    ln->ast_resolved_type = string_type;
+    return ast_append_list(parts, ln);
+}
+
+/* Convert the escaped-brace sentinel bytes produced by the lexer (see
+   token.h) back into real brace characters, in place. */
+static void unescape_brace_sentinels(char* text) {
+    char* s;
+    for (s = text; *s; s++) {
+        if (*s == TOK_ESC_LBRACE) *s = '{';
+        else if (*s == TOK_ESC_RBRACE) *s = '}';
+    }
+}
+
 /* Parse an f-string after the leading 'f' has been consumed.  The string token
-   text already has escape sequences resolved; braces introduce interpolation. */
+   text already has escape sequences resolved; '\{' and '\}' arrive as sentinel
+   bytes.  '{{', '}}' and the sentinel bytes produce literal braces; a single
+   '{' introduces an interpolation expression. */
 static AstNode* parse_fstring(Parser* p, Token str_tok) {
     AstNode* node = ast_new_node(AST_FSTRING, str_tok);
     Type string_type = type_make_user(TYPE_CLASS, "String");
@@ -291,20 +316,25 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
     const char* s = str_tok.text;
     int n = (int)strlen(s);
     int i = 0;
-    int start = 0;
+
+    /* Literal text is accumulated in lit_buf so escape pairs can collapse
+       into single braces; it is flushed into a string-literal part before
+       each interpolation and once at the end. */
+    char lit_buf[256];
+    int lit_len = 0;
 
     while (i < n) {
-        if (s[i] == '{') {
-            if (i > start) {
-                Token lit = str_tok;
-                lit.kind = TOK_STRING_LIT;
-                int len = i - start;
-                if (len > 255) len = 255;
-                memcpy(lit.text, s + start, len);
-                lit.text[len] = '\0';
-                AstNode* ln = ast_new_node(AST_STRING_LIT, lit);
-                ln->ast_resolved_type = string_type;
-                parts = ast_append_list(parts, ln);
+        char c = s[i];
+        if (c == '{') {
+            if (i + 1 < n && s[i + 1] == '{') {
+                if (lit_len < 255) lit_buf[lit_len++] = '{';
+                i += 2;
+                continue;
+            }
+            if (lit_len > 0) {
+                parts = fstring_append_literal(parts, str_tok, lit_buf, lit_len,
+                                               string_type);
+                lit_len = 0;
             }
             i++;
             int depth = 1;
@@ -346,22 +376,20 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
                     }
                 }
             }
-            start = i;
+        } else if (c == '}' && i + 1 < n && s[i + 1] == '}') {
+            if (lit_len < 255) lit_buf[lit_len++] = '}';
+            i += 2;
         } else {
+            if (c == TOK_ESC_LBRACE) c = '{';
+            else if (c == TOK_ESC_RBRACE) c = '}';
+            if (lit_len < 255) lit_buf[lit_len++] = c;
             i++;
         }
     }
 
-    if (!p->had_error && i > start) {
-        Token lit = str_tok;
-        lit.kind = TOK_STRING_LIT;
-        int len = i - start;
-        if (len > 255) len = 255;
-        memcpy(lit.text, s + start, len);
-        lit.text[len] = '\0';
-        AstNode* ln = ast_new_node(AST_STRING_LIT, lit);
-        ln->ast_resolved_type = string_type;
-        parts = ast_append_list(parts, ln);
+    if (!p->had_error && lit_len > 0) {
+        parts = fstring_append_literal(parts, str_tok, lit_buf, lit_len,
+                                       string_type);
     }
 
     node->ast_children[0] = parts;
@@ -424,6 +452,7 @@ static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_STRING_LIT)) {
         Token t = p->current; advance(p);
         AstNode* n = ast_new_node(AST_STRING_LIT, t);
+        unescape_brace_sentinels(n->ast_token.text);
         n->ast_resolved_type = type_make_user(TYPE_CLASS, "String");
         n->ast_resolved_type.is_pointer = 1;
         n->ast_resolved_type.type_id = TYPE_ID_STRING;

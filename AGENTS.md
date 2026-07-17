@@ -143,7 +143,7 @@ Source code lives under `src/`:
 - Floating-point numeric literals are supported: `3.14` defaults to `f64`, and
   `1.5f` / `1.5F` are `f32`.  They can be used directly in f-strings (`{3.14}`)
   and in arithmetic.
-- Escaped braces (`\{`, `\}`, `{{`, `}}`) are not yet supported; `{` always starts an interpolation expression.
+- Escaped braces are supported: `{{` and `}}` collapse to literal braces, and `\{` / `\}` escape a single brace (in plain strings too). A single `{` starts an interpolation expression; a lone `}` stays a literal `}`. The lexer smuggles `\{` / `\}` through string tokens as sentinel bytes (`TOK_ESC_LBRACE` / `TOK_ESC_RBRACE` in token.h) so the f-string parser can tell them apart from interpolation braces; the parser converts them back before codegen.
 
 ## Memory Model
 - Heap objects use atomic reference counting via `ObjHeader`.
