@@ -14,6 +14,7 @@ static void codegen_expr_raw(CodegenContext* ctx, AstNode* node);
 static void indent_line(CodegenContext* ctx, int indent);
 static void emit_array_ptr_expr(CodegenContext* ctx, AstNode* arr_node);
 static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent);
+static int is_compound_assign_op(TokenKind k);
 
 #define MAX_CLEANUP 128
 #define MAX_SCOPE 64
@@ -143,6 +144,39 @@ static int bool_mismatch(const Type* dst, const Type* src) {
 static int member_visible(CodegenContext* ctx, const char* owner, int is_private) {
     if (!is_private) return 1;
     return ctx->current_class && strcmp(ctx->current_class->name, owner) == 0;
+}
+
+/* Integer types (bitwise operands); bool is intentionally excluded. */
+static int type_is_integer(const Type* t) {
+    return t->type_kind == TYPE_I8 || t->type_kind == TYPE_I16 ||
+           t->type_kind == TYPE_I32 || t->type_kind == TYPE_I64 ||
+           t->type_kind == TYPE_U8 || t->type_kind == TYPE_U16 ||
+           t->type_kind == TYPE_U32 || t->type_kind == TYPE_U64;
+}
+
+/* Primitive numeric types (arithmetic compound assignment). */
+static int type_is_numeric(const Type* t) {
+    return type_is_integer(t) || t->type_kind == TYPE_F32 || t->type_kind == TYPE_F64;
+}
+
+static int is_bit_compound_op(TokenKind k) {
+    return k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
+           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
+}
+
+static const char* compound_op_text(TokenKind k) {
+    switch (k) {
+        case TOK_PLUS_ASSIGN:  return "+";
+        case TOK_MINUS_ASSIGN: return "-";
+        case TOK_STAR_ASSIGN:  return "*";
+        case TOK_SLASH_ASSIGN: return "/";
+        case TOK_AMP_ASSIGN:   return "&";
+        case TOK_PIPE_ASSIGN:  return "|";
+        case TOK_CARET_ASSIGN: return "^";
+        case TOK_SHL_ASSIGN:   return "<<";
+        case TOK_SHR_ASSIGN:   return ">>";
+        default:               return "?";
+    }
 }
 
 static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
@@ -721,6 +755,18 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
         return;
     }
 
+    if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
+        op == TOK_SHL || op == TOK_SHR) {
+        /* Bitwise operators accept integer operands only. */
+        if (!type_is_integer(&lt) || !type_is_integer(&rt)) {
+            fprintf(stderr, "error at %d:%d: operator '%s' requires integer operands\n",
+                    node->ast_token.line, node->ast_token.col, node->ast_token.text);
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, "0 /* invalid bitwise operands */");
+            return;
+        }
+    }
+
     if (op == TOK_EQ || op == TOK_NE) {
         if (lt.type_kind == TYPE_INTERFACE && rt.type_kind == TYPE_INTERFACE) {
             fprintf(ctx->out, "(");
@@ -739,6 +785,16 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
 }
 
 static void codegen_unary(CodegenContext* ctx, AstNode* node) {
+    if (node->ast_token.kind == TOK_TILDE) {
+        Type t = resolve_type(node->ast_children[0]);
+        if (!type_is_integer(&t)) {
+            fprintf(stderr, "error at %d:%d: operator '~' requires an integer operand\n",
+                    node->ast_token.line, node->ast_token.col);
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, "0 /* invalid bitwise operand */");
+            return;
+        }
+    }
     fprintf(ctx->out, "%s", node->ast_token.text);
     codegen_expr(ctx, node->ast_children[0]);
 }
@@ -1473,28 +1529,22 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
 
             {
                 TokenKind assign_op = node->ast_token.kind;
-                if (assign_op == TOK_PLUS_ASSIGN || assign_op == TOK_MINUS_ASSIGN ||
-                    assign_op == TOK_STAR_ASSIGN || assign_op == TOK_SLASH_ASSIGN) {
-                    /* Compound assignment: only primitive numeric types are supported. */
-                    int is_primitive_numeric = (lt.type_kind == TYPE_I8 || lt.type_kind == TYPE_I16 ||
-                                                lt.type_kind == TYPE_I32 || lt.type_kind == TYPE_I64 ||
-                                                lt.type_kind == TYPE_U8 || lt.type_kind == TYPE_U16 ||
-                                                lt.type_kind == TYPE_U32 || lt.type_kind == TYPE_U64 ||
-                                                lt.type_kind == TYPE_F32 || lt.type_kind == TYPE_F64);
-                    if (!is_primitive_numeric) {
+                if (is_compound_assign_op(assign_op)) {
+                    /* Compound assignment: arithmetic ops accept primitive
+                       numeric types; bitwise ops require integer types. */
+                    int type_ok = is_bit_compound_op(assign_op)
+                        ? type_is_integer(&lt) : type_is_numeric(&lt);
+                    if (!type_ok) {
                         fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
                                 node->ast_token.line, node->ast_token.col);
                         ctx->codegen_error = 1;
                         fprintf(ctx->out, "0 /* invalid compound assignment */");
                         break;
                     }
-                    const char* op_text = (assign_op == TOK_PLUS_ASSIGN) ? "+" :
-                                          (assign_op == TOK_MINUS_ASSIGN) ? "-" :
-                                          (assign_op == TOK_STAR_ASSIGN) ? "*" : "/";
                     codegen_expr(ctx, lhs);
                     fprintf(ctx->out, " = ");
                     codegen_expr(ctx, lhs);
-                    fprintf(ctx->out, " %s ", op_text);
+                    fprintf(ctx->out, " %s ", compound_op_text(assign_op));
                     codegen_expr(ctx, rhs);
                     break;
                 }
@@ -3744,7 +3794,9 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
 
 static int is_compound_assign_op(TokenKind k) {
     return k == TOK_PLUS_ASSIGN || k == TOK_MINUS_ASSIGN ||
-           k == TOK_STAR_ASSIGN || k == TOK_SLASH_ASSIGN;
+           k == TOK_STAR_ASSIGN || k == TOK_SLASH_ASSIGN ||
+           k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
+           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
 }
 
 /* For compound assignments and increment/decrement on non-trivial lvalues
@@ -3795,14 +3847,12 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 
         {
             TokenKind assign_op = expr->ast_token.kind;
-            if (assign_op == TOK_PLUS_ASSIGN || assign_op == TOK_MINUS_ASSIGN ||
-                assign_op == TOK_STAR_ASSIGN || assign_op == TOK_SLASH_ASSIGN) {
-                int is_primitive_numeric = (lt.type_kind == TYPE_I8 || lt.type_kind == TYPE_I16 ||
-                                            lt.type_kind == TYPE_I32 || lt.type_kind == TYPE_I64 ||
-                                            lt.type_kind == TYPE_U8 || lt.type_kind == TYPE_U16 ||
-                                            lt.type_kind == TYPE_U32 || lt.type_kind == TYPE_U64 ||
-                                            lt.type_kind == TYPE_F32 || lt.type_kind == TYPE_F64);
-                if (!is_primitive_numeric) {
+            if (is_compound_assign_op(assign_op)) {
+                /* Compound assignment: arithmetic ops accept primitive
+                   numeric types; bitwise ops require integer types. */
+                int type_ok = is_bit_compound_op(assign_op)
+                    ? type_is_integer(&lt) : type_is_numeric(&lt);
+                if (!type_ok) {
                     fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
                             expr->ast_token.line, expr->ast_token.col);
                     ctx->codegen_error = 1;

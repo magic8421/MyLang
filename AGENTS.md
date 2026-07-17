@@ -79,11 +79,18 @@ Source code lives under `src/`:
 - Generated C is unchanged: visibility is not enforced at the C level, and compiler-generated code (vtables, thunks, destructors) is exempt.
 
 ## Compound Assignment Operators
-- Supported: `+=`, `-=`, `*=`, `/=`.
-- Only primitive numeric types (`i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`) support compound assignment.
-- Class, interface, weak, struct, and array types are rejected with a compile-time error.
+- Supported: `+=`, `-=`, `*=`, `/=`, and the bitwise forms `&=`, `|=`, `^=`, `<<=`, `>>=`.
+- Arithmetic forms accept primitive numeric types (`i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`); bitwise forms require integer types (no floats, no bool).
+- Class, interface, weak, struct, array, object, and bool types are rejected with a compile-time error.
 - `x += y` is generated as `x = x + y`; the left-hand side is evaluated twice, which is safe for primitives but disallowed for non-primitives.
 - Like simple assignment (`=`), compound assignment is an expression and is not allowed in `if`/`while` conditions, variable initializers, or `return` expressions.
+
+## Bitwise Operators
+- Supported: `&`, `|`, `^`, `~`, `<<`, `>>` with C-compatible precedence: `~` binds like the other unary operators; `<<`/`>>` sit between additive and relational; `&`, `^`, `|` sit between equality and `&&` (in that order).
+- Operands must be integer types (`i8/i16/i32/i64`, `u8/u16/u32/u64`) — floats, bool, and reference types are compile-time errors (`operator '<op>' requires integer operands`).
+- The result type is the left operand's type (same as arithmetic); `~` yields the operand type. Shift counts are unchecked (C semantics; `>>` on signed values is an arithmetic shift on MSVC).
+- bool logic continues to use `&&`, `||`, `!`; there are no bool `&`/`|` operators.
+- Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) require integer types; see "Compound Assignment Operators".
 
 ## Increment / Decrement Operators
 - Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.

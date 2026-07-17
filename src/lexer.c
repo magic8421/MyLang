@@ -290,7 +290,37 @@ Token lexer_next(Lexer* lexer) {
         return read_string_literal(lexer);
     }
 
+    /* three-character operators */
+    if (c == '<' && lexer_peek_ahead(lexer, 1) == '<' && lexer_peek_ahead(lexer, 2) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_SHL_ASSIGN, "<<=", 3, 3);
+    }
+    if (c == '>' && lexer_peek_ahead(lexer, 1) == '>' && lexer_peek_ahead(lexer, 2) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_SHR_ASSIGN, ">>=", 3, 3);
+    }
+
     /* two-character operators */
+    if (c == '<' && lexer_peek_ahead(lexer, 1) == '<') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_SHL, "<<", 2, 2);
+    }
+    if (c == '>' && lexer_peek_ahead(lexer, 1) == '>') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_SHR, ">>", 2, 2);
+    }
+    if (c == '&' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_AMP_ASSIGN, "&=", 2, 2);
+    }
+    if (c == '|' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_PIPE_ASSIGN, "|=", 2, 2);
+    }
+    if (c == '^' && lexer_peek_ahead(lexer, 1) == '=') {
+        lexer_advance(lexer); lexer_advance(lexer);
+        return make_token(lexer, TOK_CARET_ASSIGN, "^=", 2, 2);
+    }
     if (c == '=' && lexer_peek_ahead(lexer, 1) == '>') {
         lexer_advance(lexer); lexer_advance(lexer);
         return make_token(lexer, TOK_FATARROW, "=>", 2, 2);
@@ -356,6 +386,10 @@ Token lexer_next(Lexer* lexer) {
         case '>': return make_token(lexer, TOK_GT,       ">", 1, 1);
         case '=': return make_token(lexer, TOK_ASSIGN,   "=", 1, 1);
         case '!': return make_token(lexer, TOK_NOT,      "!", 1, 1);
+        case '&': return make_token(lexer, TOK_AMP,      "&", 1, 1);
+        case '|': return make_token(lexer, TOK_PIPE,     "|", 1, 1);
+        case '^': return make_token(lexer, TOK_CARET,    "^", 1, 1);
+        case '~': return make_token(lexer, TOK_TILDE,    "~", 1, 1);
         case '(': return make_token(lexer, TOK_LPAREN,   "(", 1, 1);
         case ')': return make_token(lexer, TOK_RPAREN,   ")", 1, 1);
         case '{': return make_token(lexer, TOK_LBRACE,   "{", 1, 1);

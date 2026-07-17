@@ -98,6 +98,18 @@ static int parser_is_type_param(const char* name) {
     return 0;
 }
 
+/* Close a generic type-argument list.  The lexer produces '>>' (TOK_SHR) for
+   nested closers like Box<Box<i32>>; split it into two '>' tokens: consume one
+   now and leave the other as the current token for the enclosing level. */
+static int expect_gt(Parser* p) {
+    if (check(p, TOK_SHR)) {
+        p->current.kind = TOK_GT;
+        CHECK_STRSCPY(strscpy(p->current.text, ">", sizeof(p->current.text)), "token text too long");
+        return 1;
+    }
+    return expect(p, TOK_GT);
+}
+
 static Type parse_base_type(Parser* p) {
     Type t = {0};
     if (check(p, TOK_KW_I32)) {
@@ -202,7 +214,7 @@ static Type parse_base_type(Parser* p) {
                 count++;
             } while (check(p, TOK_COMMA) && (advance(p), 1));
         }
-        expect(p, TOK_GT);
+        expect_gt(p);
         t.type_id = 0;
         type_mangled_name(&t);
     }
@@ -655,7 +667,7 @@ static AstNode* parse_unary(Parser* p) {
         ast_add_child(node, operand);
         return node;
     }
-    if (check(p, TOK_MINUS) || check(p, TOK_NOT)) {
+    if (check(p, TOK_MINUS) || check(p, TOK_NOT) || check(p, TOK_TILDE)) {
         Token op = p->current; advance(p);
         AstNode* operand = parse_unary(p);
         AstNode* node = ast_new_node(AST_UNARY, op);
@@ -688,15 +700,16 @@ static AstNode* parse_binary(Parser* p,
 
 static AstNode* parse_multiplicative(Parser* p) { return parse_binary(p, parse_unary,           TOK_STAR, TOK_SLASH, TOK_PERCENT); }
 static AstNode* parse_additive(Parser* p)       { return parse_binary(p, parse_multiplicative,   TOK_PLUS, TOK_MINUS, (TokenKind)0); }
-static AstNode* parse_relational(Parser* p)     { return parse_binary(p, parse_additive,         TOK_LT, TOK_LE, TOK_GT); }
+static AstNode* parse_shift(Parser* p)          { return parse_binary(p, parse_additive,         TOK_SHL, TOK_SHR, (TokenKind)0); }
+static AstNode* parse_relational(Parser* p)     { return parse_binary(p, parse_shift,            TOK_LT, TOK_LE, TOK_GT); }
 /* TOK_GE doesn't fit in parse_binary(3 ops) ??handle inline below */
 
 static AstNode* parse_relational_full(Parser* p) {
-    AstNode* left = parse_additive(p);
+    AstNode* left = parse_shift(p);
     if (!left) return NULL;
     while (check(p, TOK_LT) || check(p, TOK_LE) || check(p, TOK_GT) || check(p, TOK_GE)) {
         Token op = p->current; advance(p);
-        AstNode* right = parse_additive(p);
+        AstNode* right = parse_shift(p);
         AstNode* bin = ast_new_node(AST_BINARY, op);
         ast_add_child(bin, left);
         ast_add_child(bin, right);
@@ -706,14 +719,19 @@ static AstNode* parse_relational_full(Parser* p) {
 }
 
 static AstNode* parse_equality(Parser* p)       { return parse_binary(p, parse_relational_full, TOK_EQ, TOK_NE, (TokenKind)0); }
-static AstNode* parse_logical_and(Parser* p)    { return parse_binary(p, parse_equality,        TOK_AND, (TokenKind)0, (TokenKind)0); }
+static AstNode* parse_bitand(Parser* p)         { return parse_binary(p, parse_equality,        TOK_AMP, (TokenKind)0, (TokenKind)0); }
+static AstNode* parse_bitxor(Parser* p)         { return parse_binary(p, parse_bitand,          TOK_CARET, (TokenKind)0, (TokenKind)0); }
+static AstNode* parse_bitor(Parser* p)          { return parse_binary(p, parse_bitxor,          TOK_PIPE, (TokenKind)0, (TokenKind)0); }
+static AstNode* parse_logical_and(Parser* p)    { return parse_binary(p, parse_bitor,           TOK_AND, (TokenKind)0, (TokenKind)0); }
 static AstNode* parse_logical_or(Parser* p)     { return parse_binary(p, parse_logical_and,     TOK_OR, (TokenKind)0, (TokenKind)0); }
 
 static AstNode* parse_assignment(Parser* p) {
     AstNode* left = parse_logical_or(p);
     if (!left) return NULL;
     if (check(p, TOK_ASSIGN) || check(p, TOK_PLUS_ASSIGN) || check(p, TOK_MINUS_ASSIGN) ||
-        check(p, TOK_STAR_ASSIGN) || check(p, TOK_SLASH_ASSIGN)) {
+        check(p, TOK_STAR_ASSIGN) || check(p, TOK_SLASH_ASSIGN) ||
+        check(p, TOK_AMP_ASSIGN) || check(p, TOK_PIPE_ASSIGN) || check(p, TOK_CARET_ASSIGN) ||
+        check(p, TOK_SHL_ASSIGN) || check(p, TOK_SHR_ASSIGN)) {
         Token op = p->current; advance(p);
         AstNode* right = parse_assignment(p);
         AstNode* assign = ast_new_node(AST_ASSIGN, op);

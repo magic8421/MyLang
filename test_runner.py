@@ -3483,6 +3483,87 @@ i32 main() {
 }
 """, 123),
 
+    ("bit_ops", """
+i32 main() {
+    i32 a = 12;
+    i32 b = 10;
+    i32 r = (a & b) * 100 + (a | b) * 10 + (a ^ b);
+    return r;
+}
+""", 946),
+
+    ("bit_not", """
+i32 main() {
+    i32 x = 0;
+    u8 y = 0;
+    i32 a = ~x;
+    i32 b = ~5;
+    u8 c = ~y;
+    if (a != -1) { return 0; }
+    if (b != -6) { return 0; }
+    if (c != 255) { return 0; }
+    return 9;
+}
+""", 9),
+
+    ("bit_shift", """
+i32 main() {
+    i32 a = 1 << 4;
+    i32 b = 256 >> 3;
+    u32 c = 1 << 31;
+    c = c >> 31;
+    i32 d = -16;
+    d = d >> 2;
+    if (a != 16 || b != 32) { return 0; }
+    if (c != 1) { return 0; }
+    if (d != -4) { return 0; }
+    return a + b + c + d;
+}
+""", 45),
+
+    ("bit_precedence", """
+i32 main() {
+    i32 x = 1 | 2 & 3 ^ 4;
+    if (x != 7) { return 1; }
+    i32 y = 1 << 2 + 1;
+    if (y != 8) { return 2; }
+    i32 z = 4 + 2 << 1;
+    if (z != 12) { return 3; }
+    i32 w = 3 & 1 | 4 ^ 6;
+    if (w != 3) { return 4; }
+    return 7;
+}
+""", 7),
+
+    ("bit_compound", """
+i32 main() {
+    i32 a = 12;
+    a &= 10;
+    a |= 5;
+    a ^= 6;
+    a <<= 2;
+    a >>= 3;
+    return a;
+}
+""", 5),
+
+    ("bit_types", """
+i32 main() {
+    u8 a = 255;
+    a = a & 15;
+    u16 c = 65535;
+    c = c ^ 255;
+    i64 b = 1 << 20;
+    b = b << 20;
+    b = b >> 40;
+    i32 r = 0;
+    if (a == 15) { r = r + 1; }
+    if (c == 65280) { r = r + 2; }
+    if (b == 1) { r = r + 4; }
+    return r;
+}
+""", 7),
+
 
 ]
 
@@ -4193,6 +4274,57 @@ i32 main() {
     return 0;
 }
 """, "cast with 'as' first"),
+
+    ("bad_bit_float", """
+i32 main() {
+    f64 x = 1.5;
+    i32 y = x & 2;
+    return y;
+}
+""", "operator '&' requires integer operands"),
+
+    ("bad_bit_not_float", """
+i32 main() {
+    f32 x = 1.5;
+    i32 y = ~x;
+    return y;
+}
+""", "operator '~' requires an integer operand"),
+
+    ("bad_bit_bool", """
+i32 main() {
+    bool b = true & false;
+    return 0;
+}
+""", "operator '&' requires integer operands"),
+
+    ("bad_bit_class", """
+class N {
+    i32 v;
+}
+i32 main() {
+    N a = new N;
+    N b = new N;
+    i32 x = a & b;
+    return x;
+}
+""", "operator '&' requires integer operands"),
+
+    ("bad_bit_compound_float", """
+i32 main() {
+    f32 f = 3.5;
+    f &= 1;
+    return 0;
+}
+""", "compound assignment not supported for this type"),
+
+    ("bad_bit_compound_bool", """
+i32 main() {
+    bool b = true;
+    b &= true;
+    return 0;
+}
+""", "compound assignment not supported for this type"),
 
 ]
 

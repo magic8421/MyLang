@@ -66,6 +66,17 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_AND:       return "&&";
         case TOK_OR:        return "||";
         case TOK_FATARROW: return "=>";
+        case TOK_AMP:       return "&";
+        case TOK_PIPE:      return "|";
+        case TOK_CARET:     return "^";
+        case TOK_TILDE:     return "~";
+        case TOK_SHL:       return "<<";
+        case TOK_SHR:       return ">>";
+        case TOK_AMP_ASSIGN:  return "&=";
+        case TOK_PIPE_ASSIGN: return "|=";
+        case TOK_CARET_ASSIGN: return "^=";
+        case TOK_SHL_ASSIGN:  return "<<=";
+        case TOK_SHR_ASSIGN:  return ">>=";
         case TOK_LPAREN:    return "(";
         case TOK_RPAREN:    return ")";
         case TOK_LBRACE:    return "{";
