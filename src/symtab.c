@@ -103,6 +103,13 @@ void symtab_init(void) {
             pt[0] = type_make_primitive(TYPE_I8);
             symtab_add_method(str_info, "append_char", void_type, 1, pn, pt, 1, 0);
         }
+        {
+            char pn[1][64];
+            Type pt[1];
+            CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_BOOL);
+            symtab_add_method(str_info, "append_bool", void_type, 1, pn, pt, 1, 0);
+        }
     }
 
     /* Builtin IToString interface.  Any class that implements it can be

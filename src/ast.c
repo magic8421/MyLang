@@ -40,6 +40,8 @@ const char* type_name(const Type* t) {
         case TYPE_U64:   return "u64";
         case TYPE_F32:   return "f32";
         case TYPE_F64:   return "f64";
+        case TYPE_BOOL:  return "bool";
+        case TYPE_NULL:  return "null";
         case TYPE_VOID:  return "void";
         case TYPE_TYPE_PARAM: return t->class_name;
         case TYPE_CLASS:
@@ -86,6 +88,7 @@ Type type_make_primitive(TypeKind kind) {
         case TYPE_U64: t.type_id = TYPE_ID_U64; break;
         case TYPE_F32: t.type_id = TYPE_ID_F32; break;
         case TYPE_F64: t.type_id = TYPE_ID_F64; break;
+        case TYPE_BOOL: t.type_id = TYPE_ID_BOOL; break;
         default: break;
     }
     return t;

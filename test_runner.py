@@ -2983,6 +2983,228 @@ i32 main() {
 }
 """, 311),
 
+    ("bool_basic", """
+i32 main() {
+    bool b = true;
+    if (b) {
+        bool c = false;
+        if (c) { return 0; }
+        return 1;
+    }
+    return 2;
+}
+""", 1),
+
+    ("bool_ops", """
+i32 main() {
+    bool a = 3 > 2;
+    bool b = !false;
+    bool c = a && b;
+    bool d = false || c;
+    bool e = 1 == 1 && 2 != 3;
+    if (c && d && e) { return 7; }
+    return 0;
+}
+""", 7),
+
+    ("bool_relational", """
+i32 main() {
+    i32 x = 5;
+    bool a = x <= 5;
+    bool b = x >= 6;
+    bool c = x < 10;
+    if (a && !b && c) { return 3; }
+    return 0;
+}
+""", 3),
+
+    ("bool_param_return", """
+bool flip(bool x) { return !x; }
+bool id(bool x) { return x; }
+i32 main() {
+    if (flip(true)) { return 0; }
+    if (!id(true)) { return 0; }
+    if (flip(false) && id(false) == false) { return 5; }
+    return 1;
+}
+""", 5),
+
+    ("bool_field", """
+class Flag {
+    bool on;
+}
+struct Pair {
+    bool a;
+    bool b;
+}
+i32 main() {
+    Flag f = new Flag;
+    f.on = true;
+    Pair p;
+    p.a = true;
+    p.b = false;
+    if (f.on && p.a && !p.b) { return 4; }
+    return 0;
+}
+""", 4),
+
+    ("bool_array", """
+i32 main() {
+    bool[] a;
+    a.push(true);
+    a.push(false);
+    a.push(1 < 2);
+    if (a[0] && !a[1] && a[2]) { return a.length; }
+    return 0;
+}
+""", 3),
+
+    ("bool_fstring", """
+i32 main() {
+    bool t = true;
+    string s = f"{t}-{false}-{(1 < 2)}";
+    return s.bytes.length;
+}
+""", 15),
+
+    ("null_class", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = null;
+    if (n != null) { return 0; }
+    n = new Node;
+    n.v = 5;
+    if (n == null) { return 0; }
+    n = null;
+    if (n == null) { return 7; }
+    return 1;
+}
+""", 7),
+
+    ("null_string", """
+i32 main() {
+    string s = null;
+    if (s == null) { s = "abc"; }
+    if (s != null) { return s.bytes.length; }
+    return 0;
+}
+""", 3),
+
+    ("null_iface", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 side;
+    i32 area() { return this.side * this.side; }
+}
+IShape make(bool want) {
+    if (want) {
+        Square sq = new Square;
+        sq.side = 3;
+        return sq;
+    }
+    return null;
+}
+i32 main() {
+    IShape a = make(false);
+    if (a != null) { return 0; }
+    IShape b = make(true);
+    if (b == null) { return 0; }
+    b = null;
+    if (b == null) { return 9; }
+    return 2;
+}
+""", 9),
+
+    ("null_weak", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    weak Node w = null;
+    if (w == null) {
+        Node n = new Node;
+        w = n;
+        if (w.lock() == null) { return 0; }
+        w = null;
+        if (w == null) { return 5; }
+        return 1;
+    }
+    return 0;
+}
+""", 5),
+
+    ("null_weak_iface", """
+interface IBox {
+    i32 get();
+}
+class Box : IBox {
+    i32 get() { return 42; }
+}
+i32 main() {
+    weak IBox w = null;
+    Box b = new Box;
+    w = b;
+    IBox s = w.lock();
+    if (s == null) { return 0; }
+    w = null;
+    return s.get();
+}
+""", 42),
+
+    ("null_arg", """
+class Node {
+    i32 v;
+}
+i32 check(Node n) {
+    if (n == null) { return 1; }
+    return n.v;
+}
+i32 main() {
+    i32 a = check(null);
+    Node n = new Node;
+    n.v = 2;
+    return a + check(n);
+}
+""", 3),
+
+    ("null_field", """
+class Node {
+    i32 v;
+}
+class Holder {
+    Node child;
+}
+i32 main() {
+    Holder h = new Holder;
+    h.child = new Node;
+    h.child.v = 3;
+    h.child = null;
+    if (h.child == null) { return 6; }
+    return 0;
+}
+""", 6),
+
+    ("null_return_class", """
+class Node {
+    i32 v;
+}
+Node make(bool want) {
+    if (want) { return new Node; }
+    return null;
+}
+i32 main() {
+    Node a = make(false);
+    if (a != null) { return 0; }
+    Node b = make(true);
+    if (b == null) { return 0; }
+    return 8;
+}
+""", 8),
+
 
 ]
 
@@ -3366,6 +3588,148 @@ i32 main() {
     return 1;
 }
 """, "cannot match on an unowned reference"),
+
+    ("bad_null_int", """
+i32 main() {
+    i32 x = null;
+    return x;
+}
+""", "cannot initialize 'i32' with 'null'"),
+
+    ("bad_null_bool", """
+i32 main() {
+    bool b = null;
+    return 0;
+}
+""", "cannot initialize 'bool' with 'null'"),
+
+    ("bad_null_struct", """
+struct Point {
+    i32 x;
+}
+i32 main() {
+    Point p = null;
+    return 0;
+}
+""", "cannot initialize 'Point' with 'null'"),
+
+    ("bad_bool_from_int", """
+i32 main() {
+    bool b = 5;
+    return 0;
+}
+""", "cannot initialize 'bool' with 'i32'"),
+
+    ("bad_int_from_bool", """
+i32 main() {
+    i32 x = true;
+    return x;
+}
+""", "cannot initialize 'i32' with 'bool'"),
+
+    ("bad_int_from_compare", """
+i32 main() {
+    i32 x = 1 < 2;
+    return x;
+}
+""", "cannot initialize 'i32' with 'bool'"),
+
+    ("bad_bool_assign", """
+i32 main() {
+    bool b = true;
+    b = 0;
+    return 0;
+}
+""", "cannot assign 'i32' to 'bool'"),
+
+    ("bad_bool_compound", """
+i32 main() {
+    bool b = true;
+    b += 1;
+    return 0;
+}
+""", "compound assignment not supported for this type"),
+
+    ("bad_bool_inc", """
+i32 main() {
+    bool b = true;
+    b++;
+    return 0;
+}
+""", "increment/decrement not supported for this type"),
+
+    ("bad_null_unowned", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    unowned Node u = null;
+    return 0;
+}
+""", "cannot initialize unowned 'Node' with 'null'"),
+
+    ("bad_null_relational", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    if (n < null) { return 1; }
+    return 0;
+}
+""", "operator '<' not allowed with null"),
+
+    ("bad_null_arg", """
+void foo(i32 x) { }
+i32 main() {
+    foo(null);
+    return 0;
+}
+""", "cannot pass null to 'i32' parameter"),
+
+    ("bad_null_assign_int", """
+i32 main() {
+    i32 x = 0;
+    x = null;
+    return x;
+}
+""", "cannot assign 'null' to 'i32'"),
+
+    ("bad_bool_arg", """
+void foo(bool b) { }
+i32 main() {
+    foo(5);
+    return 0;
+}
+""", "cannot pass 'i32' to 'bool' parameter"),
+
+    ("bad_bool_return", """
+i32 f() {
+    return true;
+}
+i32 main() {
+    return f();
+}
+""", "cannot return 'bool' from function returning 'i32'"),
+
+    ("bad_null_member", """
+i32 main() {
+    return null.x;
+}
+""", "cannot access member 'x' on null"),
+
+    ("bad_null_assign_unowned", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    unowned Node u = n;
+    u = null;
+    return 0;
+}
+""", "cannot assign null to unowned reference"),
 
 ]
 

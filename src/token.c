@@ -37,6 +37,10 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_BREAK:  return "break";
         case TOK_KW_CONTINUE: return "continue";
     case TOK_KW_MATCH:  return "match";
+        case TOK_KW_NULL:   return "null";
+        case TOK_KW_BOOL:   return "bool";
+        case TOK_KW_TRUE:   return "true";
+        case TOK_KW_FALSE:  return "false";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

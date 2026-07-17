@@ -33,15 +33,29 @@ Source code lives under `src/`:
 - The current source line is tracked in the thread-local `__my_line` variable. The compiler emits `MY_LOC(line)` before expressions that may trigger runtime panics (e.g., array access) so `my_panic` can report the offending line.
 
 ## Type System
-- Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `void`.
+- Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `bool`, `void`.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
-- Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
+- Type IDs: primitives use 0-15 (`bool` = 11); classes, structs, and interfaces share a counter starting at 16.
+- `TYPE_NULL` is a compile-time-only `TypeKind` for the `null` literal; it has no runtime type_id.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`, `TYPE_IS_UNOWNED = 0x08000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `is_unowned`, `type_id`.
 - `T[]` is a value-type vector (`MyArray`), not reference-counted and not copyable by assignment. Transfer is explicit via `move_to(ref)` and `copy_to(ref)`.
 - `T[] a;` declares a zero-initialized empty vector; `a.push(x)` will auto-grow from capacity 0.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
+
+## Bool and Null Literals
+- `bool` is a primitive type mapping to C `int`; `true`/`false` literals emit `1`/`0`.
+- Comparison (`== != < <= > >=`), logical (`&& ||`), and logical-not (`!`) expressions have type `bool` (changed in `resolve_type`; previously `i32`).
+- Strict bool rule: bool and numeric types do not implicitly convert. Checked at the assignment boundaries — variable initializers, assignments, call arguments, and `return` — via `bool_mismatch` in codegen.c. `bool b = 5;`, `i32 x = true;`, and `i32 x = a < b;` are compile errors.
+- Conditions are NOT required to be bool: `if (ptr)`, `while (w.lock())`, and `while (1)` keep C truthiness semantics.
+- bool does not support compound assignment or `++`/`--` (it is not in the primitive-numeric lists, so the existing checks reject it automatically).
+- f-string interpolation of bool prints `true`/`false` via the runtime method `String_append_bool`.
+- `null` is a literal for reference types: class (including `string`), interface, weak class, and weak interface. It is allowed in variable initializers, assignments (locals, fields, array elements), `==`/`!=` comparisons, call arguments, and `return`.
+- Generated shape of null: `NULL` for class/weak class pointers, `{ NULL, NULL }` for interface and weak interface fat pointers.
+- Interface/null comparison emits `.data == NULL`; weak interface/null emits `.wr == NULL`.
+- null is rejected at compile time for: primitive/bool/struct/array targets, `unowned` references (declaration, assignment, argument), arithmetic and relational operators, member access and method calls, array indexing, `as` casts, `match` expressions, and f-string interpolation.
+- `mylang_weak_init(NULL)` returns NULL (guard in runtime.c), which makes the weak-class codegen paths (init, assignment, array elements, push) safe without special-casing.
 
 ## Compound Assignment Operators
 - Supported: `+=`, `-=`, `*=`, `/=`.
@@ -121,7 +135,7 @@ Source code lives under `src/`:
 
 ## Strings and f-strings
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
-- `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`.  There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
+- `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`.  There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
 - Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
@@ -245,6 +259,8 @@ Source code lives under `src/`:
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
 - Interface default method implementations are now supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
+- `match` does not support `true`/`false` literal arms; `match (null)` is a compile error.
+- Mixed arithmetic containing bool operands (e.g. `1 + (a < b)`) is not checked at the operand level; C promotion rules apply. The strict bool rule is enforced only at assignment boundaries.
 - No AST deallocation function (one-shot compiler).
 
 ## Class Field Destructors

@@ -19,6 +19,8 @@ typedef enum {
     TYPE_U64,
     TYPE_F32,
     TYPE_F64,
+    TYPE_BOOL,
+    TYPE_NULL,   /* compile-time only: the type of the 'null' literal */
 } TypeKind;
 
 #define TYPE_ID_I8       0
@@ -32,6 +34,7 @@ typedef enum {
 #define TYPE_ID_F32      8
 #define TYPE_ID_F64      9
 #define TYPE_ID_STRING          10
+#define TYPE_ID_BOOL            11
 #define TYPE_ID_CLASS_BASE      16
 #define TYPE_IS_ARRAY    0x80000000U
 #define TYPE_IS_STRUCT   0x40000000U
@@ -93,6 +96,8 @@ typedef enum {
     AST_OUT_ARG,
     AST_INC_DEC,
     AST_FSTRING,
+    AST_BOOL_LIT,
+    AST_NULL,
 } AstKind;
 
 struct AstNode {

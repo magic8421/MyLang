@@ -40,6 +40,10 @@ static const KeywordEntry keywords[] = {
     {"break",     TOK_KW_BREAK},
     {"continue",  TOK_KW_CONTINUE},
     {"match",     TOK_KW_MATCH},
+    {"null",      TOK_KW_NULL},
+    {"bool",      TOK_KW_BOOL},
+    {"true",      TOK_KW_TRUE},
+    {"false",     TOK_KW_FALSE},
     {NULL,        0},
 };
 

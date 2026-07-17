@@ -162,6 +162,10 @@ void String_append_char(String* thiz, int8_t c) {
     str_append_bytes(thiz, (const char*)&c, 1);
 }
 
+void String_append_bool(String* thiz, int v) {
+    mylang_string_append_cstr(thiz, v ? "true" : "false");
+}
+
 /* --- Array helpers ------------------------------------------------------ */
 
 static void mylang_array_release_elements(void* data, size_t length, int elem_kind) {
@@ -362,6 +366,7 @@ void mylang_array_compact(MyArray* a, size_t elem_size) {
    allocation and no installation race.  The caller always holds a strong
    reference here, so the object is alive while its share is taken. */
 WeakRef* mylang_weak_init(void* ptr) {
+    if (!ptr) return NULL;   /* the null literal weakifies to a null weak reference */
     ObjHeader* h = mylang_obj_hdr(ptr);
     mylang_atomic_inc(&h->weak_count);
     return (WeakRef*)h;

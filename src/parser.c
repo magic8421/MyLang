@@ -130,6 +130,9 @@ static Type parse_base_type(Parser* p) {
     } else if (check(p, TOK_KW_F64)) {
         advance(p);
         t = type_make_primitive(TYPE_F64);
+    } else if (check(p, TOK_KW_BOOL)) {
+        advance(p);
+        t = type_make_primitive(TYPE_BOOL);
     } else if (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0) {
         advance(p);
         t.type_kind = TYPE_VOID;
@@ -393,6 +396,20 @@ static AstNode* parse_primary(Parser* p) {
         AstNode* n = ast_new_node(AST_CHAR_LIT, t);
         n->ast_resolved_type.type_kind = TYPE_I8;
         n->ast_resolved_type.type_id = TYPE_ID_I8;
+        return n;
+    }
+    if (check(p, TOK_KW_TRUE) || check(p, TOK_KW_FALSE)) {
+        Token t = p->current; advance(p);
+        AstNode* n = ast_new_node(AST_BOOL_LIT, t);
+        n->ast_token.int_val = (t.kind == TOK_KW_TRUE) ? 1 : 0;
+        n->ast_resolved_type.type_kind = TYPE_BOOL;
+        n->ast_resolved_type.type_id = TYPE_ID_BOOL;
+        return n;
+    }
+    if (check(p, TOK_KW_NULL)) {
+        Token t = p->current; advance(p);
+        AstNode* n = ast_new_node(AST_NULL, t);
+        n->ast_resolved_type.type_kind = TYPE_NULL;
         return n;
     }
     if (check(p, TOK_IDENT) && strcmp(p->current.text, "f") == 0 &&
@@ -705,6 +722,7 @@ static int is_type_token(Parser* p) {
            check(p, TOK_KW_I8)   || check(p, TOK_KW_I16)  ||
            check(p, TOK_KW_I32)  || check(p, TOK_KW_I64)  ||
            check(p, TOK_KW_F32)  || check(p, TOK_KW_F64)  ||
+           check(p, TOK_KW_BOOL) ||
            check(p, TOK_KW_STRING);
 }
 
