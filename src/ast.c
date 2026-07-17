@@ -58,6 +58,7 @@ int type_equal(const Type* a, const Type* b) {
     if (a->array_size != b->array_size) return 0;
     if (a->is_ref != b->is_ref) return 0;
     if (a->is_weak != b->is_weak) return 0;
+    if (a->is_unowned != b->is_unowned) return 0;
     if (a->type_arg_count != b->type_arg_count) return 0;
     if (a->type_kind == TYPE_CLASS || a->type_kind == TYPE_STRUCT ||
         a->type_kind == TYPE_INTERFACE || a->type_kind == TYPE_TYPE_PARAM) {

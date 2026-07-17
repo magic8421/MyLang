@@ -33,6 +33,16 @@ static void mangle_type_into(Type* t, char* out, size_t out_size) {
         return;
     }
 
+    if (t->is_unowned) {
+        Type inner = *t;
+        char inner_buf[256];
+        inner.is_unowned = 0;
+        inner.mangled_name[0] = '\0';
+        mangle_type_into(&inner, inner_buf, sizeof(inner_buf));
+        CHECK_SNPRINTF(snprintf(out, out_size, "Unowned_%s", inner_buf), out_size, "unowned mangled name too long");
+        return;
+    }
+
     if (t->is_array) {
         Type inner = *t;
         char inner_buf[256];

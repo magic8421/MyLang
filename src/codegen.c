@@ -9,6 +9,8 @@
    implementation. */
 typedef struct CodegenContext CodegenContext;
 static void codegen_expr(CodegenContext* ctx, AstNode* node);
+static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node);
+static void codegen_expr_raw(CodegenContext* ctx, AstNode* node);
 static void indent_line(CodegenContext* ctx, int indent);
 static void emit_array_ptr_expr(CodegenContext* ctx, AstNode* arr_node);
 static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent);
@@ -52,6 +54,7 @@ struct CodegenContext {
     int          cleanup_scope_depth;
     int          last_loc_line;
     int          is_interface_default_method;
+    int          no_unowned_check;
     int          loop_depth;
     int          loop_entry_cleanup_count[MAX_LOOP];
     int          loop_break_label_id[MAX_LOOP];
@@ -77,7 +80,7 @@ static void escape_source_file(CodegenContext* ctx, const char* src) {
 }
 
 static const char* c_base_name(const Type* t) {
-    if (t->is_weak) return "WeakRef";
+    if (t->is_weak || t->is_unowned) return "WeakRef";
     switch (t->type_kind) {
         case TYPE_I8:    return "int8_t";
         case TYPE_I16:   return "int16_t";
@@ -725,15 +728,16 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
                     arg->ast_token.line, arg->ast_token.col);
             fprintf(ctx->out, "/* invalid weak interface arg */");
         }
-    } else if (param_type->is_weak) {
+    } else if (param_type->is_weak || param_type->is_unowned) {
         resolve_type(arg);
-        if (arg->ast_resolved_type.type_kind == TYPE_CLASS && !arg->ast_resolved_type.is_weak) {
+        if (arg->ast_resolved_type.type_kind == TYPE_CLASS &&
+            !arg->ast_resolved_type.is_weak && !arg->ast_resolved_type.is_unowned) {
             fprintf(ctx->out, "mylang_weak_init(");
             codegen_expr(ctx, arg);
             fprintf(ctx->out, ")");
-        } else if (arg->ast_resolved_type.is_weak) {
+        } else if (arg->ast_resolved_type.is_weak || arg->ast_resolved_type.is_unowned) {
             fprintf(ctx->out, "mylang_weak_copy(");
-            codegen_expr(ctx, arg);
+            codegen_expr_raw(ctx, arg);
             fprintf(ctx->out, ")");
         } else {
             codegen_expr(ctx, arg);
@@ -895,6 +899,13 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             }
             return;
         }
+        if (strcmp(mname, "lock") == 0 && obj->ast_resolved_type.is_unowned) {
+            fprintf(stderr, "error at %d:%d: unowned references do not have lock(); use them directly\n",
+                    node->ast_token.line, node->ast_token.col);
+            ctx->codegen_error = 1;
+            fprintf(ctx->out, "0 /* invalid lock() on unowned */");
+            return;
+        }
         if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
             ClassInfo* ci = NULL;
             if (obj->ast_resolved_type.type_arg_count > 0) {
@@ -1016,8 +1027,12 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
         fprintf(ctx->out, ".%s", node->ast_token.text);
     } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
         /* Class references may come from void* getters (e.g. dynamic arrays),
-           so cast to the concrete struct pointer before using ->. */
-        fprintf(ctx->out, "((%s*)", c_base_name(&obj->ast_resolved_type));
+           so cast to the concrete struct pointer before using ->.  An unowned
+           reference is checked first by the expression wrapper, so the cast
+           target here is the concrete class, not WeakRef. */
+        Type ct = obj->ast_resolved_type;
+        ct.is_unowned = 0;
+        fprintf(ctx->out, "((%s*)", c_base_name(&ct));
         codegen_expr(ctx, obj);
         fprintf(ctx->out, ")->%s", node->ast_token.text);
     } else if (obj->ast_resolved_type.is_pointer) {
@@ -1098,7 +1113,31 @@ static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
     fprintf(ctx->out, "\")");
 }
 
+/* Expression entry point.  Reading an unowned reference as a value goes
+   through the runtime liveness check (my_panic on a dead object); weak and
+   unowned share-management paths bypass the wrapper via codegen_expr_raw. */
 static void codegen_expr(CodegenContext* ctx, AstNode* node) {
+    if (!node) return;
+    resolve_type(node);
+    int wrap_unowned = node->ast_resolved_type.is_unowned &&
+                       !ctx->no_unowned_check &&
+                       (node->ast_kind == AST_IDENT ||
+                        node->ast_kind == AST_MEMBER_ACCESS);
+    if (wrap_unowned) fprintf(ctx->out, "mylang_unowned_check(");
+    codegen_expr_dispatch(ctx, node);
+    if (wrap_unowned) fprintf(ctx->out, ")");
+}
+
+/* Emit an expression without the unowned liveness-check wrapper.  Used where
+   the raw WeakRef* value is required (weak/unowned copies and weakifying). */
+static void codegen_expr_raw(CodegenContext* ctx, AstNode* node) {
+    int saved = ctx->no_unowned_check;
+    ctx->no_unowned_check = 1;
+    codegen_expr(ctx, node);
+    ctx->no_unowned_check = saved;
+}
+
+static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
     if (!node) return;
     resolve_type(node);
 
@@ -1328,33 +1367,35 @@ static void codegen_expr(CodegenContext* ctx, AstNode* node) {
                 }
             }
 
-            if (lt.is_weak && lt.type_kind == TYPE_CLASS) {
-                /* Weak class field: old WeakRef is released; RHS is weak-copied
-                   or weakified. */
+            if ((lt.is_weak || lt.is_unowned) && lt.type_kind == TYPE_CLASS) {
+                /* Weak/unowned class variable or field: the old share is
+                   released; RHS is share-copied (weak/unowned) or weakified
+                   (strong RHS).  Raw emission: no liveness check on reads of
+                   the reference itself. */
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
                 int rhs_owned = (expr_is_owned(rhs));
 
                 fprintf(ctx->out, "((void)mylang_weak_release(");
-                codegen_expr(ctx, lhs);
+                codegen_expr_raw(ctx, lhs);
                 fprintf(ctx->out, "), ");
-                if (rt.is_weak) {
+                if (rt.is_weak || rt.is_unowned) {
                     fprintf(ctx->out, "(");
-                    codegen_expr(ctx, lhs);
+                    codegen_expr_raw(ctx, lhs);
                     fprintf(ctx->out, " = mylang_weak_copy(");
-                    codegen_expr(ctx, rhs);
+                    codegen_expr_raw(ctx, rhs);
                     fprintf(ctx->out, "))");
                 } else if (rhs_owned) {
                     int tmp_id = ctx->assign_tmp_id++;
                     fprintf(ctx->out, "(void* _wassign%d = ", tmp_id);
                     codegen_expr(ctx, rhs);
                     fprintf(ctx->out, ", ");
-                    codegen_expr(ctx, lhs);
+                    codegen_expr_raw(ctx, lhs);
                     fprintf(ctx->out, " = mylang_weak_init(_wassign%d), mylang_release(_wassign%d))",
                             tmp_id, tmp_id);
                 } else {
                     fprintf(ctx->out, "(");
-                    codegen_expr(ctx, lhs);
+                    codegen_expr_raw(ctx, lhs);
                     fprintf(ctx->out, " = mylang_weak_init(");
                     codegen_expr(ctx, rhs);
                     fprintf(ctx->out, "))");
@@ -1570,6 +1611,9 @@ static int call_needs_guard(AstNode* arg) {
     resolve_type(arg);
     TypeKind k = arg->ast_resolved_type.type_kind;
     if (k != TYPE_CLASS && k != TYPE_INTERFACE) return 0;
+    /* unowned reads are borrowed and side-effect-free; they are checked
+       inline at the use site and never need a guard temporary. */
+    if (arg->ast_resolved_type.is_unowned) return 0;
     if (arg->ast_resolved_type.is_array) return 0;
     if (arg->ast_kind == AST_ASSIGN) return 0;
     if (arg->ast_kind == AST_IDENT && symtab_lookup(arg->ast_token.text)) return 0;
@@ -1596,7 +1640,7 @@ static int subexpr_needs_temp(AstNode* node) {
     if (!node) return 0;
     resolve_type(node);
     Type* t = &node->ast_resolved_type;
-    if (t->is_weak) return 0;
+    if (t->is_weak || t->is_unowned) return 0;
     if (t->is_array) return 0;
     if (t->type_kind != TYPE_CLASS && t->type_kind != TYPE_INTERFACE) return 0;
     return node->ast_kind == AST_CALL;
@@ -2504,12 +2548,23 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
         return;
     }
 
-    if (type.is_weak && node->ast_child_count > 0) {
+    if (type.is_unowned && node->ast_child_count == 0) {
+        fprintf(stderr, "error at %d:%d: unowned variable '%s' requires an initializer\n",
+                node->ast_token.line, node->ast_token.col, node->ast_token.text);
+        ctx->codegen_error = 1;
+        indent_line(ctx, indent);
+        fprintf(ctx->out, "WeakRef* %s = NULL;\n", node->ast_token.text);
+        cleanup_add(ctx, node->ast_token.text, 1, 0);
+        return;
+    }
+
+    if ((type.is_weak || type.is_unowned) && node->ast_child_count > 0) {
         resolve_type(node->ast_children[0]);
-        if (node->ast_children[0]->ast_resolved_type.is_weak) {
+        if (node->ast_children[0]->ast_resolved_type.is_weak ||
+            node->ast_children[0]->ast_resolved_type.is_unowned) {
             indent_line(ctx, indent);
             fprintf(ctx->out, "WeakRef* %s = mylang_weak_copy(", node->ast_token.text);
-            codegen_expr(ctx, node->ast_children[0]);
+            codegen_expr_raw(ctx, node->ast_children[0]);
             fprintf(ctx->out, ");\n");
         } else {
             int rhs_owned = (expr_is_owned(node->ast_children[0]));
@@ -2869,6 +2924,11 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     if (expr) {
         expr_type = resolve_type(expr);
     }
+    if (expr && expr_type.is_unowned) {
+        fprintf(stderr, "error at %d:%d: cannot match on an unowned reference; convert it to a strong reference first\n",
+                expr->ast_token.line, expr->ast_token.col);
+        ctx->codegen_error = 1;
+    }
 
     int expr_owned = expr && expr_is_owned(expr);
     int expr_extracted = expr && (expr->ast_temp_name[0] != '\0');
@@ -3201,7 +3261,8 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             }
         }
 
-        if (lhs->ast_kind == AST_IDENT && lt.type_kind == TYPE_CLASS) {
+        if (lhs->ast_kind == AST_IDENT && lt.type_kind == TYPE_CLASS &&
+            !lt.is_weak && !lt.is_unowned) {
             emit_stmt_call_retains(ctx, expr, indent);
 
             int id = ctx->assign_tmp_id++;
@@ -3550,7 +3611,7 @@ static void emit_interface_default_methods(CodegenContext* ctx) {
                 symtab_insert(im->param_names[k], im->param_types[k]);
                 if (im->param_types[k].is_weak && im->param_types[k].type_kind == TYPE_INTERFACE) {
                     cleanup_add_weak_interface(ctx, im->param_names[k]);
-                } else if (im->param_types[k].is_weak) {
+                } else if (im->param_types[k].is_weak || im->param_types[k].is_unowned) {
                     cleanup_add(ctx, im->param_names[k], 1, 0);
                 }
             }
@@ -3677,7 +3738,7 @@ static void codegen_class_destructor(CodegenContext* ctx, ClassInfo* ci, const c
                     fname, esz, array_elem_kind(&ft));
         } else if (ft.is_weak && ft.type_kind == TYPE_INTERFACE) {
             fprintf(ctx->out, "    mylang_weak_release(p->%s.wr);\n", fname);
-        } else if (ft.is_weak) {
+        } else if (ft.is_weak || ft.is_unowned) {
             fprintf(ctx->out, "    mylang_weak_release(p->%s);\n", fname);
         } else if (ft.type_kind == TYPE_INTERFACE) {
             fprintf(ctx->out, "    mylang_release(p->%s.data);\n", fname);
@@ -3751,7 +3812,7 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     { AstNode* p = params; while (p) { symtab_insert(p->ast_token.text, p->ast_resolved_type);
         if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
             cleanup_add_weak_interface(ctx, p->ast_token.text);
-        } else if (p->ast_resolved_type.is_weak) {
+        } else if (p->ast_resolved_type.is_weak || p->ast_resolved_type.is_unowned) {
             cleanup_add(ctx, p->ast_token.text, 1, 0);
         }
         p = p->next; } }
@@ -3842,7 +3903,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
             symtab_insert(p->ast_token.text, p->ast_resolved_type);
             if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
                 cleanup_add_weak_interface(ctx, p->ast_token.text);
-            } else if (p->ast_resolved_type.is_weak) {
+            } else if (p->ast_resolved_type.is_weak || p->ast_resolved_type.is_unowned) {
                 cleanup_add(ctx, p->ast_token.text, 1, 0);
             }
             p = p->next;

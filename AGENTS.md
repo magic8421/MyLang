@@ -36,8 +36,8 @@ Source code lives under `src/`:
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `void`.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
 - Type IDs: primitives use 0-15; classes, structs, and interfaces share a counter starting at 16.
-- Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`.
-- `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `type_id`.
+- Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`, `TYPE_IS_UNOWNED = 0x08000000`.
+- `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `is_unowned`, `type_id`.
 - `T[]` is a value-type vector (`MyArray`), not reference-counted and not copyable by assignment. Transfer is explicit via `move_to(ref)` and `copy_to(ref)`.
 - `T[] a;` declares a zero-initialized empty vector; `a.push(x)` will auto-grow from capacity 0.
 - `out` and `in` modifiers were removed (only `ref` remains).
@@ -164,6 +164,15 @@ Source code lives under `src/`:
 - Threads: with atomic counts and implicit-share pinning, the refcount/weak protocol itself is thread-safe. Actual multithreading still needs language-level support (thread APIs, shared-variable semantics).
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
+
+## Unowned References (Implemented)
+- Syntax: `unowned ClassName v = obj;` to declare. No `lock()`: the reference is used directly like a strong one (`u.field`, `u.method()`).
+- Semantics (like Swift `unowned(safe)`): non-owning, but every read is checked — reading a dead reference calls `my_panic("unowned reference to dead object")`; reading a never-initialized one panics with `"unowned reference is null"`. Memory-safe: the share pins the object block, so the check can never touch freed memory.
+- Representation: identical to weak — the variable holds a `WeakRef*` (header pointer) and takes a share of the same `ObjHeader::weak_count`. All share management (init, copy, release, cleanup, field destructors) reuses the weak machinery.
+- Reads are wrapped by `codegen_expr` with `mylang_unowned_check(...)`, which validates and returns the user pointer. Weak/unowned share-management paths (copies, weakifying, assignment targets) suppress the wrapper via `codegen_expr_raw` (`CodegenContext.no_unowned_check`).
+- Conversions: strong -> unowned via `mylang_weak_init` (implicit on init/assignment/argument); unowned -> unowned via `mylang_weak_copy`; unowned -> strong is allowed and emits check + retain (e.g. `Node s = u;`, strong parameters, `return u;` where the return type is a strong class). `unowned Node u = w.lock();` works through the owned-RHS path.
+- Restrictions: class types only (no interfaces, no primitives); local declarations require an initializer; no `unowned` return types; no unowned arrays; `new unowned` is rejected; `.lock()` on unowned is a compile error; `match` on an unowned expression is rejected (convert to strong first); `as unowned T` is rejected.
+- Choosing: use `weak` when the object dying first is a normal runtime event the code must handle (lock returns NULL); use `unowned` when it would be a structural bug and a panic is the right failure. Under future threads the check is exact in single-threaded code but only a backstop under data races — real concurrent lifetime pinning still requires `weak` + `lock()`.
 
 ## Array / Vector Value Types
 - `T[]` compiles to the C value type `MyArray { size_t capacity; size_t length; void* data; }`.

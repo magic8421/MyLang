@@ -1401,6 +1401,147 @@ i32 main() {
 }
 """, 7),
 
+    # ----------- unowned tests -----------
+
+    ("unowned_basic", """
+class Node {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 42;
+    unowned Node u = obj;
+    return u.v + u.get();
+}
+""", 84),
+
+    ("unowned_share_copy", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 3;
+    unowned Node u1 = obj;
+    unowned Node u2 = u1;
+    return u1.v + u2.v;
+}
+""", 6),
+
+    ("unowned_to_strong", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 7;
+    unowned Node u = obj;
+    Node s = u;
+    return s.v;
+}
+""", 7),
+
+    ("unowned_param", """
+class Node {
+    i32 v;
+}
+i32 read(unowned Node n) {
+    return n.v;
+}
+i32 read_strong(Node n) {
+    return n.v;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 9;
+    unowned Node u = obj;
+    return read(u) + read_strong(u) + read(obj);
+}
+""", 27),
+
+    ("unowned_assign", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node a = new Node;
+    a.v = 1;
+    Node b = new Node;
+    b.v = 2;
+    unowned Node u = a;
+    u = b;
+    return u.v;
+}
+""", 2),
+
+    ("unowned_field", """
+class Node {
+    i32 v;
+}
+class Holder {
+    unowned Node n;
+}
+i32 main() {
+    Node obj = new Node;
+    obj.v = 5;
+    Holder h = new Holder;
+    h.n = obj;
+    i32 r = h.n.v;
+    Holder h2 = new Holder;
+    h2.n = h.n;
+    return r + h2.n.v;
+}
+""", 10),
+
+    ("unowned_from_lock", """
+class Node {
+    i32 v;
+}
+Node make() {
+    Node n = new Node;
+    n.v = 8;
+    return n;
+}
+i32 main() {
+    Node obj = make();
+    weak Node w = obj;
+    unowned Node u = w.lock();
+    return u.v;
+}
+""", 8),
+
+    ("unowned_dead_access", """
+class Node {
+    i32 v;
+}
+Node make() {
+    Node n = new Node;
+    n.v = 7;
+    return n;
+}
+i32 main() {
+    unowned Node u = make();
+    return u.v;
+}
+""", "crash"),
+
+    ("unowned_dead_method", """
+class Node {
+    i32 v;
+    i32 get() { return this.v; }
+}
+Node make() {
+    Node n = new Node;
+    n.v = 7;
+    return n;
+}
+i32 main() {
+    unowned Node u = make();
+    return u.get();
+}
+""", "crash"),
+
     # ----------- interface tests -----------
 
     ("iface_basic", """
@@ -3125,6 +3266,106 @@ i32 main() {
     return 0;
 }
 """, "too many generic parameters"),
+
+    ("bad_unowned_lock", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    unowned Node u = obj;
+    Node s = u.lock();
+    return 0;
+}
+""", "unowned references do not have lock()"),
+
+    ("bad_unowned_interface", """
+interface IShape {
+    i32 area();
+}
+i32 main() {
+    unowned IShape s;
+    return 0;
+}
+""", "unowned requires a class type"),
+
+    ("bad_unowned_primitive", """
+i32 main() {
+    unowned i32 x;
+    return 0;
+}
+""", "unowned requires a class type"),
+
+    ("bad_unowned_noinit", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    unowned Node u;
+    return 0;
+}
+""", "unowned variable 'u' requires an initializer"),
+
+    ("bad_unowned_new", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    unowned Node u = new unowned Node;
+    return 0;
+}
+""", "'new' cannot be used with unowned"),
+
+    ("bad_unowned_array", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    unowned Node[] a;
+    return 0;
+}
+""", "unowned arrays are not supported"),
+
+    ("bad_unowned_return", """
+class Node {
+    i32 v;
+}
+unowned Node f(Node n) {
+    return n;
+}
+i32 main() {
+    return 0;
+}
+""", "unowned return type is not supported"),
+
+    ("bad_unowned_as", """
+interface IShape {
+    i32 area();
+}
+class Square : IShape {
+    i32 area() { return 1; }
+}
+i32 main() {
+    Square sq = new Square;
+    IShape s = sq;
+    Square x = s as unowned Square;
+    return 0;
+}
+""", "unowned is not a valid cast target"),
+
+    ("bad_unowned_match", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node obj = new Node;
+    unowned Node u = obj;
+    match (u) {
+        else => { return 0; }
+    }
+    return 1;
+}
+""", "cannot match on an unowned reference"),
 
 ]
 

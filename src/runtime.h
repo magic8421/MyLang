@@ -156,6 +156,10 @@ WeakRef* mylang_weak_copy(WeakRef* wr);
 void*    mylang_lock(WeakRef* wr);
 void     mylang_weak_release(WeakRef* wr);
 
+/* Unowned references.  Same non-owning share as weak, but used directly:
+   every read is checked and panics if the object is already dead. */
+void*    mylang_unowned_check(WeakRef* wr);
+
 /* Leak checking (controlled by MYLANG_LEAK_CHECK macro).
    Only ObjHeader-based allocations are tracked here; arrays are tracked
    separately if needed. */

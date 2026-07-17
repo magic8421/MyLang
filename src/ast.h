@@ -37,6 +37,7 @@ typedef enum {
 #define TYPE_IS_STRUCT   0x40000000U
 #define TYPE_IS_WEAK     0x20000000U
 #define TYPE_IS_INTERFACE 0x10000000U
+#define TYPE_IS_UNOWNED  0x08000000U
 
 #define MAX_TYPE_ARGS 4
 
@@ -48,6 +49,7 @@ typedef struct Type {
     int      array_size;
     int      is_ref;       /* by-reference parameter */
     int      is_weak;      /* weak reference */
+    int      is_unowned;   /* unowned reference (non-owning, checked on read) */
     int      type_id;
 
     int      type_arg_count;

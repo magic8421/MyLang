@@ -204,8 +204,12 @@ static Type parse_base_type(Parser* p) {
 
 static Type parse_type(Parser* p) {
     int is_weak = 0;
+    int is_unowned = 0;
     if (check(p, TOK_KW_WEAK)) {
         is_weak = 1;
+        advance(p);
+    } else if (check(p, TOK_KW_UNOWNED)) {
+        is_unowned = 1;
         advance(p);
     }
 
@@ -222,7 +226,23 @@ static Type parse_type(Parser* p) {
         }
     }
 
+    if (is_unowned) {
+        if (t.type_kind != TYPE_CLASS) {
+            fprintf(stderr, "error at %d:%d: unowned requires a class type\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        } else {
+            t.is_unowned = 1;
+            t.mangled_name[0] = '\0';
+        }
+    }
+
     if (check(p, TOK_LBRACKET)) {
+        if (is_unowned) {
+            fprintf(stderr, "error at %d:%d: unowned arrays are not supported\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        }
         advance(p);
         t.is_array = 1;
         if (check(p, TOK_RBRACKET)) {
@@ -416,6 +436,12 @@ static AstNode* parse_primary(Parser* p) {
             is_weak = 1;
             advance(p);
         }
+        if (check(p, TOK_KW_UNOWNED)) {
+            fprintf(stderr, "error at %d:%d: 'new' cannot be used with unowned\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            advance(p);
+        }
 
         Type base = parse_base_type(p);
         if (base.type_kind == TYPE_VOID) {
@@ -545,6 +571,11 @@ static AstNode* parse_postfix(Parser* p) {
         if (target.type_kind == TYPE_VOID && !p->had_error) {
             fprintf(stderr, "error at %d:%d: expected type name after 'as'\n",
                     p->current.line, p->current.col);
+            p->had_error = 1;
+        }
+        if (target.is_unowned) {
+            fprintf(stderr, "error at %d:%d: unowned is not a valid cast target\n",
+                    t.line, t.col);
             p->had_error = 1;
         }
         AstNode* cast = ast_new_node(AST_AS_CAST, t);
@@ -679,6 +710,7 @@ static int is_type_token(Parser* p) {
 
 static int stmt_looks_like_var_decl(Parser* p) {
     if (check(p, TOK_KW_WEAK)) return 1;
+    if (check(p, TOK_KW_UNOWNED)) return 1;
     if (is_type_token(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
@@ -1160,6 +1192,12 @@ static AstNode* parse_class_decl(Parser* p) {
             /* METHOD */
             advance(p); /* consume ( */
 
+            if (ft.is_unowned) {
+                fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
+                        fname.line, fname.col);
+                p->had_error = 1;
+            }
+
             symtab_enter_scope();
 
             /* register implicit this */
@@ -1307,6 +1345,11 @@ static AstNode* parse_interface_decl(Parser* p) {
         Type ret_type = parse_type(p);
         if (ret_type.type_kind == TYPE_VOID) {
             /* allow void return type */
+        }
+        if (ret_type.is_unowned) {
+            fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
         }
 
         if (!check(p, TOK_IDENT)) {
@@ -1476,8 +1519,14 @@ static AstNode* parse_top_level(Parser* p) {
 
     if (is_type_token(p) ||
         (check(p, TOK_IDENT) && is_type_name(p->current.text)) ||
+        check(p, TOK_KW_UNOWNED) ||
         (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {
         Type ret_type = parse_type(p);
+        if (ret_type.is_unowned) {
+            fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+        }
         if (!check(p, TOK_IDENT)) {
             fprintf(stderr, "error at %d:%d: expected function name\n",
                     p->current.line, p->current.col);

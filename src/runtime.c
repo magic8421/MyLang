@@ -404,6 +404,17 @@ void mylang_weak_release(WeakRef* wr) {
     }
 }
 
+/* Unowned references share the weak share machinery (see above); the only
+   difference is the access rule: reads go through this check instead of
+   mylang_lock.  The caller's own share pins the object block, so reading
+   refcount here can never touch freed memory. */
+void* mylang_unowned_check(WeakRef* wr) {
+    ObjHeader* h = (ObjHeader*)wr;
+    if (!h) my_panic("unowned reference is null");
+    if (h->refcount <= 0) my_panic("unowned reference to dead object");
+    return (void*)(h + 1);
+}
+
 /* --- Leak checking ------------------------------------------------------ */
 
 #ifdef MYLANG_LEAK_CHECK
