@@ -1064,6 +1064,13 @@ static AstNode* parse_struct_decl(Parser* p) {
     symtab_add_struct(name.text, info);
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
+            fprintf(stderr, "error at %d:%d: access modifiers are not allowed in structs\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            advance(p);
+            continue;
+        }
         int is_native = 0;
         if (check(p, TOK_KW_NATIVE)) {
             is_native = 1;
@@ -1219,11 +1226,23 @@ static AstNode* parse_class_decl(Parser* p) {
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         int is_native = 0;
         int is_override = 0;
-        while (check(p, TOK_KW_NATIVE) || check(p, TOK_KW_OVERRIDE)) {
+        int is_private = 0;
+        int is_public = 0;
+        while (check(p, TOK_KW_NATIVE) || check(p, TOK_KW_OVERRIDE) ||
+               check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
             if (check(p, TOK_KW_NATIVE)) {
                 is_native = 1; advance(p);
             } else if (check(p, TOK_KW_OVERRIDE)) {
                 is_override = 1; advance(p);
+            } else {
+                int want_private = check(p, TOK_KW_PRIVATE);
+                if (is_public || is_private) {
+                    fprintf(stderr, "error at %d:%d: duplicate or conflicting access modifier\n",
+                            p->current.line, p->current.col);
+                    p->had_error = 1;
+                }
+                if (want_private) is_private = 1; else is_public = 1;
+                advance(p);
             }
         }
         Type ft = parse_type(p);
@@ -1318,7 +1337,13 @@ static AstNode* parse_class_decl(Parser* p) {
 
             symtab_exit_scope();
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native, is_override);
+            if (is_private && is_override) {
+                fprintf(stderr, "error at %d:%d: method '%s' cannot be both private and override\n",
+                        fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native, is_override, is_private);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
@@ -1330,7 +1355,7 @@ static AstNode* parse_class_decl(Parser* p) {
         } else {
             /* FIELD */
             expect(p, TOK_SEMI);
-            symtab_add_field(info, fname.text, ft);
+            symtab_add_field(info, fname.text, ft, is_private);
         }
     }
     expect(p, TOK_RBRACE);
@@ -1389,6 +1414,13 @@ static AstNode* parse_interface_decl(Parser* p) {
     symtab_add_interface(name.text, info);
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
+            fprintf(stderr, "error at %d:%d: access modifiers are not allowed in interfaces\n",
+                    p->current.line, p->current.col);
+            p->had_error = 1;
+            advance(p);
+            continue;
+        }
         Type ret_type = parse_type(p);
         if (ret_type.type_kind == TYPE_VOID) {
             /* allow void return type */

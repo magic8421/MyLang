@@ -43,6 +43,8 @@ typedef enum {
     TOK_KW_BOOL,
     TOK_KW_TRUE,
     TOK_KW_FALSE,
+    TOK_KW_PUBLIC,
+    TOK_KW_PRIVATE,
 
     TOK_PLUS,
     TOK_MINUS,

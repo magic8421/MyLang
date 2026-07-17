@@ -17,6 +17,7 @@ typedef struct MethodInfo {
     Type param_types[16];
     int  is_native;
     int  is_override;
+    int  is_private;
     struct MethodInfo* next;
 } MethodInfo;
 
@@ -46,6 +47,7 @@ typedef struct ClassInfo {
     int  field_count;
     char field_names[MAX_FIELDS][64];
     Type field_types[MAX_FIELDS];
+    int  field_private[MAX_FIELDS];
     MethodInfo* methods;
     int  impl_count;
     char impl_names[MAX_IMPL][64];
@@ -100,7 +102,7 @@ SymEntry*   symtab_lookup_current(const char* name);
 
 void        symtab_add_class(const char* name, ClassInfo* info);
 ClassInfo*  symtab_find_class(const char* name);
-int         symtab_add_field(ClassInfo* info, const char* name, Type type);
+int         symtab_add_field(ClassInfo* info, const char* name, Type type, int is_private);
 
 void        symtab_add_struct(const char* name, StructInfo* info);
 StructInfo* symtab_find_struct(const char* name);
@@ -108,7 +110,7 @@ StructInfo* symtab_first_struct(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
-                              int is_native, int is_override);
+                              int is_native, int is_override, int is_private);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {

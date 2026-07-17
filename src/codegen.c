@@ -55,6 +55,7 @@ struct CodegenContext {
     int          last_loc_line;
     int          is_interface_default_method;
     int          no_unowned_check;
+    ClassInfo*   current_class;   /* class whose method body is being emitted, NULL outside methods */
     int          loop_depth;
     int          loop_entry_cleanup_count[MAX_LOOP];
     int          loop_break_label_id[MAX_LOOP];
@@ -133,6 +134,13 @@ static int type_accepts_null(const Type* t) {
    True when exactly one side is bool. */
 static int bool_mismatch(const Type* dst, const Type* src) {
     return (dst->type_kind == TYPE_BOOL) != (src->type_kind == TYPE_BOOL);
+}
+
+/* Access control: a private class member is visible only inside methods of
+   the same class (any instance, C++ style). */
+static int member_visible(CodegenContext* ctx, const char* owner, int is_private) {
+    if (!is_private) return 1;
+    return ctx->current_class && strcmp(ctx->current_class->name, owner) == 0;
 }
 
 static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
@@ -1038,6 +1046,11 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
                 ci = symtab_find_class(obj->ast_resolved_type.class_name);
             }
             MethodInfo* mi = symtab_find_method_in_class(ci, mname);
+            if (mi && ci && !member_visible(ctx, ci->name, mi->is_private)) {
+                fprintf(stderr, "error at %d:%d: cannot call private method '%s.%s'\n",
+                        mem->ast_token.line, mem->ast_token.col, ci->name, mname);
+                ctx->codegen_error = 1;
+            }
             const char* class_c = ci ? class_c_name(ci) : obj->ast_resolved_type.class_name;
             fprintf(ctx->out, "%s_%s(", class_c, mname);
             codegen_expr(ctx, obj);
@@ -1170,6 +1183,33 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
            target here is the concrete class, not WeakRef. */
         Type ct = obj->ast_resolved_type;
         ct.is_unowned = 0;
+
+        /* Access control: a private field is visible only inside methods of
+           the same class. */
+        {
+            Type ot = obj->ast_resolved_type;
+            ClassInfo* ci = NULL;
+            if (ot.type_arg_count > 0) {
+                ci = symtab_instantiate_class_from_type(&ot);
+            } else {
+                ci = symtab_find_class(ot.class_name);
+            }
+            if (ci) {
+                int i;
+                for (i = 0; i < ci->field_count; i++) {
+                    if (strcmp(ci->field_names[i], node->ast_token.text) == 0) {
+                        if (!member_visible(ctx, ci->name, ci->field_private[i])) {
+                            fprintf(stderr, "error at %d:%d: cannot access private field '%s.%s'\n",
+                                    node->ast_token.line, node->ast_token.col,
+                                    ci->name, node->ast_token.text);
+                            ctx->codegen_error = 1;
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
         fprintf(ctx->out, "((%s*)", c_base_name(&ct));
         codegen_expr(ctx, obj);
         fprintf(ctx->out, ")->%s", node->ast_token.text);
@@ -2234,6 +2274,11 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
                 ClassInfo* ci = fstring_find_tostring_class(&t);
                 if (!ci) {
                     fprintf(stderr, "error at %d:%d: cannot interpolate type '%s'; implement IToString ('string toString()')\n",
+                            part->ast_token.line, part->ast_token.col, t.class_name);
+                    ctx->codegen_error = 1;
+                } else if (!member_visible(ctx, ci->name,
+                                           symtab_find_method_in_class(ci, "toString")->is_private)) {
+                    fprintf(stderr, "error at %d:%d: cannot interpolate type '%s'; toString() is private\n",
                             part->ast_token.line, part->ast_token.col, t.class_name);
                     ctx->codegen_error = 1;
                 } else {
@@ -3922,6 +3967,8 @@ static void emit_interface_default_methods(CodegenContext* ctx) {
             symtab_enter_scope();
             Type prev_ret = ctx->return_type;
             ctx->return_type = im->return_type;
+            ClassInfo* prev_class = ctx->current_class;
+            ctx->current_class = NULL;   /* default bodies have no class context */
 
             /* register parameters in scope */
             for (k = 0; k < im->param_count; k++) {
@@ -3961,6 +4008,7 @@ static void emit_interface_default_methods(CodegenContext* ctx) {
             fprintf(ctx->out, "MY_POP();\n");
             fprintf(ctx->out, "}\n\n");
             ctx->return_type = prev_ret;
+            ctx->current_class = prev_class;
         }
         ii = ii->next;
     }
@@ -4122,6 +4170,8 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     cleanup_push_scope(ctx); symtab_enter_scope();
     Type prev_ret = ctx->return_type;
     ctx->return_type = node->ast_resolved_type;
+    ClassInfo* prev_class = ctx->current_class;
+    ctx->current_class = symtab_find_class(class_name);
     Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
     thiz_type.type_kind = TYPE_CLASS;
     CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
@@ -4149,6 +4199,7 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     fprintf(ctx->out, "MY_POP();\n");
     fprintf(ctx->out, "}\n\n");
     ctx->return_type = prev_ret;
+    ctx->current_class = prev_class;
 }
 static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     const char* func_name = node->ast_token.text;
@@ -4212,6 +4263,8 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
 
     Type prev_ret = ctx->return_type;
     ctx->return_type = node->ast_resolved_type;
+    ClassInfo* prev_class = ctx->current_class;
+    ctx->current_class = NULL;
 
     /* register parameters in scope */
     {
@@ -4250,6 +4303,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     fprintf(ctx->out, "MY_POP();\n");
     fprintf(ctx->out, "}\n\n");
     ctx->return_type = prev_ret;
+    ctx->current_class = prev_class;
 }
 
 void codegen_program(AstNode* program, FILE* out, FILE* header,

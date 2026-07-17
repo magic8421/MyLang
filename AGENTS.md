@@ -57,6 +57,16 @@ Source code lives under `src/`:
 - null is rejected at compile time for: primitive/bool/struct/array targets, `unowned` references (declaration, assignment, argument), arithmetic and relational operators, member access and method calls, array indexing, `as` casts, `match` expressions, and f-string interpolation.
 - `mylang_weak_init(NULL)` returns NULL (guard in runtime.c), which makes the weak-class codegen paths (init, assignment, array elements, push) safe without special-casing.
 
+## Access Modifiers (public/private)
+- Per-member modifiers on class fields and methods: `private i32 x;`, `private i32 helper() { ... }`. Parsed in the same modifier loop as `native`/`override`, in any order.
+- Default is `public`; `public` may be written explicitly. `public` + `private` together is a compile error.
+- Access rule (C++ style): a private member is visible only inside methods of the same class — any instance of that class (`this.x` and `other.x` both work), not from other classes or free functions.
+- Not supported on structs (pure data value types), interfaces (methods are inherently public), or top-level functions/types — these positions produce a dedicated parse error.
+- Interface constraints: a method implementing an interface method must be public (`symtab_validate_impls` rejects a private implementation); `private` + `override` is a compile error.
+- Storage: `ClassInfo.field_private[MAX_FIELDS]` parallels `field_types`; `MethodInfo.is_private`. Generic instantiations clone both.
+- Enforcement is compile-time only: `codegen_member_access` (fields) and `codegen_call` (methods) check against `CodegenContext.current_class`, which `codegen_method_decl` sets while emitting a method body (NULL in free functions and interface default methods). f-string interpolation rejects a private `toString`.
+- Generated C is unchanged: visibility is not enforced at the C level, and compiler-generated code (vtables, thunks, destructors) is exempt.
+
 ## Compound Assignment Operators
 - Supported: `+=`, `-=`, `*=`, `/=`.
 - Only primitive numeric types (`i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`) support compound assignment.
@@ -261,6 +271,7 @@ Source code lives under `src/`:
 - Interface default method implementations are now supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
 - `match` does not support `true`/`false` literal arms; `match (null)` is a compile error.
 - Mixed arithmetic containing bool operands (e.g. `1 + (a < b)`) is not checked at the operand level; C promotion rules apply. The strict bool rule is enforced only at assignment boundaries.
+- Access modifiers are class-only: structs, interfaces, and top-level declarations do not accept `public`/`private`. Enforcement is compile-time only; generated C does not hide private members.
 - No AST deallocation function (one-shot compiler).
 
 ## Class Field Destructors

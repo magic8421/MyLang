@@ -3271,6 +3271,60 @@ i32 main() {
 }
 """, 8),
 
+    ("private_field", """
+class Counter {
+    private i32 value;
+    void set(i32 v) { this.value = v; }
+    i32 get() { return this.value; }
+    void copy_from(Counter other) { this.value = other.value; }
+}
+i32 main() {
+    Counter a = new Counter;
+    a.set(5);
+    Counter b = new Counter;
+    b.copy_from(a);
+    return b.get();
+}
+""", 5),
+
+    ("private_method", """
+class Engine {
+    private i32 mix(i32 a, i32 b) { return a * 10 + b; }
+    i32 run() { return this.mix(3, 7); }
+}
+i32 main() {
+    Engine e = new Engine;
+    return e.run();
+}
+""", 37),
+
+    ("private_public_default", """
+class P {
+    public i32 x;
+    i32 y;
+    i32 sum() { return this.x + this.y; }
+}
+i32 main() {
+    P p = new P;
+    p.x = 3;
+    p.y = 4;
+    return p.sum();
+}
+""", 7),
+
+    ("private_generic", """
+class Box<T> {
+    private T v;
+    void set(T x) { this.v = x; }
+    T get() { return this.v; }
+}
+i32 main() {
+    Box<i32> b = new Box<i32>;
+    b.set(9);
+    return b.get();
+}
+""", 9),
+
 
 ]
 
@@ -3796,6 +3850,100 @@ i32 main() {
     return 0;
 }
 """, "cannot assign null to unowned reference"),
+
+    ("bad_private_field_read", """
+class C {
+    private i32 x;
+}
+i32 main() {
+    C c = new C;
+    return c.x;
+}
+""", "cannot access private field 'C.x'"),
+
+    ("bad_private_field_write", """
+class C {
+    private i32 x;
+}
+i32 main() {
+    C c = new C;
+    c.x = 1;
+    return 0;
+}
+""", "cannot access private field 'C.x'"),
+
+    ("bad_private_method", """
+class C {
+    private i32 m() { return 1; }
+}
+i32 main() {
+    C c = new C;
+    return c.m();
+}
+""", "cannot call private method 'C.m'"),
+
+    ("bad_private_other_class", """
+class A {
+    private i32 x;
+}
+class B {
+    i32 peek(A a) { return a.x; }
+}
+i32 main() {
+    return 0;
+}
+""", "cannot access private field 'A.x'"),
+
+    ("bad_private_iface_impl", """
+interface I {
+    i32 m();
+}
+class C : I {
+    private i32 m() { return 1; }
+}
+i32 main() {
+    return 0;
+}
+""", "implements interface 'I' but is private"),
+
+    ("bad_private_override", """
+interface I {
+    i32 m();
+}
+class C : I {
+    private override i32 m() { return 1; }
+}
+i32 main() {
+    return 0;
+}
+""", "cannot be both private and override"),
+
+    ("bad_private_both", """
+class C {
+    public private i32 x;
+}
+i32 main() {
+    return 0;
+}
+""", "duplicate or conflicting access modifier"),
+
+    ("bad_private_in_struct", """
+struct S {
+    private i32 x;
+}
+i32 main() {
+    return 0;
+}
+""", "access modifiers are not allowed in structs"),
+
+    ("bad_private_in_iface", """
+interface I {
+    private i32 m();
+}
+i32 main() {
+    return 0;
+}
+""", "access modifiers are not allowed in interfaces"),
 
 ]
 
