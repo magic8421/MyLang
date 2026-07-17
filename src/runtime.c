@@ -55,10 +55,17 @@ typedef struct { void* data; const void* vtable; } AnyInterface;
 int mylang_release(void* ptr) {
     if (ptr && mylang_atomic_dec(&mylang_obj_hdr(ptr)->refcount) == 0) {
         ObjHeader* h = mylang_obj_hdr(ptr);
-        if (h->weak) h->weak->obj = NULL;
+        WeakRef* wr = h->weak;
         if (h->dtor) h->dtor(ptr);
         mylang_leak_remove(h);
-        free(h);
+        if (wr) {
+            /* Weak references exist: ownership of the object memory passes to
+               the weak side.  Drop the implicit share; the memory is freed by
+               mylang_weak_release once the last weak share is gone. */
+            mylang_weak_release(wr);
+        } else {
+            free(h);
+        }
     }
     return 0;
 }
@@ -361,8 +368,13 @@ WeakRef* mylang_weak_init(void* ptr) {
         return h->weak;
     }
     WeakRef* wr = (WeakRef*)calloc(1, sizeof(WeakRef));
-    wr->refcount = 1;
+    /* One share for the caller plus one implicit share held by the object
+       itself; the implicit share is dropped in mylang_release. */
+    wr->refcount = 2;
     wr->obj = h;
+    /* Future threads: h->weak must be installed with a CAS here and the race
+       loser must free its extra WeakRef.  Safe as a plain store today because
+       programs are single-threaded. */
     h->weak = wr;
     return wr;
 }
@@ -382,8 +394,12 @@ WeakRef* mylang_weak_init_owned(void* ptr) {
 
 void* mylang_lock(WeakRef* wr) {
     if (!wr) return NULL;
+    /* The caller holds a weak share, which pins both the WeakRef and the
+       object memory (see the implicit-share note in runtime.h), so reading
+       and CAS-ing h->refcount can never touch freed memory.  refcount == 0
+       is the liveness test; a successful CAS from a positive value means the
+       object was alive and is now retained by us. */
     ObjHeader* h = wr->obj;
-    if (!h) return NULL;
     for (;;) {
         long old = h->refcount;
         if (old <= 0) return NULL;
@@ -395,7 +411,10 @@ void* mylang_lock(WeakRef* wr) {
 
 void mylang_weak_release(WeakRef* wr) {
     if (wr && mylang_atomic_dec(&wr->refcount) == 0) {
-        if (wr->obj) wr->obj->weak = NULL;
+        /* The count reaches zero only after the object is dead: the implicit
+           share is dropped in mylang_release after the destructor ran, so the
+           object memory is now ours to free. */
+        free(wr->obj);
         free(wr);
     }
 }

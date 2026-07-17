@@ -153,13 +153,15 @@ Source code lives under `src/`:
 ## Weak References (Implemented)
 - Syntax: `weak ClassName v = obj;` to declare, `v.lock()` to acquire.
 - Each object has at most ONE `WeakRef` control block, stored in `ObjHeader::weak` (O(1) access).
-- `WeakRef` holds `{volatile long refcount, ObjHeader* obj}`. refcount enables sharing across multiple weak variables.
-- `mylang_lock(wr)`: CAS loop on `ObjHeader::refcount`. Returns retained (+1) strong pointer, or NULL if object is dead.
-- `mylang_weak_init(ptr)`: creates or reuses the WeakRef for an object.
+- `WeakRef` holds `{volatile long refcount, ObjHeader* obj}`. `refcount` counts live weak shares plus one implicit share held by the object itself while it is alive (shared_ptr-style dual counting); the implicit share is dropped by `mylang_release` after the strong count reaches zero.
+- While any weak share is held, both the `WeakRef` and the object's memory stay allocated. This is what makes `mylang_lock` safe against a concurrent free; the trade-off is that the shallow object block (header + fields) is freed only when the last weak share dies (the destructor still runs immediately at strong-count zero, same as `make_shared`).
+- `mylang_lock(wr)`: CAS loop on `ObjHeader::refcount`. `refcount == 0` is the liveness test; a successful CAS from a positive value returns a retained (+1) strong pointer, otherwise NULL.
+- `mylang_weak_init(ptr)`: creates or reuses the WeakRef for an object. A new WeakRef starts at `refcount = 2` (caller's share + implicit share).
 - `mylang_weak_init_owned(ptr)`: weakifies an owned strong reference — takes a WeakRef share, then releases the strong reference (used when the statement consumes RHS ownership, e.g. weak array element assignment from a call result).
 - `mylang_weak_copy(wr)`: increments WeakRef.refcount (for weak-to-weak copy).
-- `mylang_weak_release(wr)`: decrements WeakRef.refcount, frees on zero, sets `obj->weak = NULL`.
-- On `mylang_release` refcount drop to zero: `h->weak->obj = NULL` (O(1) single assignment) before `free(h)`.
+- `mylang_weak_release(wr)`: decrements WeakRef.refcount; on zero it frees the object memory (destructor has already run) and the WeakRef itself.
+- On `mylang_release` refcount drop to zero: run the destructor, then drop the implicit weak share if `h->weak` exists (ownership of the object memory passes to the weak side); otherwise `free(h)` directly.
+- Future threads: `ObjHeader::weak` installation in `mylang_weak_init` still needs a CAS (race loser frees its extra WeakRef), and a memory-ordering audit is due; today programs are single-threaded.
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
 

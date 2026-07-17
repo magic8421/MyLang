@@ -32,6 +32,12 @@
 typedef struct ObjHeaderTag ObjHeader;
 typedef struct LeakTraceTag LeakTrace;
 
+/* Weak reference control block, created lazily on first weak use of an object.
+   refcount counts live weak shares plus one implicit share held by the object
+   itself while it is alive; mylang_release drops the implicit share after the
+   strong count reaches zero.  While any share is held, both this WeakRef and
+   the object's memory stay allocated, which is what makes the mylang_lock CAS
+   loop safe against a concurrent free of the object. */
 typedef struct WeakRef {
     volatile long refcount;
     ObjHeader* obj;
