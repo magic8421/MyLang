@@ -133,7 +133,7 @@ Source code lives under `src/`:
 
 ## Memory Model
 - Heap objects use atomic reference counting via `ObjHeader`.
-- `ObjHeader` holds `refcount`, `type_id`, `WeakRef* weak`, and a per-class destructor function pointer.
+- `ObjHeader` holds `refcount`, `weak_count`, `type_id`, and a per-class destructor function pointer.
 - Class instances are released through `mylang_release`; the destructor is invoked before the object's memory is freed.
 - Arrays (`T[]`) are standalone value-type vectors with their own data buffer allocated via `malloc`/`realloc`/`free`; they are not reference-counted and are freed with `mylang_array_free`.
 - `mylang_obj_hdr(ptr)` macro subtracts `sizeof(ObjHeader)` to get the header from a user-data pointer.
@@ -145,24 +145,23 @@ Source code lives under `src/`:
 - **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Expressions whose value ownership is consumed by the surrounding statement (variable initializers, return expressions, expression-statement roots, assignment RHS) are never cleanup-tracked. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
 - **Class assignment**: RHS retained before LHS released to avoid UAF on self-assignment (`b = b.set(5)`).
 - **Class/interface fields own their values**: assigning a local or parameter to a class or interface field retains the source; the per-class destructor releases fields when the object is freed.
-- **Weak fields own their WeakRef control blocks**: weak class and weak interface fields release their `WeakRef` in the class destructor.
+- **Weak fields own their weak shares**: weak class and weak interface fields release their weak share (`mylang_weak_release`) in the class destructor.
 - **Array fields are freed by the destructor**: `T[]` fields are released with `mylang_array_free` when the containing object is freed.
 - **Discarded class return**: `(void)mylang_release(call(...))` in expression statements.
 - **This in methods**: retained on entry, released via cleanup. Name mapped to `thiz` in generated C.
 
 ## Weak References (Implemented)
 - Syntax: `weak ClassName v = obj;` to declare, `v.lock()` to acquire.
-- Each object has at most ONE `WeakRef` control block, stored in `ObjHeader::weak` (O(1) access).
-- `WeakRef` holds `{volatile long refcount, ObjHeader* obj}`. `refcount` counts live weak shares plus one implicit share held by the object itself while it is alive (shared_ptr-style dual counting); the implicit share is dropped by `mylang_release` after the strong count reaches zero.
-- While any weak share is held, both the `WeakRef` and the object's memory stay allocated. This is what makes `mylang_lock` safe against a concurrent free; the trade-off is that the shallow object block (header + fields) is freed only when the last weak share dies (the destructor still runs immediately at strong-count zero, same as `make_shared`).
+- There is no separate control block: the weak count lives inside the object header (`ObjHeader::weak_count`), make_shared style. `WeakRef` is just a typedef of `ObjHeader`, and a weak variable holds a pointer to the header. Codegen only manipulates `WeakRef*` opaquely through the runtime functions.
+- `weak_count` counts live weak shares plus one implicit share held by the object itself: it starts at 1 in `mylang_new_object` and `mylang_release` drops the implicit share after the strong count reaches zero. `weak_count == 0` therefore implies the destructor has already run, and the block is freed exactly once, by whichever release drops the count to zero.
+- While any weak share is held, the object block stays allocated. This is what makes `mylang_lock` safe against a concurrent free; the trade-off is that the shallow object block (header + fields) is freed only when the last weak share dies (the destructor still runs immediately at strong-count zero, same as `make_shared`).
 - `mylang_lock(wr)`: CAS loop on `ObjHeader::refcount`. `refcount == 0` is the liveness test; a successful CAS from a positive value returns a retained (+1) strong pointer, otherwise NULL.
-- `mylang_weak_init(ptr)`: creates or reuses the WeakRef for an object. A new WeakRef starts at `refcount = 2` (caller's share + implicit share).
+- `mylang_weak_init(ptr)`: one atomic inc of `weak_count` and returns the header pointer. No allocation and no installation race; the caller always holds a strong reference, so the object is alive while its share is taken.
 - `mylang_weak_init_owned(ptr)`: weakifies an owned strong reference — takes a WeakRef share, then releases the strong reference (used when the statement consumes RHS ownership, e.g. weak array element assignment from a call result).
-- `mylang_weak_copy(wr)`: increments WeakRef.refcount (for weak-to-weak copy).
-- `mylang_weak_release(wr)`: decrements WeakRef.refcount; on zero it frees the object memory (destructor has already run) and the WeakRef itself.
-- On `mylang_release` refcount drop to zero: run the destructor, then drop the implicit weak share if `h->weak` exists (ownership of the object memory passes to the weak side); otherwise `free(h)` directly.
-- `mylang_weak_init` installs `ObjHeader::weak` with a CAS (`mylang_atomic_cas_ptr`); the race loser frees its extra WeakRef and retries. The NULL -> wr transition happens at most once per object, so there is no ABA. Reusing an installed WeakRef is a plain atomic inc: the caller holds a strong reference, so the object is alive and the implicit share pins the WeakRef (no revive-from-zero race).
-- Threads: with atomic counts, the CAS install and implicit-share pinning, the refcount/weak protocol itself is thread-safe. Actual multithreading still needs language-level support (thread APIs, shared-variable semantics).
+- `mylang_weak_copy(wr)`: increments `weak_count` (for weak-to-weak copy).
+- `mylang_weak_release(wr)`: decrements `weak_count`; on zero it frees the object block (the destructor has already run).
+- On `mylang_release` refcount drop to zero: run the destructor, then drop the implicit weak share and free the block if that was the last one.
+- Threads: with atomic counts and implicit-share pinning, the refcount/weak protocol itself is thread-safe. Actual multithreading still needs language-level support (thread APIs, shared-variable semantics).
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
 
@@ -213,9 +212,9 @@ Source code lives under `src/`:
 
 ## Memory Leak Debugging
 - During compiler development, when need verify no memory leak, run the test suite in debug mode: `python test_runner.py --mode debug`.
-- Tracks only `ObjHeader` based allocations (class instances and interface objects). Arrays and WeakRef control blocks are not tracked by the MyLang leak list.
+- Tracks only `ObjHeader` based allocations (class instances and interface objects). Arrays are not tracked by the MyLang leak list.
 - When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
-- `mylang_release` removes the block from the list before freeing it.
+- `mylang_release` removes the block from the list when the destructor runs (the memory itself may be freed later, once the last weak share is gone).
 - On the first allocation, `atexit(mylang_leak_check)` is registered; at exit, unreleased blocks are printed with address, type_id, refcount, length, and allocation stack trace.
 - Stack traces are hashed into a 512-bucket table so identical call stacks share one `LeakTrace` record.
 - The list and hash table are protected by a global lock: `SRWLOCK` on Windows (`SRWLOCK_INIT`), `pthread_mutex_t` with `PTHREAD_MUTEX_INITIALIZER` on POSIX.

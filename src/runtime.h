@@ -13,14 +13,11 @@
 #define mylang_atomic_inc(p) InterlockedIncrement(p)
 #define mylang_atomic_dec(p) InterlockedDecrement(p)
 #define mylang_atomic_cas(p, n, o) InterlockedCompareExchange(p, n, o)
-#define mylang_atomic_cas_ptr(p, n, o) \
-    ((void*)InterlockedCompareExchangePointer((PVOID volatile*)(p), (PVOID)(n), (PVOID)(o)))
 #else
 #include <stdatomic.h>
 #define mylang_atomic_inc(p) (atomic_fetch_add(p, 1) + 1)
 #define mylang_atomic_dec(p) (atomic_fetch_sub(p, 1) - 1)
 #define mylang_atomic_cas(p, n, o) __sync_val_compare_and_swap(p, o, n)
-#define mylang_atomic_cas_ptr(p, n, o) __sync_val_compare_and_swap((p), (o), (n))
 #endif
 
 /* Element kind constants for array helpers.
@@ -35,21 +32,16 @@
 typedef struct ObjHeaderTag ObjHeader;
 typedef struct LeakTraceTag LeakTrace;
 
-/* Weak reference control block, created lazily on first weak use of an object.
-   refcount counts live weak shares plus one implicit share held by the object
-   itself while it is alive; mylang_release drops the implicit share after the
-   strong count reaches zero.  While any share is held, both this WeakRef and
-   the object's memory stay allocated, which is what makes the mylang_lock CAS
-   loop safe against a concurrent free of the object. */
-typedef struct WeakRef {
-    volatile long refcount;
-    ObjHeader* obj;
-} WeakRef;
-
 struct ObjHeaderTag {
     volatile long refcount;
+    /* Weak share count plus one implicit share held by the object itself
+       (make_shared-style dual counting): it starts at 1 in mylang_new_object
+       and mylang_release drops the implicit share after the strong count
+       reaches zero.  While weak_count > 0 the object block stays allocated,
+       which is what makes the mylang_lock CAS loop safe against a concurrent
+       free of the object. */
+    volatile long weak_count;
     uint32_t type_id;
-    WeakRef* weak;
     /* Per-class finalizer registered by the compiler.  Called by mylang_release
        before the object's memory is freed. */
     void (*dtor)(void*);
@@ -59,6 +51,11 @@ struct ObjHeaderTag {
     struct ObjHeaderTag* prev;
     struct LeakTraceTag* alloc_trace;
 };
+
+/* A weak reference is just a pointer to the object's header: the weak count
+   lives inside the object (make_shared style), so there is no separate
+   control block to allocate, install or free. */
+typedef ObjHeader WeakRef;
 
 #define mylang_obj_hdr(ptr) ((ObjHeader*)((char*)(ptr) - sizeof(ObjHeader)))
 
