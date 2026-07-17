@@ -4,4 +4,4 @@ test/*.my
 test/*.h
 __pycache__/
 *.obj
-*.md
+*.pdb
