@@ -1243,7 +1243,11 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             return;
         }
     }
-    codegen_expr(ctx, callee);
+    if (callee->ast_kind == AST_MEMBER_ACCESS) {
+        codegen_expr(ctx, callee);
+    } else {
+        fprintf(ctx->out, "%s", callee->ast_token.text);
+    }
     fprintf(ctx->out, "(");
     AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
     int first = 1;
@@ -1476,6 +1480,11 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 fprintf(ctx->out, "thiz");
             } else {
                 SymEntry* e = symtab_lookup(node->ast_token.text);
+                if (!e) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "unknown identifier '%s'", node->ast_token.text);
+                    fprintf(ctx->out, "0 /* unknown identifier */");
+                    break;
+                }
                 if (e && type_is_ref(&e->type)) {
                     fprintf(ctx->out, "(*%s)", node->ast_token.text);
                 } else {
