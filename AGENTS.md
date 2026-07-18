@@ -35,6 +35,11 @@ Source code lives under `src/`:
   and `parser_filename(p)` in `src/parser.c`.
 - Codegen errors use `CodegenContext.source_file` via the `codegen_report_error()`
   helper in `src/codegen.c`.
+- Common codegen diagnostics include:
+  - `unknown identifier 'x'`: an identifier is not in scope as a local, parameter,
+    field, or builtin (function names are resolved separately at call sites).
+  - `method 'ClassName.method' does not exist`: a method call targets a method
+    not declared on the receiver's class or interface type.
 - The printed path is the input path as given on the command line (relative if
   the user passed a relative path).
 
@@ -164,7 +169,9 @@ Source code lives under `src/`:
 - Each class implementing an interface gets a static `const` vtable instance and a thunk function per method (casts `void*` to `ClassName*`, calls the real method).
 - Dynamic dispatch: `s.area()` emits as `(s).vtable->area((s).data)`.
 - Type assertion: `expr as ClassName` compares `vtable->concrete_type_id` against the class type_id, returns `(ClassName*)data` or `NULL`.
-- Implicit class-to-interface conversion on variable init (`IShape s = obj`), assignment (`s = obj`), and return (`return obj` where return type is interface).
+- Implicit class-to-interface conversion on variable init (`IShape s = obj`),
+  assignment (`s = obj`), return (`return obj` where return type is interface),
+  and call arguments (`use(obj)` where parameter type is interface).
 - Interface refcounting: the `.data` pointer holds a reference count. Create = retain, destroy = release `.data`. Cleanup uses `CleanupEntry.is_interface` flag.
 - Semantic validation (`symtab_validate_impls`): verifies at compile time that a class declares all methods required by declared interfaces with matching signatures. Aborts codegen on error.
 - `override` keyword may be used on class methods that override an interface method. When present, the compiler verifies that the method actually matches an interface method from one of the implemented interfaces. It is optional but checked.
