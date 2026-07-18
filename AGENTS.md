@@ -278,6 +278,8 @@ Source code lives under `src/`:
 - `this` in MyLang source emits as `thiz` in C to avoid C++ keyword conflict.
 - `p.foo(args)` emits as `ClassName_foo(p, args)`.
 - Class name registered early in symtab for self-referential method return types.
+- Calling a method that does not exist on a class or interface is a compile-time error
+  reported by `codegen_call` (`method 'ClassName.method' does not exist`).
 
 ## Native Methods
 - Syntax: `native RetType ClassName.method(Params);` inside a class. Method body is omitted and ends with `;`.

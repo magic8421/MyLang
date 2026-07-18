@@ -1171,6 +1171,9 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
                 ci = symtab_find_class(obj->ast_resolved_type.class_name);
             }
             MethodInfo* mi = symtab_find_method_in_class(ci, mname);
+            if (ci && !mi) {
+                codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", ci->name, mname);
+            }
             if (mi && ci && !member_visible(ctx, ci->name, mi->is_private)) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call private method '%s.%s'", ci->name, mname);
             }
@@ -1194,6 +1197,9 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
             InterfaceMethodInfo* im = NULL;
             if (ii) im = symtab_find_interface_method(ii, mname);
+            if (ii && !im) {
+                codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", ii->name, mname);
+            }
 
             fprintf(ctx->out, "(");
             codegen_expr(ctx, obj);
