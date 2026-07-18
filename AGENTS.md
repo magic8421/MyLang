@@ -111,7 +111,7 @@ Source code lives under `src/`:
 - `init` may be a variable declaration (`i32 i = 0`), an expression, or omitted.
 - `condition` may be an expression or omitted; omitted condition means an infinite loop.
 - `step` may be an expression or omitted.
-- `body` is a single statement or a block.
+- `body` must be a block (`{ ... }`); a brace-less single statement is a compile error. The same rule applies to `if`, `while`, and `else` bodies — except that an `else` body may be another `if` statement to allow else-if chains.
 - Variables declared in `init` are scoped to the loop (not visible after it) and are released on normal loop exit.
 - Assignment and increment/decrement are not allowed in the `condition` expression.
 - `break` exits the innermost loop; `continue` skips to the next iteration. Both correctly run cleanup for local variables.

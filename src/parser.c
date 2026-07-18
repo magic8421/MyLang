@@ -71,6 +71,7 @@ static AstNode* parse_stmt(Parser* p);
 static AstNode* parse_match_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
+static AstNode* parse_required_block(Parser* p, const char* what, int allow_if);
 
 
 
@@ -886,7 +887,7 @@ static AstNode* parse_for_stmt(Parser* p) {
     }
     expect(p, TOK_RPAREN);
 
-    AstNode* body = parse_stmt(p);
+    AstNode* body = parse_required_block(p, "for", 0);
 
     AstNode* node = ast_new_node(AST_FOR_STMT, kw);
     ast_add_child(node, init);
@@ -981,6 +982,20 @@ static AstNode* parse_match_stmt(Parser* p) {
     return node;
 }
 
+/* if/else/while/for bodies must be blocks.  An 'else' body may also be
+   another if statement to allow else-if chains. */
+static AstNode* parse_required_block(Parser* p, const char* what, int allow_if) {
+    if (allow_if && check(p, TOK_KW_IF)) {
+        return parse_stmt(p);
+    }
+    if (!check(p, TOK_LBRACE)) {
+        fprintf(stderr, "error at %d:%d: expected '{' for %s body\n",
+                p->current.line, p->current.col, what);
+        p->had_error = 1;
+    }
+    return parse_stmt(p);
+}
+
 static AstNode* parse_stmt(Parser* p) {
     if (check(p, TOK_LBRACE)) {
         return parse_block(p);
@@ -1000,11 +1015,11 @@ static AstNode* parse_stmt(Parser* p) {
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
-        AstNode* then_body = parse_stmt(p);
+        AstNode* then_body = parse_required_block(p, "if", 0);
         AstNode* else_body = NULL;
         if (check(p, TOK_KW_ELSE)) {
             advance(p);
-            else_body = parse_stmt(p);
+            else_body = parse_required_block(p, "else", 1);
         }
         AstNode* node = ast_new_node(AST_IF_STMT, kw);
         ast_add_child(node, cond);
@@ -1023,7 +1038,7 @@ static AstNode* parse_stmt(Parser* p) {
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
-        AstNode* body = parse_stmt(p);
+        AstNode* body = parse_required_block(p, "while", 0);
         AstNode* node = ast_new_node(AST_WHILE_STMT, kw);
         ast_add_child(node, cond);
         ast_add_child(node, body);

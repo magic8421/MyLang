@@ -319,7 +319,7 @@ i32 main() {
 i32 main() {
     i32 s = 0;
     for (i32 i = 0;; i = i + 1) {
-        if (i >= 5) return s;
+        if (i >= 5) { return s; }
         s = s + i;
     }
 }
@@ -582,7 +582,7 @@ i32 main() {
 i32 main() {
     i32 x = 5;
     i32 y = -x;
-    if (y != -5) return 0;
+    if (y != -5) { return 0; }
     if (!(x == 4)) {
         return 10;
     }
@@ -595,12 +595,12 @@ i32 main() {
     i32 a = 3;
     i32 b = 5;
     i32 r = 0;
-    if (a < b) r = r + 1;
-    if (a <= b) r = r + 1;
-    if (b > a) r = r + 1;
-    if (b >= a) r = r + 1;
-    if (a == a) r = r + 1;
-    if (a != b) r = r + 1;
+    if (a < b) { r = r + 1; }
+    if (a <= b) { r = r + 1; }
+    if (b > a) { r = r + 1; }
+    if (b >= a) { r = r + 1; }
+    if (a == a) { r = r + 1; }
+    if (a != b) { r = r + 1; }
     return r;
 }
 """, 6),
@@ -617,7 +617,7 @@ i32 main() {
 i32 main() {
     i8 c = 'A';
     i32 x = 65;
-    if (c == x) return 42;
+    if (c == x) { return 42; }
     return 0;
 }
 """, 42),
@@ -994,8 +994,8 @@ i32 main() {
     arr.push(wa);
     Node s1 = arr[4].lock();
     Node s2 = arr[1].lock();
-    if (!s1) return 0;
-    if (!s2) return 0;
+    if (!s1) { return 0; }
+    if (!s2) { return 0; }
     return s1.v + s2.v;
 }
 """, 12),
@@ -1043,8 +1043,8 @@ i32 main() {
     arr[1] = wb;
     Node s1 = arr[0].lock();
     Node s2 = arr[1].lock();
-    if (!s1) return 0;
-    if (!s2) return 0;
+    if (!s1) { return 0; }
+    if (!s2) { return 0; }
     return s1.v + s2.v;
 }
 """, 12),
@@ -1060,7 +1060,7 @@ i32 main() {
     a.v = 9;
     arr[0] = a;
     Node s = arr[0].lock();
-    if (!s) return 0;
+    if (!s) { return 0; }
     return s.v;
 }
 """, 9),
@@ -1079,7 +1079,7 @@ i32 main() {
     arr.resize(1);
     arr[0] = make();
     Node s = arr[0].lock();
-    if (!s) return 1;
+    if (!s) { return 1; }
     return 0;
 }
 """, 1),
@@ -1366,7 +1366,7 @@ Node make() {
 i32 main() {
     weak Node w = make();
     Node s = w.lock();
-    if (!s) return 1;
+    if (!s) { return 1; }
     return 0;
 }
 """, 1),
@@ -1391,7 +1391,7 @@ class Node {
 }
 i32 read(weak Node n) {
     Node s = n.lock();
-    if (!s) return 0;
+    if (!s) { return 0; }
     return s.v;
 }
 i32 main() {
@@ -2136,7 +2136,7 @@ IShape make() {
 i32 main() {
     weak IShape w = make();
     IShape s = w.lock();
-    if (s.data) return 1;
+    if (s.data) { return 1; }
     return 0;
 }
 """, 0),
@@ -2151,7 +2151,7 @@ class Square : IShape {
 }
 i32 read(weak IShape w) {
     IShape s = w.lock();
-    if (!s.data) return 0;
+    if (!s.data) { return 0; }
     return s.area();
 }
 i32 main() {
@@ -2171,7 +2171,7 @@ class Square : IShape {
 }
 i32 read(weak IShape w) {
     IShape s = w.lock();
-    if (!s.data) return 0;
+    if (!s.data) { return 0; }
     return s.area();
 }
 i32 main() {
@@ -2197,7 +2197,7 @@ IShape make() {
 }
 i32 read(weak IShape w) {
     IShape s = w.lock();
-    if (!s.data) return 0;
+    if (!s.data) { return 0; }
     return s.area();
 }
 i32 main() {
@@ -2238,7 +2238,7 @@ i32 main() {
     sq.side = 5;
     weak IShape w = sq;
     Square p = w.lock() as Square;
-    if (p) return p.area();
+    if (p) { return p.area(); }
     return 0;
 }
 """, 25),
@@ -2258,7 +2258,7 @@ IShape make() {
 }
 i32 main() {
     Square p = make() as Square;
-    if (p) return p.area();
+    if (p) { return p.area(); }
     return 0;
 }
 """, 36),
@@ -2295,7 +2295,7 @@ IShape make(i32 side) {
     return sq;
 }
 i32 main() {
-    if (make(3) == make(3)) return 1;
+    if (make(3) == make(3)) { return 1; }
     return 0;
 }
 """, 0),
@@ -2314,7 +2314,7 @@ IShape make() {
     return sq;
 }
 i32 use(Square p) {
-    if (p) return p.area();
+    if (p) { return p.area(); }
     return 0;
 }
 i32 main() {
@@ -2331,7 +2331,7 @@ class Square : IShape {
     i32 area() { return this.side * this.side; }
 }
 i32 use(Square p) {
-    if (p) return p.area();
+    if (p) { return p.area(); }
     return 0;
 }
 i32 main() {
@@ -2762,10 +2762,10 @@ class Asserts {
 i32 main() {
     Asserts a = new Asserts;
     i32 n = 42;
-    if (!a.string_equals(f"{{{n}}}", "{42}")) return 1;
-    if (!a.string_equals(f"a{{b}}c", "a{b}c")) return 2;
-    if (!a.string_equals(f"}}", "}")) return 3;
-    if (!a.string_equals(f"lone } brace", "lone } brace")) return 4;
+    if (!a.string_equals(f"{{{n}}}", "{42}")) { return 1; }
+    if (!a.string_equals(f"a{{b}}c", "a{b}c")) { return 2; }
+    if (!a.string_equals(f"}}", "}")) { return 3; }
+    if (!a.string_equals(f"lone } brace", "lone } brace")) { return 4; }
     return 0;
 }
 """, 0, """
@@ -2785,10 +2785,10 @@ class Asserts {
 i32 main() {
     Asserts a = new Asserts;
     i32 n = 42;
-    if (!a.string_equals(f"\\{n\\}={n}", "{n}=42")) return 1;
-    if (!a.string_equals(f"a\\{b", "a{b")) return 2;
-    if (!a.string_equals(f"b\\}c", "b}c")) return 3;
-    if (!a.string_equals(f"\\\\{{", "\\\\{")) return 4;
+    if (!a.string_equals(f"\\{n\\}={n}", "{n}=42")) { return 1; }
+    if (!a.string_equals(f"a\\{b", "a{b")) { return 2; }
+    if (!a.string_equals(f"b\\}c", "b}c")) { return 3; }
+    if (!a.string_equals(f"\\\\{{", "\\\\{")) { return 4; }
     return 0;
 }
 """, 0, """
@@ -2807,8 +2807,8 @@ class Asserts {
 }
 i32 main() {
     Asserts a = new Asserts;
-    if (!a.string_equals("x\\{y\\}z", "x{y}z")) return 1;
-    if (!a.string_equals("{{not collapsed}}", "{{not collapsed}}")) return 2;
+    if (!a.string_equals("x\\{y\\}z", "x{y}z")) { return 1; }
+    if (!a.string_equals("{{not collapsed}}", "{{not collapsed}}")) { return 2; }
     return 0;
 }
 """, 0, """
@@ -3599,6 +3599,24 @@ i32 main() {
     return 0;
 }
 """, 8),
+
+    ("elseif_chain", """
+i32 classify(i32 x) {
+    if (x < 0) {
+        return 1;
+    } else if (x == 0) {
+        return 2;
+    } else if (x < 10) {
+        return 3;
+    } else {
+        return 4;
+    }
+    return 0;
+}
+i32 main() {
+    return classify(-5) + classify(0) * 10 + classify(7) * 100 + classify(99) * 1000;
+}
+""", 4321),
 
 
 ]
@@ -4439,6 +4457,38 @@ i32 main() {
     return 0;
 }
 """, "ref parameters cannot be const"),
+
+    ("bad_if_no_brace", """
+i32 main() {
+    i32 x = 2;
+    if (x > 1) return 1;
+    return 0;
+}
+""", "expected '{' for if body"),
+
+    ("bad_else_no_brace", """
+i32 main() {
+    i32 x = 2;
+    if (x > 1) { x = 3; } else return 4;
+    return 0;
+}
+""", "expected '{' for else body"),
+
+    ("bad_while_no_brace", """
+i32 main() {
+    i32 x = 3;
+    while (x > 0) x = x - 1;
+    return x;
+}
+""", "expected '{' for while body"),
+
+    ("bad_for_no_brace", """
+i32 main() {
+    i32 s = 0;
+    for (i32 i = 0; i < 3; i = i + 1) s = s + 1;
+    return s;
+}
+""", "expected '{' for for body"),
 
 ]
 
