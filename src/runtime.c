@@ -88,6 +88,7 @@ void mylang_print_string(String* s) {
     if (s && s->bytes.data) {
         fwrite(s->bytes.data, 1, s->bytes.length, stdout);
     }
+    fwrite("\r\n", 1, 2, stdout);
 }
 
 void mylang_print_i32(int32_t v) {

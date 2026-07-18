@@ -120,6 +120,14 @@ static int expr_is_owned(AstNode* node) {
                     node->ast_kind == AST_STRING_LIT);
 }
 
+/* True when the expression already holds an owned (+1) reference for the
+   purpose of caller-side retain/release guards around calls.  F-string
+   accumulators are created by the preamble and tracked on the cleanup list,
+   so they are owned in this sense even though they are not a call/new. */
+static int guard_expr_is_owned(AstNode* node) {
+    return expr_is_owned(node) || (node && node->ast_kind == AST_FSTRING);
+}
+
 /* The 'null' literal has the compile-time-only type TYPE_NULL.  It may be
    assigned to class (including string), interface, and weak references;
    unowned references can never be null. */
@@ -2100,8 +2108,9 @@ static int call_needs_guard(AstNode* arg) {
 }
 
 static int guard_needs_retain(AstNode* node) {
-    /* Calls/new already return an owned (+1) reference. */
-    return !expr_is_owned(node);
+    /* Calls/new already return an owned (+1) reference; f-string accumulators
+       are owned by their cleanup-tracked temp. */
+    return !guard_expr_is_owned(node);
 }
 
 static int return_expr_needs_retain(AstNode* node) {
