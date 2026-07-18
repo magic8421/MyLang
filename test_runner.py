@@ -2577,7 +2577,7 @@ i32 main() {
     strong.set(42);
     weak Box<i32> w = strong;
     Box<i32> locked = w.lock();
-    if (locked != 0) {
+    if (locked != null) {
         return locked.get();
     }
     return 0;

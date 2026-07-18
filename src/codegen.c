@@ -795,6 +795,21 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
         return;
     }
 
+    /* Reference-like types may only be compared with other reference-like types
+       (or null, handled above).  Comparing a class/interface/object with a
+       primitive value such as 0 is not allowed. */
+    if (op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_LE ||
+        op == TOK_GT || op == TOK_GE) {
+        int lhs_ref = type_is_reference(&lt);
+        int rhs_ref = type_is_reference(&rt);
+        if ((lhs_ref || rhs_ref) && !(lhs_ref && rhs_ref)) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                    "cannot compare '%s' with '%s'", type_name(&lt), type_name(&rt));
+            fprintf(ctx->out, "0 /* invalid reference comparison */");
+            return;
+        }
+    }
+
     if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
         op == TOK_SHL || op == TOK_SHR) {
         /* Bitwise operators accept integer operands only. */

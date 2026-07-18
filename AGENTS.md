@@ -68,7 +68,9 @@ Source code lives under `src/`:
   implicitly convert at the same assignment boundaries plus array element
   assignment and weak/unowned declarations (checked via `type_is_reference`
   in `codegen.c`). `u64 win = app.createWindow();` and `SdlWindow w = 5;` are
-  compile errors.
+  compile errors.  The same separation applies to comparisons: reference-like
+  types may only be compared with other reference-like types (or `null` for
+  equality); `win == 0` is a compile error.
 - Conditions are NOT required to be bool: `if (ptr)`, `while (w.lock())`, and `while (1)` keep C truthiness semantics.
 - bool does not support compound assignment or `++`/`--` (it is not in the primitive-numeric lists, so the existing checks reject it automatically).
 - f-string interpolation of bool prints `true`/`false` via the runtime method `String_append_bool`.
