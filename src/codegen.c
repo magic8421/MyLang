@@ -4,6 +4,7 @@
 #include "runtime.h"
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 
 /* Forward declarations used by helper functions defined before their
    implementation. */
@@ -146,6 +147,41 @@ static int type_accepts_null(const Type* t) {
 static int bool_mismatch(const Type* dst, const Type* src) {
     return (dst->type_kind == TYPE_BOOL) != (src->type_kind == TYPE_BOOL);
 }
+
+/* Reference-like types: class, interface, object (weak/unowned class and
+   interface are included because they are represented as pointers/fat
+   pointers).  Arrays are handled separately. */
+static int type_is_reference(const Type* t) {
+    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
+           t->type_kind == TYPE_OBJECT;
+}
+
+/* Detect the special case of calling .lock() on an unowned reference.  The
+   codegen_call path emits a dedicated error message for this; we must not
+   shadow it with a generic type-mismatch error in the variable-init or
+   assignment paths.  Callers have already resolved the source expression. */
+static int expr_is_unowned_lock(AstNode* node) {
+    if (!node || node->ast_kind != AST_CALL || node->ast_child_count < 1) return 0;
+    AstNode* mem = node->ast_children[0];
+    if (!mem || mem->ast_kind != AST_MEMBER_ACCESS) return 0;
+    if (strcmp(mem->ast_token.text, "lock") != 0) return 0;
+    AstNode* obj = mem->ast_children[0];
+    if (!obj) return 0;
+    return obj->ast_resolved_type.is_unowned;
+}
+/* Emit a codegen error with a VS Code-compatible location prefix.
+   The format is "path(line,col): error: message" so that problem matchers
+   (including MSVC style) can jump to the source location. */
+static void codegen_report_error(CodegenContext* ctx, int line, int col, const char* fmt, ...) {
+    va_list ap;
+    fprintf(stderr, "%s(%d,%d): error: ", ctx->source_file ? ctx->source_file : "<unknown>", line, col);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
+    ctx->codegen_error = 1;
+}
+
 
 /* Access control: a private class member is visible only inside methods of
    the same class (any instance, C++ style). */
@@ -728,9 +764,7 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
     if (type_is_null(&lt) || type_is_null(&rt)) {
         /* null may only be compared for (in)equality. */
         if (op != TOK_EQ && op != TOK_NE) {
-            fprintf(stderr, "error at %d:%d: operator '%s' not allowed with null\n",
-                    node->ast_token.line, node->ast_token.col, node->ast_token.text);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "operator '%s' not allowed with null", node->ast_token.text);
             fprintf(ctx->out, "0 /* invalid null comparison */");
             return;
         }
@@ -755,9 +789,7 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
                 fprintf(ctx->out, " %s NULL)", node->ast_token.text);
             }
         } else {
-            fprintf(stderr, "error at %d:%d: cannot compare '%s' with null\n",
-                    node->ast_token.line, node->ast_token.col, type_name(&nt));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot compare '%s' with null", type_name(&nt));
             fprintf(ctx->out, "0 /* invalid null comparison */");
         }
         return;
@@ -767,9 +799,7 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
         op == TOK_SHL || op == TOK_SHR) {
         /* Bitwise operators accept integer operands only. */
         if (!type_is_integer(&lt) || !type_is_integer(&rt)) {
-            fprintf(stderr, "error at %d:%d: operator '%s' requires integer operands\n",
-                    node->ast_token.line, node->ast_token.col, node->ast_token.text);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "operator '%s' requires integer operands", node->ast_token.text);
             fprintf(ctx->out, "0 /* invalid bitwise operands */");
             return;
         }
@@ -796,9 +826,7 @@ static void codegen_unary(CodegenContext* ctx, AstNode* node) {
     if (node->ast_token.kind == TOK_TILDE) {
         Type t = resolve_type(node->ast_children[0]);
         if (!type_is_integer(&t)) {
-            fprintf(stderr, "error at %d:%d: operator '~' requires an integer operand\n",
-                    node->ast_token.line, node->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "operator '~' requires an integer operand");
             fprintf(ctx->out, "0 /* invalid bitwise operand */");
             return;
         }
@@ -816,37 +844,30 @@ static int type_is_ref(const Type* t) {
    pointer if var itself is already a ref parameter. */
 static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* param_type) {
     if (param_type->is_array && !type_is_ref(param_type)) {
-        fprintf(stderr, "error at %d:%d: array arguments must be passed by ref\n",
-                arg->ast_token.line, arg->ast_token.col);
+        codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "array arguments must be passed by ref");
         fprintf(ctx->out, "/* invalid array arg */");
         return;
     }
     if (type_is_ref(param_type)) {
         if (arg->ast_kind != AST_REF_ARG) {
-            fprintf(stderr, "error at %d:%d: missing 'ref' keyword for ref parameter\n",
-                    arg->ast_token.line, arg->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "missing 'ref' keyword for ref parameter");
             fprintf(ctx->out, "0 /* missing ref keyword */");
             return;
         }
         AstNode* var = arg->ast_children[0];
         if (!var || var->ast_kind != AST_IDENT) {
-            fprintf(stderr, "error at %d:%d: ref argument must be a local variable\n",
-                    arg->ast_token.line, arg->ast_token.col);
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "ref argument must be a local variable");
             fprintf(ctx->out, "0 /* invalid ref argument */");
             return;
         }
         SymEntry* e = symtab_lookup(var->ast_token.text);
         if (!e) {
-            fprintf(stderr, "error at %d:%d: ref argument must be a local variable\n",
-                    arg->ast_token.line, arg->ast_token.col);
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "ref argument must be a local variable");
             fprintf(ctx->out, "0 /* invalid ref argument */");
             return;
         }
         if (e->type.is_const) {
-            fprintf(stderr, "error at %d:%d: cannot pass const variable '%s' to ref parameter\n",
-                    arg->ast_token.line, arg->ast_token.col, var->ast_token.text);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass const variable '%s' to ref parameter", var->ast_token.text);
             fprintf(ctx->out, "0 /* const ref argument */");
             return;
         }
@@ -856,9 +877,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             fprintf(ctx->out, "&%s", var->ast_token.text);
         }
     } else if (arg->ast_kind == AST_REF_ARG) {
-        fprintf(stderr, "error at %d:%d: 'ref' argument requires a ref parameter\n",
-                arg->ast_token.line, arg->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "'ref' argument requires a ref parameter");
         fprintf(ctx->out, "0 /* invalid ref argument */");
     } else {
         resolve_type(arg);
@@ -867,9 +886,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
         if (type_is_null(&at)) {
             /* null argument: the shape depends on the parameter type. */
             if (param_type->is_unowned) {
-                fprintf(stderr, "error at %d:%d: cannot pass null to unowned parameter\n",
-                        arg->ast_token.line, arg->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass null to unowned parameter");
                 fprintf(ctx->out, "0 /* invalid null argument */");
             } else if (param_type->is_weak && param_type->type_kind == TYPE_INTERFACE) {
                 char winame[128];
@@ -884,9 +901,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
                    means the callee signature is unknown, so pass NULL as-is. */
                 fprintf(ctx->out, "NULL");
             } else {
-                fprintf(stderr, "error at %d:%d: cannot pass null to '%s' parameter\n",
-                        arg->ast_token.line, arg->ast_token.col, type_name(param_type));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass null to '%s' parameter", type_name(param_type));
                 fprintf(ctx->out, "0 /* invalid null argument */");
             }
             return;
@@ -894,19 +909,14 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
 
         /* Strict bool rule at the call boundary. */
         if (param_type->type_kind != TYPE_VOID && bool_mismatch(param_type, &at)) {
-            fprintf(stderr, "error at %d:%d: cannot pass '%s' to '%s' parameter\n",
-                    arg->ast_token.line, arg->ast_token.col,
-                    type_name(&at), type_name(param_type));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass '%s' to '%s' parameter", type_name(&at), type_name(param_type));
             fprintf(ctx->out, "0 /* invalid bool argument */");
             return;
         }
 
         /* A class parameter does not accept object; cast with 'as' first. */
         if (param_type->type_kind == TYPE_CLASS && at.type_kind == TYPE_OBJECT) {
-            fprintf(stderr, "error at %d:%d: cannot pass 'object' to '%s' parameter; cast with 'as' first\n",
-                    arg->ast_token.line, arg->ast_token.col, type_name(param_type));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass 'object' to '%s' parameter; cast with 'as' first", type_name(param_type));
             fprintf(ctx->out, "0 /* invalid object argument */");
             return;
         }
@@ -920,9 +930,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             } else if (at.type_kind == TYPE_CLASS || at.type_kind == TYPE_OBJECT) {
                 codegen_expr(ctx, arg);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot pass '%s' to 'object' parameter\n",
-                        arg->ast_token.line, arg->ast_token.col, type_name(&at));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass '%s' to 'object' parameter", type_name(&at));
                 fprintf(ctx->out, "0 /* invalid object argument */");
             }
             return;
@@ -957,8 +965,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
                 fprintf(ctx->out, ", &%s_%s_vtable)", rt.class_name, param_type->class_name);
             }
         } else {
-            fprintf(stderr, "error at %d:%d: cannot pass this argument to weak interface parameter\n",
-                    arg->ast_token.line, arg->ast_token.col);
+            codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass this argument to weak interface parameter");
             fprintf(ctx->out, "/* invalid weak interface arg */");
         }
     } else if (param_type->is_weak || param_type->is_unowned) {
@@ -989,17 +996,13 @@ static int is_array_method_name(const char* s) {
 
 static void emit_array_ref_arg(CodegenContext* ctx, AstNode* arg) {
     if (!arg || arg->ast_kind != AST_IDENT) {
-        fprintf(stderr, "error at %d:%d: array move/copy destination must be a local variable\n",
-                arg ? arg->ast_token.line : 0, arg ? arg->ast_token.col : 0);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, arg ? arg->ast_token.line : 0, arg ? arg->ast_token.col : 0, "array move/copy destination must be a local variable");
         fprintf(ctx->out, "/* invalid array destination */");
         return;
     }
     SymEntry* e = symtab_lookup(arg->ast_token.text);
     if (!e) {
-        fprintf(stderr, "error at %d:%d: array move/copy destination must be a local variable\n",
-                arg->ast_token.line, arg->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "array move/copy destination must be a local variable");
         fprintf(ctx->out, "/* invalid array destination */");
         return;
     }
@@ -1021,9 +1024,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
 
     if (strcmp(mname, "push") == 0) {
         if (!args) {
-            fprintf(stderr, "error at %d:%d: push() requires a value argument\n",
-                    arr->ast_token.line, arr->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "push() requires a value argument");
             fprintf(ctx->out, "0 /* missing push value */");
             return;
         }
@@ -1038,9 +1039,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
                 obj_iface_arg = 1;
             } else if (at.type_kind != TYPE_CLASS && at.type_kind != TYPE_OBJECT &&
                        !type_is_null(&at)) {
-                fprintf(stderr, "error at %d:%d: cannot push '%s' to an 'object' array\n",
-                        args->ast_token.line, args->ast_token.col, type_name(&at));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, args->ast_token.line, args->ast_token.col, "cannot push '%s' to an 'object' array", type_name(&at));
             }
         }
         fprintf(ctx->out, "mylang_array_push(");
@@ -1060,9 +1059,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
         fprintf(ctx->out, ", %s, %d)", elem_size, kind);
     } else if (strcmp(mname, "reserve") == 0) {
         if (!args) {
-            fprintf(stderr, "error at %d:%d: reserve() requires a capacity argument\n",
-                    arr->ast_token.line, arr->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "reserve() requires a capacity argument");
             fprintf(ctx->out, "0 /* missing reserve capacity */");
             return;
         }
@@ -1073,9 +1070,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
         fprintf(ctx->out, "), %s)", elem_size);
     } else if (strcmp(mname, "resize") == 0) {
         if (!args) {
-            fprintf(stderr, "error at %d:%d: resize() requires a length argument\n",
-                    arr->ast_token.line, arr->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "resize() requires a length argument");
             fprintf(ctx->out, "0 /* missing resize length */");
             return;
         }
@@ -1094,9 +1089,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
         fprintf(ctx->out, ", %s)", elem_size);
     } else if (strcmp(mname, "move_to") == 0) {
         if (!args || args->ast_kind != AST_REF_ARG) {
-            fprintf(stderr, "error at %d:%d: move_to() requires a ref destination argument\n",
-                    arr->ast_token.line, arr->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "move_to() requires a ref destination argument");
             fprintf(ctx->out, "0 /* missing move_to destination */");
             return;
         }
@@ -1107,9 +1100,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
         fprintf(ctx->out, ", %s, %d)", elem_size, kind);
     } else if (strcmp(mname, "copy_to") == 0) {
         if (!args || args->ast_kind != AST_REF_ARG) {
-            fprintf(stderr, "error at %d:%d: copy_to() requires a ref destination argument\n",
-                    arr->ast_token.line, arr->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "copy_to() requires a ref destination argument");
             fprintf(ctx->out, "0 /* missing copy_to destination */");
             return;
         }
@@ -1119,9 +1110,7 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
         emit_array_ref_arg(ctx, args->ast_children[0]);
         fprintf(ctx->out, ", %s, %d)", elem_size, kind);
     } else {
-        fprintf(stderr, "error at %d:%d: unknown array method '%s'\n",
-                arr->ast_token.line, arr->ast_token.col, mname);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "unknown array method '%s'", mname);
         fprintf(ctx->out, "0 /* unknown array method */");
     }
 }
@@ -1155,9 +1144,7 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             return;
         }
         if (strcmp(mname, "lock") == 0 && obj->ast_resolved_type.is_unowned) {
-            fprintf(stderr, "error at %d:%d: unowned references do not have lock(); use them directly\n",
-                    node->ast_token.line, node->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "unowned references do not have lock(); use them directly");
             fprintf(ctx->out, "0 /* invalid lock() on unowned */");
             return;
         }
@@ -1170,9 +1157,7 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             }
             MethodInfo* mi = symtab_find_method_in_class(ci, mname);
             if (mi && ci && !member_visible(ctx, ci->name, mi->is_private)) {
-                fprintf(stderr, "error at %d:%d: cannot call private method '%s.%s'\n",
-                        mem->ast_token.line, mem->ast_token.col, ci->name, mname);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call private method '%s.%s'", ci->name, mname);
             }
             const char* class_c = ci ? class_c_name(ci) : obj->ast_resolved_type.class_name;
             fprintf(ctx->out, "%s_%s(", class_c, mname);
@@ -1269,9 +1254,7 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node) {
     char elem_size[128];
     resolve_type(arr);
     if (type_is_null(&arr->ast_resolved_type)) {
-        fprintf(stderr, "error at %d:%d: cannot index null\n",
-                node->ast_token.line, node->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot index null");
         fprintf(ctx->out, "0 /* invalid null index */");
         return;
     }
@@ -1289,16 +1272,12 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
     AstNode* obj = node->ast_children[0];
     resolve_type(obj);
     if (type_is_null(&obj->ast_resolved_type)) {
-        fprintf(stderr, "error at %d:%d: cannot access member '%s' on null\n",
-                node->ast_token.line, node->ast_token.col, node->ast_token.text);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access member '%s' on null", node->ast_token.text);
         fprintf(ctx->out, "0 /* invalid null member access */");
         return;
     }
     if (obj->ast_resolved_type.type_kind == TYPE_OBJECT && !obj->ast_resolved_type.is_array) {
-        fprintf(stderr, "error at %d:%d: cannot access member '%s' on object; cast it with 'as' first\n",
-                node->ast_token.line, node->ast_token.col, node->ast_token.text);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access member '%s' on object; cast it with 'as' first", node->ast_token.text);
         fprintf(ctx->out, "0 /* invalid object member access */");
         return;
     }
@@ -1329,10 +1308,7 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
                 for (i = 0; i < ci->field_count; i++) {
                     if (strcmp(ci->field_names[i], node->ast_token.text) == 0) {
                         if (!member_visible(ctx, ci->name, ci->field_private[i])) {
-                            fprintf(stderr, "error at %d:%d: cannot access private field '%s.%s'\n",
-                                    node->ast_token.line, node->ast_token.col,
-                                    ci->name, node->ast_token.text);
-                            ctx->codegen_error = 1;
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access private field '%s.%s'", ci->name, node->ast_token.text);
                         }
                         break;
                     }
@@ -1360,9 +1336,7 @@ static void codegen_new(CodegenContext* ctx, AstNode* node) {
     if (node->ast_child_count > 0) {
         /* Parser rejects 'new T[N]'; arrays are created empty and grown with
            push/reserve.  This branch is only reached on parse-error recovery. */
-        fprintf(stderr, "error at %d:%d: 'new %s[...]' is not supported; use '%s[] name; name.reserve(size)'\n",
-                node->ast_token.line, node->ast_token.col, base.class_name, base.class_name);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'new %s[...]' is not supported; use '%s[] name; name.reserve(size)'", base.class_name, base.class_name);
         fprintf(ctx->out, "/* invalid new array */");
     } else {
         if (base.type_kind == TYPE_CLASS) {
@@ -1476,9 +1450,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
         case AST_IDENT: {
             if (strcmp(node->ast_token.text, "this") == 0) {
                 if (ctx->is_interface_default_method) {
-                    fprintf(stderr, "error at %d:%d: 'this' is not allowed in interface default method\n",
-                            node->ast_token.line, node->ast_token.col);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'this' is not allowed in interface default method");
                 }
                 fprintf(ctx->out, "thiz");
             } else {
@@ -1507,16 +1479,12 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                                         t.type_kind == TYPE_U32 || t.type_kind == TYPE_U64 ||
                                         t.type_kind == TYPE_F32 || t.type_kind == TYPE_F64);
             if (!is_primitive_numeric) {
-                fprintf(stderr, "error at %d:%d: increment/decrement not supported for this type\n",
-                        node->ast_token.line, node->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "increment/decrement not supported for this type");
                 fprintf(ctx->out, "0 /* invalid increment/decrement */");
                 break;
             }
             if (t.is_const) {
-                fprintf(stderr, "error at %d:%d: cannot modify const variable '%s'\n",
-                        node->ast_token.line, node->ast_token.col, operand->ast_token.text);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot modify const variable '%s'", operand->ast_token.text);
                 fprintf(ctx->out, "0 /* invalid const increment/decrement */");
                 break;
             }
@@ -1534,25 +1502,19 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
             Type lt = lhs->ast_resolved_type;
 
             if (lt.is_array) {
-                fprintf(stderr, "error at %d:%d: cannot assign arrays directly; use move_to(ref) or copy_to(ref)\n",
-                        lhs->ast_token.line, lhs->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, lhs->ast_token.line, lhs->ast_token.col, "cannot assign arrays directly; use move_to(ref) or copy_to(ref)");
                 fprintf(ctx->out, "0 /* invalid array assignment */");
                 break;
             }
 
             if (type_is_null(&lt)) {
-                fprintf(stderr, "error at %d:%d: cannot assign to null literal\n",
-                        node->ast_token.line, node->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign to null literal");
                 fprintf(ctx->out, "0 /* invalid assignment target */");
                 break;
             }
 
             if (lt.is_const) {
-                fprintf(stderr, "error at %d:%d: cannot assign to const variable '%s'\n",
-                        node->ast_token.line, node->ast_token.col, lhs->ast_token.text);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign to const variable '%s'", lhs->ast_token.text);
                 fprintf(ctx->out, "0 /* invalid const assignment */");
                 break;
             }
@@ -1565,9 +1527,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                     int type_ok = is_bit_compound_op(assign_op)
                         ? type_is_integer(&lt) : type_is_numeric(&lt);
                     if (!type_ok) {
-                        fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
-                                node->ast_token.line, node->ast_token.col);
-                        ctx->codegen_error = 1;
+                        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "compound assignment not supported for this type");
                         fprintf(ctx->out, "0 /* invalid compound assignment */");
                         break;
                     }
@@ -1608,9 +1568,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                         int rhs_iface = (rt.type_kind == TYPE_INTERFACE && !rt.is_weak);
                         if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
                             rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
-                            fprintf(stderr, "error at %d:%d: cannot assign '%s' to 'object' array element\n",
-                                    node->ast_token.line, node->ast_token.col, type_name(&rt));
-                            ctx->codegen_error = 1;
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to 'object' array element", type_name(&rt));
                             fprintf(ctx->out, "0 /* invalid object element assignment */");
                         } else {
                             fprintf(ctx->out, "((void)mylang_release(");
@@ -1730,16 +1688,14 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                     } else {
                         /* primitive/struct/bool element */
                         if (type_is_null(&rt)) {
-                            fprintf(stderr, "error at %d:%d: cannot assign 'null' to '%s'\n",
-                                    node->ast_token.line, node->ast_token.col, type_name(&lt));
-                            ctx->codegen_error = 1;
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign 'null' to '%s'", type_name(&lt));
                             fprintf(ctx->out, "0 /* invalid null assignment */");
                         } else if (bool_mismatch(&lt, &rt)) {
-                            fprintf(stderr, "error at %d:%d: cannot assign '%s' to '%s'\n",
-                                    node->ast_token.line, node->ast_token.col,
-                                    type_name(&rt), type_name(&lt));
-                            ctx->codegen_error = 1;
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
                             fprintf(ctx->out, "0 /* invalid bool assignment */");
+                        } else if (type_is_reference(&rt)) {
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+                            fprintf(ctx->out, "0 /* invalid reference assignment */");
                         } else {
                             codegen_array_access(ctx, lhs);
                             fprintf(ctx->out, " = ");
@@ -1760,10 +1716,13 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 int rhs_owned = (expr_is_owned(rhs));
 
                 if (type_is_null(&rt) && lt.is_unowned) {
-                    fprintf(stderr, "error at %d:%d: cannot assign null to unowned reference\n",
-                            node->ast_token.line, node->ast_token.col);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign null to unowned reference");
                     fprintf(ctx->out, "0 /* invalid null assignment */");
+                    break;
+                }
+                if (rt.type_kind != TYPE_CLASS && !type_is_null(&rt) && !rt.is_weak && !rt.is_unowned) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+                    fprintf(ctx->out, "0 /* invalid weak assignment */");
                     break;
                 }
 
@@ -1794,11 +1753,20 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 fprintf(ctx->out, ")");
             } else if (lt.type_kind == TYPE_CLASS) {
                 resolve_type(rhs);
-                if (rhs->ast_resolved_type.type_kind == TYPE_OBJECT) {
-                    fprintf(stderr, "error at %d:%d: cannot assign 'object' to '%s'; cast with 'as' first\n",
-                            node->ast_token.line, node->ast_token.col, type_name(&lt));
-                    ctx->codegen_error = 1;
+                Type rt = rhs->ast_resolved_type;
+                if (rt.type_kind == TYPE_OBJECT) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign 'object' to '%s'; cast with 'as' first", type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid object assignment */");
+                    break;
+                }
+                if (rt.type_kind != TYPE_CLASS && !type_is_null(&rt) && !expr_is_unowned_lock(rhs)) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+                    fprintf(ctx->out, "0 /* invalid class assignment */");
+                    break;
+                }
+                if (rt.is_weak) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+                    fprintf(ctx->out, "0 /* invalid weak assignment */");
                     break;
                 }
                 int rhs_owned = (expr_is_owned(rhs));
@@ -1831,9 +1799,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
 
                 if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
                     rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
-                    fprintf(stderr, "error at %d:%d: cannot assign '%s' to 'object'\n",
-                            node->ast_token.line, node->ast_token.col, type_name(&rt));
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to 'object'", type_name(&rt));
                     fprintf(ctx->out, "0 /* invalid object assignment */");
                     break;
                 }
@@ -1927,9 +1893,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                     codegen_expr(ctx, lhs);
                     fprintf(ctx->out, ".vt = NULL))");
                 } else {
-                    fprintf(stderr, "error at %d:%d: cannot assign to weak interface from this type\n",
-                            node->ast_token.line, node->ast_token.col);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign to weak interface from this type");
                     fprintf(ctx->out, "0)");
                 }
             } else if (lt.type_kind == TYPE_INTERFACE) {
@@ -1981,16 +1945,14 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 resolve_type(rhs);
                 Type rt = rhs->ast_resolved_type;
                 if (type_is_null(&rt)) {
-                    fprintf(stderr, "error at %d:%d: cannot assign 'null' to '%s'\n",
-                            node->ast_token.line, node->ast_token.col, type_name(&lt));
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign 'null' to '%s'", type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid null assignment */");
                 } else if (bool_mismatch(&lt, &rt)) {
-                    fprintf(stderr, "error at %d:%d: cannot assign '%s' to '%s'\n",
-                            node->ast_token.line, node->ast_token.col,
-                            type_name(&rt), type_name(&lt));
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid bool assignment */");
+                } else if (type_is_reference(&rt)) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+                    fprintf(ctx->out, "0 /* invalid reference assignment */");
                 } else {
                     codegen_expr(ctx, lhs);
                     fprintf(ctx->out, " = ");
@@ -2020,9 +1982,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
             resolve_type(obj);
             Type target = node->ast_resolved_type;
             if (type_is_null(&obj->ast_resolved_type)) {
-                fprintf(stderr, "error at %d:%d: cannot cast null\n",
-                        node->ast_token.line, node->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot cast null");
                 fprintf(ctx->out, "NULL /* invalid null cast */");
             } else if (target.type_kind == TYPE_CLASS &&
                        obj->ast_resolved_type.type_kind == TYPE_OBJECT) {
@@ -2056,9 +2016,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 else codegen_expr(ctx, obj);
                 fprintf(ctx->out, ").data : NULL)");
             } else {
-                fprintf(stderr, "error at %d:%d: 'as' target must be a class type\n",
-                        node->ast_token.line, node->ast_token.col);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'as' target must be a class type");
                 fprintf(ctx->out, "/* as-cast unsupported target */");
             }
             break;
@@ -2507,14 +2465,10 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
                 /* IToString: call the class's toString method. */
                 ClassInfo* ci = fstring_find_tostring_class(&t);
                 if (!ci) {
-                    fprintf(stderr, "error at %d:%d: cannot interpolate type '%s'; implement IToString ('string toString()')\n",
-                            part->ast_token.line, part->ast_token.col, t.class_name);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, part->ast_token.line, part->ast_token.col, "cannot interpolate type '%s'; implement IToString ('string toString()')", t.class_name);
                 } else if (!member_visible(ctx, ci->name,
                                            symtab_find_method_in_class(ci, "toString")->is_private)) {
-                    fprintf(stderr, "error at %d:%d: cannot interpolate type '%s'; toString() is private\n",
-                            part->ast_token.line, part->ast_token.col, t.class_name);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, part->ast_token.line, part->ast_token.col, "cannot interpolate type '%s'; toString() is private", t.class_name);
                 } else {
                     const char* obj_name = NULL;
                     if (part->ast_temp_name[0] != '\0') {
@@ -2548,9 +2502,7 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
                 InterfaceInfo* ii = symtab_find_interface(t.class_name);
                 InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, "toString") : NULL;
                 if (!im || im->param_count != 0 || !type_is_string(&im->return_type)) {
-                    fprintf(stderr, "error at %d:%d: cannot interpolate interface '%s'; it has no 'string toString()'\n",
-                            part->ast_token.line, part->ast_token.col, t.class_name);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, part->ast_token.line, part->ast_token.col, "cannot interpolate interface '%s'; it has no 'string toString()'", t.class_name);
                 } else {
                     const char* obj_name = NULL;
                     if (part->ast_temp_name[0] != '\0') {
@@ -2582,9 +2534,7 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
                     fprintf(ctx->out, "String_append_string(%s, %s);\n", acc, str_name);
                 }
             } else {
-                fprintf(stderr, "error at %d:%d: cannot interpolate value of type '%s' in f-string\n",
-                        part->ast_token.line, part->ast_token.col, type_name(&t));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, part->ast_token.line, part->ast_token.col, "cannot interpolate value of type '%s' in f-string", type_name(&t));
             }
         }
         part = part->next;
@@ -2938,11 +2888,9 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
         resolve_type(init);
         if (type_is_null(&init->ast_resolved_type) && !type_accepts_null(&type)) {
             if (type.is_unowned) {
-                fprintf(stderr, "error at %d:%d: cannot initialize unowned '%s' with 'null'\n",
-                        node->ast_token.line, node->ast_token.col, type.class_name);
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize unowned '%s' with 'null'", type.class_name);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot initialize '%s' with 'null'\n",
-                        node->ast_token.line, node->ast_token.col, type_name(&type));
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with 'null'", type_name(&type));
             }
             ctx->codegen_error = 1;
             indent_line(ctx, indent);
@@ -3055,9 +3003,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
                 indent_line(ctx, indent);
                 fprintf(ctx->out, "%s.vt = NULL;\n", node->ast_token.text);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot initialize weak interface '%s' with this value\n",
-                        node->ast_token.line, node->ast_token.col, type.class_name);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize weak interface '%s' with this value", type.class_name);
                 indent_line(ctx, indent);
                 fprintf(ctx->out, "%s %s = { NULL, NULL };\n", winame, node->ast_token.text);
             }
@@ -3070,9 +3016,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     }
 
     if (type.is_unowned && node->ast_child_count == 0) {
-        fprintf(stderr, "error at %d:%d: unowned variable '%s' requires an initializer\n",
-                node->ast_token.line, node->ast_token.col, node->ast_token.text);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "unowned variable '%s' requires an initializer", node->ast_token.text);
         indent_line(ctx, indent);
         fprintf(ctx->out, "WeakRef* %s = NULL;\n", node->ast_token.text);
         cleanup_add(ctx, node->ast_token.text, 1, 0);
@@ -3080,12 +3024,27 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     }
 
     if ((type.is_weak || type.is_unowned) && node->ast_child_count > 0) {
-        resolve_type(node->ast_children[0]);
-        if (node->ast_children[0]->ast_resolved_type.is_weak ||
-            node->ast_children[0]->ast_resolved_type.is_unowned) {
+        AstNode* init = node->ast_children[0];
+        resolve_type(init);
+        Type it = init->ast_resolved_type;
+        if (type_is_null(&it) && type.is_unowned) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize unowned '%s' with 'null'", type.class_name);
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "WeakRef* %s = NULL;\n", node->ast_token.text);
+            cleanup_add(ctx, node->ast_token.text, 1, 0);
+            return;
+        }
+        if (it.type_kind != TYPE_CLASS && !type_is_null(&it)) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "WeakRef* %s = NULL;\n", node->ast_token.text);
+            cleanup_add(ctx, node->ast_token.text, 1, 0);
+            return;
+        }
+        if (it.is_weak || it.is_unowned) {
             indent_line(ctx, indent);
             fprintf(ctx->out, "WeakRef* %s = mylang_weak_copy(", node->ast_token.text);
-            codegen_expr_raw(ctx, node->ast_children[0]);
+            codegen_expr_raw(ctx, init);
             fprintf(ctx->out, ");\n");
         } else {
             int rhs_owned = (expr_is_owned(node->ast_children[0]));
@@ -3149,9 +3108,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
                 fprintf(ctx->out, "%s %s = { NULL, NULL };\n",
                         type.class_name, node->ast_token.text);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot initialize interface '%s' with non-class value\n",
-                        node->ast_token.line, node->ast_token.col, type.class_name);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize interface '%s' with non-class value", type.class_name);
                 indent_line(ctx, indent);
                 fprintf(ctx->out, "%s %s = { NULL, NULL };\n", type.class_name, node->ast_token.text);
             }
@@ -3172,9 +3129,7 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     }
 
     if (type.is_const && node->ast_child_count == 0) {
-        fprintf(stderr, "error at %d:%d: const variable '%s' requires an initializer\n",
-                node->ast_token.line, node->ast_token.col, node->ast_token.text);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "const variable '%s' requires an initializer", node->ast_token.text);
     }
 
     if (node->ast_child_count > 0) {
@@ -3208,27 +3163,32 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
                     fprintf(ctx->out, ")");
                 }
             } else {
-                fprintf(stderr, "error at %d:%d: cannot initialize 'object' with '%s'\n",
-                        node->ast_token.line, node->ast_token.col, type_name(&it));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize 'object' with '%s'", type_name(&it));
                 fprintf(ctx->out, " = NULL /* invalid object initializer */");
             }
         } else if (type.type_kind == TYPE_CLASS && it.type_kind == TYPE_OBJECT) {
-            fprintf(stderr, "error at %d:%d: cannot initialize '%s' with 'object'; cast with 'as' first\n",
-                    node->ast_token.line, node->ast_token.col, type_name(&type));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with 'object'; cast with 'as' first", type_name(&type));
             fprintf(ctx->out, " = NULL /* invalid object initializer */");
-        } else if (type.type_kind == TYPE_CLASS && !expr_is_owned(init)) {
-            fprintf(ctx->out, " = mylang_retain(");
-            codegen_expr(ctx, init);
-            fprintf(ctx->out, ")");
+        } else if (type.type_kind == TYPE_CLASS) {
+            if (!expr_is_unowned_lock(init) && (it.type_kind != TYPE_CLASS || it.is_weak)) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+                fprintf(ctx->out, " = NULL /* invalid class initializer */");
+            } else if (!expr_is_owned(init)) {
+                fprintf(ctx->out, " = mylang_retain(");
+                codegen_expr(ctx, init);
+                fprintf(ctx->out, ")");
+            } else {
+                fprintf(ctx->out, " = ");
+                codegen_expr(ctx, init);
+            }
         } else if (type.type_kind != TYPE_CLASS && type.type_kind != TYPE_INTERFACE &&
-                   bool_mismatch(&type, &it)) {
-            fprintf(stderr, "error at %d:%d: cannot initialize '%s' with '%s'\n",
-                    node->ast_token.line, node->ast_token.col,
-                    type_name(&type), type_name(&it));
-            ctx->codegen_error = 1;
+                   type.type_kind != TYPE_OBJECT && bool_mismatch(&type, &it)) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
             fprintf(ctx->out, " = 0 /* invalid bool initializer */");
+        } else if (type.type_kind != TYPE_CLASS && type.type_kind != TYPE_INTERFACE &&
+                   type.type_kind != TYPE_OBJECT && type_is_reference(&it)) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+            fprintf(ctx->out, " = 0 /* invalid reference initializer */");
         } else {
             fprintf(ctx->out, " = ");
             codegen_expr(ctx, init);
@@ -3424,9 +3384,7 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 static void codegen_break_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     (void)node;
     if (ctx->loop_depth == 0) {
-        fprintf(stderr, "error at %d:%d: 'break' outside of loop\n",
-                node->ast_token.line, node->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'break' outside of loop");
         return;
     }
     int idx = ctx->loop_depth - 1;
@@ -3439,9 +3397,7 @@ static void codegen_break_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 static void codegen_continue_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     (void)node;
     if (ctx->loop_depth == 0) {
-        fprintf(stderr, "error at %d:%d: 'continue' outside of loop\n",
-                node->ast_token.line, node->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'continue' outside of loop");
         return;
     }
     int idx = ctx->loop_depth - 1;
@@ -3504,14 +3460,10 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         expr_type = resolve_type(expr);
     }
     if (expr && expr_type.is_unowned) {
-        fprintf(stderr, "error at %d:%d: cannot match on an unowned reference; convert it to a strong reference first\n",
-                expr->ast_token.line, expr->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, expr->ast_token.line, expr->ast_token.col, "cannot match on an unowned reference; convert it to a strong reference first");
     }
     if (expr && type_is_null(&expr_type)) {
-        fprintf(stderr, "error at %d:%d: cannot match on null\n",
-                expr->ast_token.line, expr->ast_token.col);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, expr->ast_token.line, expr->ast_token.col, "cannot match on null");
     }
 
     int expr_owned = expr && expr_is_owned(expr);
@@ -3577,9 +3529,7 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 expr_type.type_kind != TYPE_U16 &&
                 expr_type.type_kind != TYPE_U32 &&
                 expr_type.type_kind != TYPE_U64) {
-                fprintf(stderr, "error at %d:%d: integer match pattern cannot match expression of type '%s'\n",
-                        arm->ast_token.line, arm->ast_token.col, type_name(&expr_type));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col, "integer match pattern cannot match expression of type '%s'", type_name(&expr_type));
             }
             indent_line(ctx, indent);
             if (is_first) {
@@ -3603,10 +3553,7 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                     }
                 }
                 if (!implements) {
-                    fprintf(stderr, "error at %d:%d: class '%s' does not implement interface '%s'\n",
-                            arm->ast_token.line, arm->ast_token.col,
-                            pat_type.class_name, expr_type.class_name);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col, "class '%s' does not implement interface '%s'", pat_type.class_name, expr_type.class_name);
                 }
                 indent_line(ctx, indent);
                 if (is_first) {
@@ -3623,10 +3570,7 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                    exact-name requirement. */
                 if (expr_type.type_kind == TYPE_CLASS &&
                     strcmp(expr_type.class_name, pat_type.class_name) != 0) {
-                    fprintf(stderr, "error at %d:%d: match pattern type '%s' does not match expression type '%s'\n",
-                            arm->ast_token.line, arm->ast_token.col,
-                            pat_type.class_name, expr_type.class_name);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col, "match pattern type '%s' does not match expression type '%s'", pat_type.class_name, expr_type.class_name);
                 }
                 indent_line(ctx, indent);
                 if (is_first) {
@@ -3637,9 +3581,7 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                             temp_name, temp_name, pat_type.class_name);
                 }
             } else {
-                fprintf(stderr, "error at %d:%d: class match pattern cannot match expression of type '%s'\n",
-                        arm->ast_token.line, arm->ast_token.col, type_name(&expr_type));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col, "class match pattern cannot match expression of type '%s'", type_name(&expr_type));
                 indent_line(ctx, indent);
                 if (is_first) {
                     fprintf(ctx->out, "if (0)\n");
@@ -3649,9 +3591,7 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             }
             codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
         } else {
-            fprintf(stderr, "error at %d:%d: unsupported match pattern type\n",
-                    arm->ast_token.line, arm->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col, "unsupported match pattern type");
             indent_line(ctx, indent);
             if (is_first) {
                 fprintf(ctx->out, "if (0)\n");
@@ -3677,10 +3617,7 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
         if (type_is_null(&ret->ast_resolved_type)) {
             /* return null: only reference return types are allowed. */
             if (!type_accepts_null(&ctx->return_type)) {
-                fprintf(stderr, "error at %d:%d: cannot return null from function returning '%s'\n",
-                        ret->ast_token.line, ret->ast_token.col,
-                        type_name(&ctx->return_type));
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, ret->ast_token.line, ret->ast_token.col, "cannot return null from function returning '%s'", type_name(&ctx->return_type));
             }
             if (ctx->return_type.type_kind == TYPE_INTERFACE) {
                 char tbuf[128];
@@ -3705,19 +3642,13 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
         /* Strict bool rule at the return boundary. */
         if (ctx->return_type.type_kind != TYPE_VOID &&
             bool_mismatch(&ctx->return_type, &ret->ast_resolved_type)) {
-            fprintf(stderr, "error at %d:%d: cannot return '%s' from function returning '%s'\n",
-                    ret->ast_token.line, ret->ast_token.col,
-                    type_name(&ret->ast_resolved_type), type_name(&ctx->return_type));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, ret->ast_token.line, ret->ast_token.col, "cannot return '%s' from function returning '%s'", type_name(&ret->ast_resolved_type), type_name(&ctx->return_type));
         }
 
         /* object converts back to a concrete type only through 'as'. */
         if (ret->ast_resolved_type.type_kind == TYPE_OBJECT &&
             ctx->return_type.type_kind != TYPE_OBJECT) {
-            fprintf(stderr, "error at %d:%d: cannot return 'object' from function returning '%s'; cast with 'as' first\n",
-                    ret->ast_token.line, ret->ast_token.col,
-                    type_name(&ctx->return_type));
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, ret->ast_token.line, ret->ast_token.col, "cannot return 'object' from function returning '%s'; cast with 'as' first", type_name(&ctx->return_type));
         }
 
         if (ret->ast_resolved_type.type_kind == TYPE_CLASS &&
@@ -3779,9 +3710,7 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             indent_line(ctx, indent);
             fprintf(ctx->out, "return _r;\n");
         } else if (ret->ast_resolved_type.is_array) {
-            fprintf(stderr, "error at %d:%d: cannot return array by value; use move_to(ref) through a ref parameter\n",
-                    ret->ast_token.line, ret->ast_token.col);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, ret->ast_token.line, ret->ast_token.col, "cannot return array by value; use move_to(ref) through a ref parameter");
             indent_line(ctx, indent);
             fprintf(ctx->out, "/* invalid array return */\n");
             cleanup_emit(ctx, indent);
@@ -3890,9 +3819,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 int type_ok = is_bit_compound_op(assign_op)
                     ? type_is_integer(&lt) : type_is_numeric(&lt);
                 if (!type_ok) {
-                    fprintf(stderr, "error at %d:%d: compound assignment not supported for this type\n",
-                            expr->ast_token.line, expr->ast_token.col);
-                    ctx->codegen_error = 1;
+                    codegen_report_error(ctx, expr->ast_token.line, expr->ast_token.col, "compound assignment not supported for this type");
                     indent_line(ctx, indent);
                     fprintf(ctx->out, "0 /* invalid compound assignment */;\n");
                     return;
@@ -4021,9 +3948,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 indent_line(ctx, indent);
                 fprintf(ctx->out, "%s.vt = NULL;\n", lhs->ast_token.text);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot assign to weak interface '%s' from this type\n",
-                        rhs->ast_token.line, rhs->ast_token.col, lt.class_name);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, rhs->ast_token.line, rhs->ast_token.col, "cannot assign to weak interface '%s' from this type", lt.class_name);
             }
 
             emit_stmt_call_releases(ctx, expr, indent);
@@ -4078,9 +4003,7 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 indent_line(ctx, indent);
                 fprintf(ctx->out, "%s.vtable = NULL;\n", lhs->ast_token.text);
             } else {
-                fprintf(stderr, "error at %d:%d: cannot assign non-class value to interface '%s'\n",
-                        rhs->ast_token.line, rhs->ast_token.col, lt.class_name);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, rhs->ast_token.line, rhs->ast_token.col, "cannot assign non-class value to interface '%s'", lt.class_name);
             }
 
             emit_stmt_call_releases(ctx, expr, indent);
@@ -4444,9 +4367,7 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
 
 static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* class_name) {
     if (node->ast_resolved_type.is_array) {
-        fprintf(stderr, "error at %d:%d: method '%s.%s' cannot return array by value\n",
-                node->ast_token.line, node->ast_token.col, class_name, node->ast_token.text);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "method '%s.%s' cannot return array by value", class_name, node->ast_token.text);
     }
     if (node->ast_is_native) {
         /* Native methods are declared in the generated header and implemented
@@ -4461,9 +4382,7 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     else { body = node->ast_children[0]; }
     { AstNode* p = params; while (p) { fprintf(ctx->out, ", ");
         if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
-            fprintf(stderr, "error at %d:%d: array parameter '%s' must be ref\n",
-                    p->ast_token.line, p->ast_token.col, p->ast_token.text);
-            ctx->codegen_error = 1;
+            codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
         }
         char pt[128]; c_type_str(&p->ast_resolved_type, pt, sizeof(pt));
         if (type_is_ref(&p->ast_resolved_type)) {
@@ -4517,9 +4436,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
 
     /* return type */
     if (node->ast_resolved_type.is_array) {
-        fprintf(stderr, "error at %d:%d: function '%s' cannot return array by value\n",
-                node->ast_token.line, node->ast_token.col, func_name);
-        ctx->codegen_error = 1;
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "function '%s' cannot return array by value", func_name);
     }
     {
         char ret_buf[128];
@@ -4544,9 +4461,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
         while (p) {
             if (!first) fprintf(ctx->out, ", ");
             if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
-                fprintf(stderr, "error at %d:%d: array parameter '%s' must be ref\n",
-                        p->ast_token.line, p->ast_token.col, p->ast_token.text);
-                ctx->codegen_error = 1;
+                codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
             }
             char ptype_buf[128];
             c_type_str(&p->ast_resolved_type, ptype_buf, sizeof(ptype_buf));
