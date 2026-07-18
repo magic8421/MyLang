@@ -28,6 +28,16 @@ Source code lives under `src/`:
 - `symtab.c/h`, `codegen.c/h`
 - `main.c`, `util.h`
 
+## Error Message Format
+- All compiler diagnostics are emitted as `path(line,col): error: message`
+  (MSVC / VS Code problem-matcher style).
+- Lexer/parser errors use `Lexer.filename` (set from `src_path` in `src/main.c`)
+  and `parser_filename(p)` in `src/parser.c`.
+- Codegen errors use `CodegenContext.source_file` via the `codegen_report_error()`
+  helper in `src/codegen.c`.
+- The printed path is the input path as given on the command line (relative if
+  the user passed a relative path).
+
 ## Codegen Conventions
 - `CodegenContext` holds the output stream in `ctx->out`. Helper functions in `codegen.c` do not take a separate `FILE*` parameter.
 - The current source line is tracked in the thread-local `__my_line` variable. The compiler emits `MY_LOC(line)` before expressions that may trigger runtime panics (e.g., array access) so `my_panic` can report the offending line.
@@ -44,11 +54,21 @@ Source code lives under `src/`:
 - `T[] a;` declares a zero-initialized empty vector; `a.push(x)` will auto-grow from capacity 0.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
+- Reference-like types (`class`, `interface`, `object`, including weak/unowned)
+  and value types (`primitive`, `struct`, `bool`) do not implicitly convert.
+  Codegen rejects these mismatches at variable init, assignment, array element
+  assignment, and weak/unowned declarations.
 
 ## Bool and Null Literals
 - `bool` is a primitive type mapping to C `int`; `true`/`false` literals emit `1`/`0`.
 - Comparison (`== != < <= > >=`), logical (`&& ||`), and logical-not (`!`) expressions have type `bool` (changed in `resolve_type`; previously `i32`).
 - Strict bool rule: bool and numeric types do not implicitly convert. Checked at the assignment boundaries — variable initializers, assignments, call arguments, and `return` — via `bool_mismatch` in codegen.c. `bool b = 5;`, `i32 x = true;`, and `i32 x = a < b;` are compile errors.
+- Reference/value type mismatch: reference-like types (`class`/`interface`/`object`,
+  including weak/unowned) and value types (`primitive`/`struct`/`bool`) do not
+  implicitly convert at the same assignment boundaries plus array element
+  assignment and weak/unowned declarations (checked via `type_is_reference`
+  in `codegen.c`). `u64 win = app.createWindow();` and `SdlWindow w = 5;` are
+  compile errors.
 - Conditions are NOT required to be bool: `if (ptr)`, `while (w.lock())`, and `while (1)` keep C truthiness semantics.
 - bool does not support compound assignment or `++`/`--` (it is not in the primitive-numeric lists, so the existing checks reject it automatically).
 - f-string interpolation of bool prints `true`/`false` via the runtime method `String_append_bool`.
@@ -174,6 +194,9 @@ Source code lives under `src/`:
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
 - Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
+- The f-string accumulator is owned (+1) through the cleanup list.  Caller-side
+  retain/release guards (`guard_expr_is_owned`) treat `AST_FSTRING` as owned,
+  so calls like `print(f"...")` do not emit redundant retain/release pairs.
 - Interpolation dispatch: `string` and primitive types map to `String_append_*`; class types require a `string toString()` method (IToString) which is called directly; interface values dispatch through the vtable.
 - Floating-point numeric literals are supported: `3.14` defaults to `f64`, and
   `1.5f` / `1.5F` are `f32`.  They can be used directly in f-strings (`{3.14}`)
