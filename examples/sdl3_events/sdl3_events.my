@@ -7,15 +7,7 @@ interface SdlEventListener {
     void onEvent(SdlEvent e);
 }
 
-class Logger : SdlEventListener {
-    public unowned SdlApp app;
-    i32 count;
-    void onEvent(SdlEvent e) {
-        this.count = this.count + 1;
-        print(f"SDL Event: {e.type} {e.code}");
-    }
-    i32 getCount() { return this.count; }
-}
+
 
 class SdlWindow {
     private u64 handle;
@@ -38,6 +30,14 @@ class SdlApp {
     native string eventTypeToString(u32 type);
 }
 
+class Logger : SdlEventListener {
+    public unowned SdlApp app;
+    void onEvent(SdlEvent e) {
+        string type_str = this.app.eventTypeToString(e.type);
+        print(f"SDL Event: {type_str} {e.code}");
+    }
+}
+
 i32 main() {
     SdlApp app = new SdlApp;
     if (app.init() != 0) {
@@ -52,16 +52,15 @@ i32 main() {
 
     Logger logger = new Logger;
     logger.app = app;
-    SdlEventListener listener = logger;
-    app.addListener(listener);
+    app.addListener(logger);
 
     while (app.shouldQuit() == 0) {
         app.pump();
         app.delay(16);
     }
 
-    app.removeListener(listener);
+    app.removeListener(logger);
     app.destroyWindow(win);
     app.quit();
-    return logger.getCount();
+    return 0;
 }
