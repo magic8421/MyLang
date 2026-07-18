@@ -82,6 +82,7 @@ int main(int argc, char** argv) {
 
     Lexer lexer;
     lexer_init(&lexer, source);
+    lexer_set_filename(&lexer, src_path);
 
     Parser parser;
     parser_init(&parser, &lexer);

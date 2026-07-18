@@ -52,10 +52,19 @@ static const KeywordEntry keywords[] = {
 };
 
 void lexer_init(Lexer* lexer, const char* source) {
-    lexer->source = source;
-    lexer->pos    = 0;
-    lexer->line   = 1;
-    lexer->col    = 1;
+    lexer->source   = source;
+    lexer->pos      = 0;
+    lexer->line     = 1;
+    lexer->col      = 1;
+    lexer->filename = NULL;
+}
+
+void lexer_set_filename(Lexer* lexer, const char* filename) {
+    lexer->filename = filename;
+}
+
+const char* lexer_filename(const Lexer* lexer) {
+    return lexer->filename ? lexer->filename : "<unknown>";
 }
 
 static char lexer_peek_char(Lexer* lexer) {
@@ -184,8 +193,8 @@ static Token read_string_literal(Lexer* lexer) {
         if (c == '\\') {
             lexer_advance(lexer);
             if (lexer_is_eof(lexer)) {
-                fprintf(stderr, "lexer error at %d:%d: unterminated string literal\n",
-                        start_line, start_col);
+                fprintf(stderr, "%s(%d,%d): error: unterminated string literal\n",
+                        lexer_filename(lexer), start_line, start_col);
                 return make_token(lexer, TOK_STRING_LIT, NULL, 0, 0);
             }
             c = lexer_peek_char(lexer);
@@ -201,8 +210,8 @@ static Token read_string_literal(Lexer* lexer) {
                 case '{':  c = TOK_ESC_LBRACE; break;
                 case '}':  c = TOK_ESC_RBRACE; break;
                 default:
-                    fprintf(stderr, "lexer warning at %d:%d: unknown escape '\\%c'\n",
-                            lexer->line, lexer->col, c);
+                    fprintf(stderr, "%s(%d,%d): warning: unknown escape '\\%c'\n",
+                            lexer_filename(lexer), lexer->line, lexer->col, c);
                     break;
             }
         }
@@ -213,8 +222,8 @@ static Token read_string_literal(Lexer* lexer) {
     }
 
     if (lexer_is_eof(lexer)) {
-        fprintf(stderr, "lexer error at %d:%d: unterminated string literal\n",
-                start_line, start_col);
+        fprintf(stderr, "%s(%d,%d): error: unterminated string literal\n",
+                lexer_filename(lexer), start_line, start_col);
         return make_token(lexer, TOK_STRING_LIT, NULL, 0, 0);
     }
 
@@ -227,8 +236,8 @@ static Token read_char_literal(Lexer* lexer) {
     lexer_advance(lexer); /* skip opening ' */
 
     if (lexer_is_eof(lexer)) {
-        fprintf(stderr, "lexer error at %d:%d: unterminated char literal\n",
-                lexer->line, lexer->col);
+        fprintf(stderr, "%s(%d,%d): error: unterminated char literal\n",
+                lexer_filename(lexer), lexer->line, lexer->col);
         return make_token(lexer, TOK_CHAR_LIT, NULL, 0, 0);
     }
 
@@ -236,8 +245,8 @@ static Token read_char_literal(Lexer* lexer) {
     if (c == '\\') {
         lexer_advance(lexer);
         if (lexer_is_eof(lexer)) {
-            fprintf(stderr, "lexer error at %d:%d: unterminated char literal after '\\'\n",
-                    lexer->line, lexer->col);
+            fprintf(stderr, "%s(%d,%d): error: unterminated char literal after '\\'\n",
+                    lexer_filename(lexer), lexer->line, lexer->col);
             return make_token(lexer, TOK_CHAR_LIT, NULL, 0, 0);
         }
         c = lexer_peek_char(lexer);
@@ -402,8 +411,8 @@ Token lexer_next(Lexer* lexer) {
         case '.': return make_token(lexer, TOK_DOT,      ".", 1, 1);
         case ':': return make_token(lexer, TOK_COLON,    ":", 1, 1);
         default: {
-            fprintf(stderr, "lexer error at %d:%d: unexpected character '%c' (0x%02X)\n",
-                    lexer->line, lexer->col, c, (unsigned char)c);
+            fprintf(stderr, "%s(%d,%d): error: unexpected character '%c' (0x%02X)\n",
+                    lexer_filename(lexer), lexer->line, lexer->col, c, (unsigned char)c);
             return make_token(lexer, TOK_EOF, NULL, 0, 0);
         }
     }

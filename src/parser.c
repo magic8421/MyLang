@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+static const char* parser_filename(Parser* p) {
+    return lexer_filename(p->lexer);
+}
+
 /* ================================================================
    LEXER HELPERS
    ================================================================ */
@@ -19,8 +23,8 @@ static int check(Parser* p, TokenKind k)      { return p->current.kind == k; }
 
 static int expect(Parser* p, TokenKind k) {
     if (check(p, k)) { advance(p); return 1; }
-    fprintf(stderr, "error at %d:%d: expected '%s', got '%s'\n",
-            p->current.line, p->current.col,
+    fprintf(stderr, "%s(%d,%d): error: expected '%s', got '%s'\n",
+            parser_filename(p), p->current.line, p->current.col,
             token_kind_name(k), token_kind_name(p->current.kind));
     p->had_error = 1;
     return 0;
@@ -180,15 +184,15 @@ static Type parse_base_type(Parser* p) {
             t = type_make_user(TYPE_INTERFACE, name);
             t.type_id = ii->type_id;
         } else {
-            fprintf(stderr, "error at %d:%d: unknown type '%s'\n",
-                    p->current.line, p->current.col, name);
+            fprintf(stderr, "%s(%d,%d): error: unknown type '%s'\n",
+                    parser_filename(p), p->current.line, p->current.col, name);
             p->had_error = 1;
             t.type_kind = TYPE_VOID;
         }
         advance(p);
     } else {
-        fprintf(stderr, "error at %d:%d: expected type\n",
-                p->current.line, p->current.col);
+        fprintf(stderr, "%s(%d,%d): error: expected type\n",
+                parser_filename(p), p->current.line, p->current.col);
         p->had_error = 1;
         t.type_kind = TYPE_VOID;
     }
@@ -196,8 +200,8 @@ static Type parse_base_type(Parser* p) {
     if (check(p, TOK_LT)) {
         ClassInfo* ci = symtab_find_class(t.class_name);
         if (t.type_kind != TYPE_CLASS || !ci || !ci->is_generic) {
-            fprintf(stderr, "error at %d:%d: type '%s' does not accept type arguments\n",
-                    p->current.line, p->current.col, t.class_name);
+            fprintf(stderr, "%s(%d,%d): error: type '%s' does not accept type arguments\n",
+                    parser_filename(p), p->current.line, p->current.col, t.class_name);
             p->had_error = 1;
         }
         advance(p); /* < */
@@ -208,8 +212,8 @@ static Type parse_base_type(Parser* p) {
                 if (count < MAX_TYPE_ARGS) {
                     type_set_arg(&t, count, &arg);
                 } else {
-                    fprintf(stderr, "error at %d:%d: too many type arguments for '%s' (max %d)\n",
-                            p->current.line, p->current.col, t.class_name, MAX_TYPE_ARGS);
+                    fprintf(stderr, "%s(%d,%d): error: too many type arguments for '%s' (max %d)\n",
+                            parser_filename(p), p->current.line, p->current.col, t.class_name, MAX_TYPE_ARGS);
                     p->had_error = 1;
                 }
                 count++;
@@ -247,8 +251,8 @@ static Type parse_type(Parser* p) {
 
     if (is_weak) {
         if (t.type_kind != TYPE_CLASS && t.type_kind != TYPE_INTERFACE) {
-            fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: weak requires a class or interface type\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         } else {
             t.is_weak = 1;
@@ -258,8 +262,8 @@ static Type parse_type(Parser* p) {
 
     if (is_unowned) {
         if (t.type_kind != TYPE_CLASS) {
-            fprintf(stderr, "error at %d:%d: unowned requires a class type\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: unowned requires a class type\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         } else {
             t.is_unowned = 1;
@@ -269,8 +273,8 @@ static Type parse_type(Parser* p) {
 
     if (check(p, TOK_LBRACKET)) {
         if (is_unowned) {
-            fprintf(stderr, "error at %d:%d: unowned arrays are not supported\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: unowned arrays are not supported\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         }
         advance(p);
@@ -279,8 +283,8 @@ static Type parse_type(Parser* p) {
             advance(p);
             t.is_pointer = 1;
         } else {
-            fprintf(stderr, "error at %d:%d: fixed-size arrays are not supported; use 'T[]' dynamic arrays\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: fixed-size arrays are not supported; use 'T[]' dynamic arrays\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             expect(p, TOK_RBRACKET);
         }
@@ -289,8 +293,8 @@ static Type parse_type(Parser* p) {
 
     if (is_const) {
         if (t.is_array || t.is_weak || t.is_unowned || !type_is_primitive_value(t.type_kind)) {
-            fprintf(stderr, "error at %d:%d: const is only supported on primitive value types\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: const is only supported on primitive value types\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         } else {
             t.is_const = 1;
@@ -304,6 +308,7 @@ static Type parse_type(Parser* p) {
 static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, int col) {
     Lexer sub_lexer;
     lexer_init(&sub_lexer, text);
+    lexer_set_filename(&sub_lexer, lexer_filename(outer->lexer));
     Parser sub;
     parser_init(&sub, &sub_lexer);
     AstNode* e = parse_expr(&sub);
@@ -382,15 +387,15 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
                 i++;
             }
             if (depth != 0) {
-                fprintf(stderr, "error at %d:%d: unclosed expression in f-string\n",
-                        str_tok.line, str_tok.col);
+                fprintf(stderr, "%s(%d,%d): error: unclosed expression in f-string\n",
+                        parser_filename(p), str_tok.line, str_tok.col);
                 p->had_error = 1;
                 break;
             }
             int expr_len = i - expr_start - 1;
             if (expr_len <= 0) {
-                fprintf(stderr, "error at %d:%d: empty expression in f-string\n",
-                        str_tok.line, str_tok.col);
+                fprintf(stderr, "%s(%d,%d): error: empty expression in f-string\n",
+                        parser_filename(p), str_tok.line, str_tok.col);
                 p->had_error = 1;
             } else {
                 char* expr_text = (char*)malloc(expr_len + 1);
@@ -405,8 +410,8 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
                     free(expr_text);
                     if (expr) {
                         if (expr_contains_assign(expr) || expr_contains_inc_dec(expr)) {
-                            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in f-string expression\n",
-                                    expr->ast_token.line, expr->ast_token.col);
+                            fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in f-string expression\n",
+                                    parser_filename(p), expr->ast_token.line, expr->ast_token.col);
                             p->had_error = 1;
                         }
                         parts = ast_append_list(parts, expr);
@@ -520,24 +525,24 @@ static AstNode* parse_primary(Parser* p) {
             advance(p);
         }
         if (check(p, TOK_KW_UNOWNED)) {
-            fprintf(stderr, "error at %d:%d: 'new' cannot be used with unowned\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: 'new' cannot be used with unowned\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             advance(p);
         }
 
         Type base = parse_base_type(p);
         if (base.type_kind == TYPE_VOID) {
-            fprintf(stderr, "error at %d:%d: expected type after 'new'\n",
-                    new_tok.line, new_tok.col);
+            fprintf(stderr, "%s(%d,%d): error: expected type after 'new'\n",
+                    parser_filename(p), new_tok.line, new_tok.col);
             p->had_error = 1;
             return NULL;
         }
 
         if (is_weak) {
             if (base.type_kind != TYPE_CLASS && base.type_kind != TYPE_INTERFACE) {
-                fprintf(stderr, "error at %d:%d: weak requires a class or interface type\n",
-                        new_tok.line, new_tok.col);
+                fprintf(stderr, "%s(%d,%d): error: weak requires a class or interface type\n",
+                        parser_filename(p), new_tok.line, new_tok.col);
                 p->had_error = 1;
             } else {
                 base.is_weak = 1;
@@ -551,8 +556,8 @@ static AstNode* parse_primary(Parser* p) {
         if (check(p, TOK_LBRACKET)) {
             advance(p);
             if (!p->had_error) {
-                fprintf(stderr, "error at %d:%d: arrays are created empty; use '%s[] name; name.reserve(size)' instead of 'new %s[...]'\n",
-                        new_tok.line, new_tok.col, base.class_name, base.class_name);
+                fprintf(stderr, "%s(%d,%d): error: arrays are created empty; use '%s[] name; name.reserve(size)' instead of 'new %s[...]'\n",
+                        parser_filename(p), new_tok.line, new_tok.col, base.class_name, base.class_name);
             }
             p->had_error = 1;
             if (!check(p, TOK_RBRACKET)) {
@@ -562,23 +567,23 @@ static AstNode* parse_primary(Parser* p) {
             return node;
         }
         if (base.type_kind == TYPE_INTERFACE) {
-            fprintf(stderr, "error at %d:%d: cannot create instance of interface '%s'\n",
-                    new_tok.line, new_tok.col, base.class_name);
+            fprintf(stderr, "%s(%d,%d): error: cannot create instance of interface '%s'\n",
+                    parser_filename(p), new_tok.line, new_tok.col, base.class_name);
             p->had_error = 1;
         } else if (base.type_kind == TYPE_OBJECT) {
-            fprintf(stderr, "error at %d:%d: cannot use 'new' on 'object'; instantiate a concrete class instead\n",
-                    new_tok.line, new_tok.col);
+            fprintf(stderr, "%s(%d,%d): error: cannot use 'new' on 'object'; instantiate a concrete class instead\n",
+                    parser_filename(p), new_tok.line, new_tok.col);
             p->had_error = 1;
         } else if (base.type_kind == TYPE_STRUCT) {
-            fprintf(stderr, "error at %d:%d: cannot use 'new' on a struct value\n",
-                    new_tok.line, new_tok.col);
+            fprintf(stderr, "%s(%d,%d): error: cannot use 'new' on a struct value\n",
+                    parser_filename(p), new_tok.line, new_tok.col);
             p->had_error = 1;
         }
         return node;
     }
 
-    fprintf(stderr, "error at %d:%d: unexpected token '%s' in expression\n",
-            p->current.line, p->current.col, p->current.text);
+    fprintf(stderr, "%s(%d,%d): error: unexpected token '%s' in expression\n",
+            parser_filename(p), p->current.line, p->current.col, p->current.text);
     p->had_error = 1;
     return NULL;
 }
@@ -599,8 +604,8 @@ static AstNode* parse_postfix(Parser* p) {
         } else if (check(p, TOK_DOT)) {
             advance(p);
             if (!check(p, TOK_IDENT)) {
-                fprintf(stderr, "error at %d:%d: expected field name after '.'\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: expected field name after '.'\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
                 return node;
             }
@@ -640,8 +645,8 @@ static AstNode* parse_postfix(Parser* p) {
         } else if (check(p, TOK_INC) || check(p, TOK_DEC)) {
             Token op = p->current; advance(p);
             if (node->ast_kind == AST_INC_DEC) {
-                fprintf(stderr, "error at %d:%d: invalid increment/decrement expression\n",
-                        op.line, op.col);
+                fprintf(stderr, "%s(%d,%d): error: invalid increment/decrement expression\n",
+                        parser_filename(p), op.line, op.col);
                 p->had_error = 1;
             }
             AstNode* incdec = ast_new_node(AST_INC_DEC, op);
@@ -656,13 +661,13 @@ static AstNode* parse_postfix(Parser* p) {
         Token t = p->current; advance(p);
         Type target = parse_type(p);
         if (target.type_kind == TYPE_VOID && !p->had_error) {
-            fprintf(stderr, "error at %d:%d: expected type name after 'as'\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected type name after 'as'\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         }
         if (target.is_unowned) {
-            fprintf(stderr, "error at %d:%d: unowned is not a valid cast target\n",
-                    t.line, t.col);
+            fprintf(stderr, "%s(%d,%d): error: unowned is not a valid cast target\n",
+                    parser_filename(p), t.line, t.col);
             p->had_error = 1;
         }
         AstNode* cast = ast_new_node(AST_AS_CAST, t);
@@ -679,8 +684,8 @@ static AstNode* parse_unary(Parser* p) {
         Token op = p->current; advance(p);
         AstNode* operand = parse_unary(p);
         if (operand && operand->ast_kind == AST_INC_DEC) {
-            fprintf(stderr, "error at %d:%d: invalid increment/decrement expression\n",
-                    op.line, op.col);
+            fprintf(stderr, "%s(%d,%d): error: invalid increment/decrement expression\n",
+                    parser_filename(p), op.line, op.col);
             p->had_error = 1;
         }
         AstNode* node = ast_new_node(AST_INC_DEC, op);
@@ -767,8 +772,8 @@ static AstNode* parse_expr(Parser* p) { return parse_assignment(p); }
 static AstNode* parse_expr_no_assign(Parser* p, const char* where) {
     AstNode* e = parse_expr(p);
     if (e && (expr_contains_assign(e) || expr_contains_inc_dec(e))) {
-        fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in %s\n",
-                e->ast_token.line, e->ast_token.col, where);
+        fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in %s\n",
+                parser_filename(p), e->ast_token.line, e->ast_token.col, where);
         p->had_error = 1;
     }
     return e;
@@ -823,8 +828,8 @@ static int stmt_looks_like_var_decl(Parser* p) {
 static AstNode* parse_var_decl(Parser* p) {
     Type type = parse_type(p);
     if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "error at %d:%d: expected variable name\n",
-                p->current.line, p->current.col);
+        fprintf(stderr, "%s(%d,%d): error: expected variable name\n",
+                parser_filename(p), p->current.line, p->current.col);
         p->had_error = 1;
         expect(p, TOK_SEMI);
         return NULL;
@@ -838,8 +843,8 @@ static AstNode* parse_var_decl(Parser* p) {
         AstNode* init = parse_expr(p);
         ast_add_child(node, init);
         if (init && !p->had_error && !expr_is_direct_assignment(init) && (expr_contains_assign(init) || expr_contains_inc_dec(init))) {
-            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in variable initializer\n",
-                    init->ast_token.line, init->ast_token.col);
+            fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in variable initializer\n",
+                    parser_filename(p), init->ast_token.line, init->ast_token.col);
             p->had_error = 1;
         }
         if (init && init->ast_kind == AST_NEW && type.type_kind == TYPE_CLASS) {
@@ -874,8 +879,8 @@ static AstNode* parse_for_stmt(Parser* p) {
     if (!check(p, TOK_SEMI)) {
         cond = parse_expr(p);
         if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
-            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in for condition\n",
-                    cond->ast_token.line, cond->ast_token.col);
+            fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in for condition\n",
+                    parser_filename(p), cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
     }
@@ -904,8 +909,8 @@ static AstNode* parse_match_stmt(Parser* p) {
 
     AstNode* expr = parse_expr(p);
     if (expr && (expr_contains_assign(expr) || expr_contains_inc_dec(expr))) {
-        fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in match expression\n",
-                expr->ast_token.line, expr->ast_token.col);
+        fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in match expression\n",
+                parser_filename(p), expr->ast_token.line, expr->ast_token.col);
         p->had_error = 1;
     }
     expect(p, TOK_RPAREN);
@@ -917,8 +922,8 @@ static AstNode* parse_match_stmt(Parser* p) {
         AstNode* arm = NULL;
         int arm_scope_entered = 0;
         if (saw_else) {
-            fprintf(stderr, "error at %d:%d: arm after 'else' is not allowed\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: arm after 'else' is not allowed\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         }
         if (check(p, TOK_KW_ELSE)) {
@@ -936,13 +941,13 @@ static AstNode* parse_match_stmt(Parser* p) {
             /* Type pattern: ClassName var */
             Type pattern_type = parse_base_type(p);
             if (pattern_type.type_kind != TYPE_CLASS) {
-                fprintf(stderr, "error at %d:%d: match type pattern must be a class name\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: match type pattern must be a class name\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
             }
             if (!check(p, TOK_IDENT)) {
-                fprintf(stderr, "error at %d:%d: expected variable name after type pattern\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: expected variable name after type pattern\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
                 if (check(p, TOK_FATARROW)) { advance(p); }
                 parse_stmt(p);
@@ -959,8 +964,8 @@ static AstNode* parse_match_stmt(Parser* p) {
             arm_scope_entered = 1;
             symtab_insert(var.text, pattern_type);
         } else {
-            fprintf(stderr, "error at %d:%d: expected 'else', integer literal, or type pattern in match arm\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected 'else', integer literal, or type pattern in match arm\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             if (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) { advance(p); }
             continue;
@@ -989,8 +994,8 @@ static AstNode* parse_required_block(Parser* p, const char* what, int allow_if) 
         return parse_stmt(p);
     }
     if (!check(p, TOK_LBRACE)) {
-        fprintf(stderr, "error at %d:%d: expected '{' for %s body\n",
-                p->current.line, p->current.col, what);
+        fprintf(stderr, "%s(%d,%d): error: expected '{' for %s body\n",
+                parser_filename(p), p->current.line, p->current.col, what);
         p->had_error = 1;
     }
     return parse_stmt(p);
@@ -1010,8 +1015,8 @@ static AstNode* parse_stmt(Parser* p) {
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
         if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
-            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in if condition\n",
-                    cond->ast_token.line, cond->ast_token.col);
+            fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in if condition\n",
+                    parser_filename(p), cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
@@ -1033,8 +1038,8 @@ static AstNode* parse_stmt(Parser* p) {
         expect(p, TOK_LPAREN);
         AstNode* cond = parse_expr(p);
         if (expr_contains_assign(cond) || expr_contains_inc_dec(cond)) {
-            fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in while condition\n",
-                    cond->ast_token.line, cond->ast_token.col);
+            fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in while condition\n",
+                    parser_filename(p), cond->ast_token.line, cond->ast_token.col);
             p->had_error = 1;
         }
         expect(p, TOK_RPAREN);
@@ -1084,8 +1089,8 @@ static AstNode* parse_stmt(Parser* p) {
             int is_direct_assign = expr_is_direct_assignment(expr);
             int is_direct_inc_dec = expr_is_inc_dec(expr);
             if ((!is_direct_assign && has_assign) || (!is_direct_inc_dec && has_inc_dec)) {
-                fprintf(stderr, "error at %d:%d: assignment or increment/decrement not allowed in expression statement\n",
-                        expr->ast_token.line, expr->ast_token.col);
+                fprintf(stderr, "%s(%d,%d): error: assignment or increment/decrement not allowed in expression statement\n",
+                        parser_filename(p), expr->ast_token.line, expr->ast_token.col);
                 p->had_error = 1;
             }
         }
@@ -1110,8 +1115,8 @@ static AstNode* parse_struct_decl(Parser* p) {
     advance(p); /* struct */
 
     if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "error at %d:%d: expected struct name\n",
-                p->current.line, p->current.col);
+        fprintf(stderr, "%s(%d,%d): error: expected struct name\n",
+                parser_filename(p), p->current.line, p->current.col);
         p->had_error = 1;
         return NULL;
     }
@@ -1128,8 +1133,8 @@ static AstNode* parse_struct_decl(Parser* p) {
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
-            fprintf(stderr, "error at %d:%d: access modifiers are not allowed in structs\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: access modifiers are not allowed in structs\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             advance(p);
             continue;
@@ -1142,8 +1147,8 @@ static AstNode* parse_struct_decl(Parser* p) {
         Type ft = parse_type(p);
         if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_STRUCT ||
             ft.type_kind == TYPE_OBJECT || ft.is_array || ft.array_size > 0) {
-            fprintf(stderr, "error at %d:%d: struct fields must be primitive types in this phase\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: struct fields must be primitive types in this phase\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             /* try to recover */
             if (check(p, TOK_IDENT)) advance(p);
@@ -1151,8 +1156,8 @@ static AstNode* parse_struct_decl(Parser* p) {
             continue;
         }
         if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "error at %d:%d: expected field name\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected field name\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             break;
         }
@@ -1174,16 +1179,16 @@ static AstNode* parse_class_decl(Parser* p) {
     advance(p); /* class */
 
     if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "error at %d:%d: expected class name\n",
-                p->current.line, p->current.col);
+        fprintf(stderr, "%s(%d,%d): error: expected class name\n",
+                parser_filename(p), p->current.line, p->current.col);
         p->had_error = 1;
         return NULL;
     }
     Token name = p->current; advance(p);
 
     if (strcmp(name.text, "String") == 0) {
-        fprintf(stderr, "error at %d:%d: class name '%s' is reserved for a builtin type\n",
-                name.line, name.col, name.text);
+        fprintf(stderr, "%s(%d,%d): error: class name '%s' is reserved for a builtin type\n",
+                parser_filename(p), name.line, name.col, name.text);
         p->had_error = 1;
     }
 
@@ -1201,14 +1206,14 @@ static AstNode* parse_class_decl(Parser* p) {
         int param_count = 0;
         do {
             if (param_count >= MAX_GENERIC_PARAMS) {
-                fprintf(stderr, "error at %d:%d: too many generic parameters for class '%s' (max %d)\n",
-                        p->current.line, p->current.col, name.text, MAX_GENERIC_PARAMS);
+                fprintf(stderr, "%s(%d,%d): error: too many generic parameters for class '%s' (max %d)\n",
+                        parser_filename(p), p->current.line, p->current.col, name.text, MAX_GENERIC_PARAMS);
                 p->had_error = 1;
                 break;
             }
             if (!check(p, TOK_IDENT)) {
-                fprintf(stderr, "error at %d:%d: expected type parameter name\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: expected type parameter name\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
                 break;
             }
@@ -1229,8 +1234,8 @@ static AstNode* parse_class_decl(Parser* p) {
                     } else if (check(p, TOK_IDENT)) {
                         Token c = p->current; advance(p);
                         if (!symtab_find_interface(c.text)) {
-                            fprintf(stderr, "error at %d:%d: unknown interface constraint '%s'\n",
-                                    c.line, c.col, c.text);
+                            fprintf(stderr, "%s(%d,%d): error: unknown interface constraint '%s'\n",
+                                    parser_filename(p), c.line, c.col, c.text);
                             p->had_error = 1;
                         }
                         int cc = info->generic_constraint_count[param_idx];
@@ -1241,8 +1246,8 @@ static AstNode* parse_class_decl(Parser* p) {
                             info->generic_constraint_count[param_idx]++;
                         }
                     } else {
-                        fprintf(stderr, "error at %d:%d: expected 'new()' or interface name in constraint\n",
-                                p->current.line, p->current.col);
+                        fprintf(stderr, "%s(%d,%d): error: expected 'new()' or interface name in constraint\n",
+                                parser_filename(p), p->current.line, p->current.col);
                         p->had_error = 1;
                         break;
                     }
@@ -1265,8 +1270,8 @@ static AstNode* parse_class_decl(Parser* p) {
         advance(p);
         do {
             if (!check(p, TOK_IDENT)) {
-                fprintf(stderr, "error at %d:%d: expected interface name after ':'\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: expected interface name after ':'\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
                 break;
             }
@@ -1300,8 +1305,8 @@ static AstNode* parse_class_decl(Parser* p) {
             } else {
                 int want_private = check(p, TOK_KW_PRIVATE);
                 if (is_public || is_private) {
-                    fprintf(stderr, "error at %d:%d: duplicate or conflicting access modifier\n",
-                            p->current.line, p->current.col);
+                    fprintf(stderr, "%s(%d,%d): error: duplicate or conflicting access modifier\n",
+                            parser_filename(p), p->current.line, p->current.col);
                     p->had_error = 1;
                 }
                 if (want_private) is_private = 1; else is_public = 1;
@@ -1310,8 +1315,8 @@ static AstNode* parse_class_decl(Parser* p) {
         }
         Type ft = parse_type(p);
         if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "error at %d:%d: expected field or method name\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected field or method name\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             break;
         }
@@ -1322,8 +1327,8 @@ static AstNode* parse_class_decl(Parser* p) {
             advance(p); /* consume ( */
 
             if (ft.is_unowned) {
-                fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
-                        fname.line, fname.col);
+                fprintf(stderr, "%s(%d,%d): error: unowned return type is not supported\n",
+                        parser_filename(p), fname.line, fname.col);
                 p->had_error = 1;
             }
 
@@ -1355,13 +1360,13 @@ static AstNode* parse_class_decl(Parser* p) {
                     Type pt = parse_type(p);
                     pt.is_ref = is_ref;
                     if (is_ref && pt.is_const) {
-                        fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
-                                p->current.line, p->current.col);
+                        fprintf(stderr, "%s(%d,%d): error: ref parameters cannot be const\n",
+                                parser_filename(p), p->current.line, p->current.col);
                         p->had_error = 1;
                     }
                     if (!check(p, TOK_IDENT)) {
-                        fprintf(stderr, "error at %d:%d: expected parameter name\n",
-                                p->current.line, p->current.col);
+                        fprintf(stderr, "%s(%d,%d): error: expected parameter name\n",
+                                parser_filename(p), p->current.line, p->current.col);
                         p->had_error = 1;
                         break;
                     }
@@ -1380,16 +1385,16 @@ static AstNode* parse_class_decl(Parser* p) {
             expect(p, TOK_RPAREN);
 
             if (ft.is_array) {
-                fprintf(stderr, "error at %d:%d: method '%s' cannot return array by value\n",
-                        fname.line, fname.col, fname.text);
+                fprintf(stderr, "%s(%d,%d): error: method '%s' cannot return array by value\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
                 p->had_error = 1;
             }
             {
                 int pi;
                 for (pi = 0; pi < mc; pi++) {
                     if (mpt[pi].is_array && !mpt[pi].is_ref) {
-                        fprintf(stderr, "error at %d:%d: array parameter '%s' of method '%s' must be ref\n",
-                                fname.line, fname.col, mpn[pi], fname.text);
+                        fprintf(stderr, "%s(%d,%d): error: array parameter '%s' of method '%s' must be ref\n",
+                                parser_filename(p), fname.line, fname.col, mpn[pi], fname.text);
                         p->had_error = 1;
                     }
                 }
@@ -1406,8 +1411,8 @@ static AstNode* parse_class_decl(Parser* p) {
             symtab_exit_scope();
 
             if (is_private && is_override) {
-                fprintf(stderr, "error at %d:%d: method '%s' cannot be both private and override\n",
-                        fname.line, fname.col, fname.text);
+                fprintf(stderr, "%s(%d,%d): error: method '%s' cannot be both private and override\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
                 p->had_error = 1;
             }
 
@@ -1423,8 +1428,8 @@ static AstNode* parse_class_decl(Parser* p) {
         } else {
             /* FIELD */
             if (ft.is_const) {
-                fprintf(stderr, "error at %d:%d: const fields are not supported\n",
-                        fname.line, fname.col);
+                fprintf(stderr, "%s(%d,%d): error: const fields are not supported\n",
+                        parser_filename(p), fname.line, fname.col);
                 p->had_error = 1;
             }
             expect(p, TOK_SEMI);
@@ -1454,24 +1459,24 @@ static AstNode* parse_interface_decl(Parser* p) {
     advance(p); /* interface */
 
     if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "error at %d:%d: expected interface name\n",
-                p->current.line, p->current.col);
+        fprintf(stderr, "%s(%d,%d): error: expected interface name\n",
+                parser_filename(p), p->current.line, p->current.col);
         p->had_error = 1;
         return NULL;
     }
     Token name = p->current; advance(p);
 
     if (strcmp(name.text, "IToString") == 0) {
-        fprintf(stderr, "error at %d:%d: interface name '%s' is reserved for a builtin type\n",
-                name.line, name.col, name.text);
+        fprintf(stderr, "%s(%d,%d): error: interface name '%s' is reserved for a builtin type\n",
+                parser_filename(p), name.line, name.col, name.text);
         p->had_error = 1;
     }
 
     /* check name conflicts */
     if (symtab_find_class(name.text) || symtab_find_struct(name.text) ||
         symtab_find_interface(name.text)) {
-        fprintf(stderr, "error at %d:%d: type '%s' already defined\n",
-                p->current.line, p->current.col, name.text);
+        fprintf(stderr, "%s(%d,%d): error: type '%s' already defined\n",
+                parser_filename(p), p->current.line, p->current.col, name.text);
         p->had_error = 1;
     }
 
@@ -1488,8 +1493,8 @@ static AstNode* parse_interface_decl(Parser* p) {
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
-            fprintf(stderr, "error at %d:%d: access modifiers are not allowed in interfaces\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: access modifiers are not allowed in interfaces\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             advance(p);
             continue;
@@ -1499,14 +1504,14 @@ static AstNode* parse_interface_decl(Parser* p) {
             /* allow void return type */
         }
         if (ret_type.is_unowned) {
-            fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: unowned return type is not supported\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         }
 
         if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "error at %d:%d: expected method name in interface\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected method name in interface\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             break;
         }
@@ -1527,13 +1532,13 @@ static AstNode* parse_interface_decl(Parser* p) {
                 Type pt = parse_type(p);
                 pt.is_ref = is_ref;
                 if (is_ref && pt.is_const) {
-                    fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
-                            p->current.line, p->current.col);
+                    fprintf(stderr, "%s(%d,%d): error: ref parameters cannot be const\n",
+                            parser_filename(p), p->current.line, p->current.col);
                     p->had_error = 1;
                 }
                 if (!check(p, TOK_IDENT)) {
-                    fprintf(stderr, "error at %d:%d: expected parameter name in interface method\n",
-                            p->current.line, p->current.col);
+                    fprintf(stderr, "%s(%d,%d): error: expected parameter name in interface method\n",
+                            parser_filename(p), p->current.line, p->current.col);
                     p->had_error = 1;
                     break;
                 }
@@ -1548,16 +1553,16 @@ static AstNode* parse_interface_decl(Parser* p) {
         expect(p, TOK_RPAREN);
 
         if (ret_type.is_array) {
-            fprintf(stderr, "error at %d:%d: interface method '%s' cannot return array by value\n",
-                    mname.line, mname.col, mname.text);
+            fprintf(stderr, "%s(%d,%d): error: interface method '%s' cannot return array by value\n",
+                    parser_filename(p), mname.line, mname.col, mname.text);
             p->had_error = 1;
         }
         {
             int pi;
             for (pi = 0; pi < mc; pi++) {
                 if (mpt[pi].is_array && !mpt[pi].is_ref) {
-                    fprintf(stderr, "error at %d:%d: array parameter '%s' of interface method '%s' must be ref\n",
-                            mname.line, mname.col, mpn[pi], mname.text);
+                    fprintf(stderr, "%s(%d,%d): error: array parameter '%s' of interface method '%s' must be ref\n",
+                            parser_filename(p), mname.line, mname.col, mpn[pi], mname.text);
                     p->had_error = 1;
                 }
             }
@@ -1576,8 +1581,8 @@ static AstNode* parse_interface_decl(Parser* p) {
         } else if (check(p, TOK_SEMI)) {
             advance(p); /* ; */
         } else {
-            fprintf(stderr, "error at %d:%d: expected ';' or '{' after interface method signature\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected ';' or '{' after interface method signature\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             break;
         }
@@ -1614,13 +1619,13 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
             Type param_type = parse_type(p);
             param_type.is_ref = is_ref;
             if (is_ref && param_type.is_const) {
-                fprintf(stderr, "error at %d:%d: ref parameters cannot be const\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: ref parameters cannot be const\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
             }
             if (!check(p, TOK_IDENT)) {
-                fprintf(stderr, "error at %d:%d: expected parameter name\n",
-                        p->current.line, p->current.col);
+                fprintf(stderr, "%s(%d,%d): error: expected parameter name\n",
+                        parser_filename(p), p->current.line, p->current.col);
                 p->had_error = 1;
                 break;
             }
@@ -1639,16 +1644,16 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     expect(p, TOK_RPAREN);
 
     if (ret_type.is_array) {
-        fprintf(stderr, "error at %d:%d: function '%s' cannot return array by value\n",
-                name.line, name.col, name.text);
+        fprintf(stderr, "%s(%d,%d): error: function '%s' cannot return array by value\n",
+                parser_filename(p), name.line, name.col, name.text);
         p->had_error = 1;
     }
     {
         int pi;
         for (pi = 0; pi < pc; pi++) {
             if (pt[pi].is_array && !pt[pi].is_ref) {
-                fprintf(stderr, "error at %d:%d: array parameter '%s' of function '%s' must be ref\n",
-                        name.line, name.col, pn[pi], name.text);
+                fprintf(stderr, "%s(%d,%d): error: array parameter '%s' of function '%s' must be ref\n",
+                        parser_filename(p), name.line, name.col, pn[pi], name.text);
                 p->had_error = 1;
             }
         }
@@ -1685,13 +1690,13 @@ static AstNode* parse_top_level(Parser* p) {
         (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {
         Type ret_type = parse_type(p);
         if (ret_type.is_unowned) {
-            fprintf(stderr, "error at %d:%d: unowned return type is not supported\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: unowned return type is not supported\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
         }
         if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "error at %d:%d: expected function name\n",
-                    p->current.line, p->current.col);
+            fprintf(stderr, "%s(%d,%d): error: expected function name\n",
+                    parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             advance(p);
             return NULL;
@@ -1699,8 +1704,8 @@ static AstNode* parse_top_level(Parser* p) {
         return parse_func_decl(p, ret_type);
     }
 
-    fprintf(stderr, "error at %d:%d: unexpected token '%s' at top level\n",
-            p->current.line, p->current.col, p->current.text);
+    fprintf(stderr, "%s(%d,%d): error: unexpected token '%s' at top level\n",
+            parser_filename(p), p->current.line, p->current.col, p->current.text);
     p->had_error = 1;
     advance(p);
     return NULL;
