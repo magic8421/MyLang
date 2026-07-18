@@ -951,6 +951,16 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             return;
         }
     }
+    if (param_type->type_kind == TYPE_INTERFACE && !param_type->is_weak) {
+        resolve_type(arg);
+        Type rt = arg->ast_resolved_type;
+        if (rt.type_kind == TYPE_CLASS) {
+            fprintf(ctx->out, "(%s){ (void*)", param_type->class_name);
+            codegen_expr(ctx, arg);
+            fprintf(ctx->out, ", &%s_%s_vtable }", rt.class_name, param_type->class_name);
+            return;
+        }
+    }
     if (param_type->is_weak && param_type->type_kind == TYPE_INTERFACE) {
         resolve_type(arg);
         Type rt = arg->ast_resolved_type;
@@ -1243,11 +1253,7 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             return;
         }
     }
-    if (callee->ast_kind == AST_MEMBER_ACCESS) {
-        codegen_expr(ctx, callee);
-    } else {
-        fprintf(ctx->out, "%s", callee->ast_token.text);
-    }
+    codegen_expr(ctx, callee);
     fprintf(ctx->out, "(");
     AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
     int first = 1;
@@ -1480,11 +1486,6 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 fprintf(ctx->out, "thiz");
             } else {
                 SymEntry* e = symtab_lookup(node->ast_token.text);
-                if (!e) {
-                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "unknown identifier '%s'", node->ast_token.text);
-                    fprintf(ctx->out, "0 /* unknown identifier */");
-                    break;
-                }
                 if (e && type_is_ref(&e->type)) {
                     fprintf(ctx->out, "(*%s)", node->ast_token.text);
                 } else {
