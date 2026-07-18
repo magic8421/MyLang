@@ -1123,13 +1123,22 @@ static AstNode* parse_struct_decl(Parser* p) {
     Token name = p->current; advance(p);
     expect(p, TOK_LBRACE);
 
-    StructInfo* info = calloc(1, sizeof(StructInfo));
-    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
-    info->name[63] = '\0';
-    info->type_id = symtab_next_type_id() | TYPE_IS_STRUCT;
+    StructInfo* info = symtab_find_struct(name.text);
+    if (info) {
+        if (info->field_count > 0) {
+            fprintf(stderr, "%s(%d,%d): error: struct '%s' already defined\n",
+                    parser_filename(p), name.line, name.col, name.text);
+            p->had_error = 1;
+        }
+    } else {
+        info = (StructInfo*)calloc(1, sizeof(StructInfo));
+        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
+        info->name[63] = '\0';
+        info->type_id = symtab_next_type_id() | TYPE_IS_STRUCT;
 
-    /* register early so later types can refer to it */
-    symtab_add_struct(name.text, info);
+        /* register early so later types can refer to it */
+        symtab_add_struct(name.text, info);
+    }
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
@@ -1192,12 +1201,21 @@ static AstNode* parse_class_decl(Parser* p) {
         p->had_error = 1;
     }
 
-    ClassInfo* info = calloc(1, sizeof(ClassInfo));
-    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
-    info->name[63] = '\0';
+    ClassInfo* info = symtab_find_class(name.text);
+    if (info) {
+        if (info->field_count > 0 || info->methods) {
+            fprintf(stderr, "%s(%d,%d): error: class '%s' already defined\n",
+                    parser_filename(p), name.line, name.col, name.text);
+            p->had_error = 1;
+        }
+    } else {
+        info = (ClassInfo*)calloc(1, sizeof(ClassInfo));
+        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
+        info->name[63] = '\0';
 
-    /* register early so methods with this return type resolve */
-    symtab_add_class(name.text, info);
+        /* register early so methods with this return type resolve */
+        symtab_add_class(name.text, info);
+    }
 
     /* parse optional generic parameter list */
     if (check(p, TOK_LT)) {
@@ -1281,7 +1299,7 @@ static AstNode* parse_class_decl(Parser* p) {
     }
 
     /* generic definitions do not get a concrete type_id until instantiated */
-    if (!info->is_generic) {
+    if (!info->is_generic && info->type_id == 0) {
         info->type_id = symtab_next_type_id();
     }
 
@@ -1472,24 +1490,32 @@ static AstNode* parse_interface_decl(Parser* p) {
         p->had_error = 1;
     }
 
-    /* check name conflicts */
-    if (symtab_find_class(name.text) || symtab_find_struct(name.text) ||
-        symtab_find_interface(name.text)) {
-        fprintf(stderr, "%s(%d,%d): error: type '%s' already defined\n",
-                parser_filename(p), p->current.line, p->current.col, name.text);
-        p->had_error = 1;
+    /* check name conflicts and reuse a pre-registered interface declaration */
+    InterfaceInfo* info = symtab_find_interface(name.text);
+    if (info) {
+        if (info->method_count > 0) {
+            fprintf(stderr, "%s(%d,%d): error: interface '%s' already defined\n",
+                    parser_filename(p), name.line, name.col, name.text);
+            p->had_error = 1;
+        }
+    } else {
+        if (symtab_find_class(name.text) || symtab_find_struct(name.text)) {
+            fprintf(stderr, "%s(%d,%d): error: type '%s' already defined\n",
+                    parser_filename(p), name.line, name.col, name.text);
+            p->had_error = 1;
+        }
+
+        info = (InterfaceInfo*)calloc(1, sizeof(InterfaceInfo));
+        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
+        info->name[63] = '\0';
+        info->type_id = symtab_next_type_id();
+
+        /* register early for self-referential use (unlikely for interfaces,
+           but consistent with class/struct registration) */
+        symtab_add_interface(name.text, info);
     }
 
     expect(p, TOK_LBRACE);
-
-    InterfaceInfo* info = calloc(1, sizeof(InterfaceInfo));
-    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
-    info->name[63] = '\0';
-    info->type_id = symtab_next_type_id();
-
-    /* register early for self-referential use (unlikely for interfaces,
-       but consistent with class/struct registration) */
-    symtab_add_interface(name.text, info);
 
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
@@ -1720,6 +1746,74 @@ void parser_init(Parser* p, Lexer* lexer) {
     advance(p);
 }
 
+/* Pre-register all top-level class, struct, and interface names so that
+   mutually-referencing types (e.g., SdlWindow holding an SdlApp field while
+   SdlApp is defined later) can resolve without forward-declaration syntax. */
+static void parser_register_forward_decls(Parser* p) {
+    Lexer scan = *p->lexer;
+    Token cur = lexer_next(&scan);
+    while (cur.kind != TOK_EOF) {
+        if (cur.kind == TOK_KW_CLASS || cur.kind == TOK_KW_STRUCT || cur.kind == TOK_KW_INTERFACE) {
+            TokenKind decl_kind = cur.kind;
+            Token name = lexer_next(&scan);
+            if (name.kind == TOK_IDENT) {
+                if (decl_kind == TOK_KW_CLASS) {
+                    if (!symtab_find_class(name.text)) {
+                        ClassInfo* info = (ClassInfo*)calloc(1, sizeof(ClassInfo));
+                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
+                        info->name[63] = '\0';
+                        Token t = lexer_next(&scan);
+                        if (t.kind == TOK_LT) {
+                            char params[MAX_GENERIC_PARAMS][64];
+                            int param_count = 0;
+                            Token tok = lexer_next(&scan);
+                            while (tok.kind != TOK_GT && tok.kind != TOK_EOF) {
+                                if (tok.kind == TOK_IDENT && param_count < MAX_GENERIC_PARAMS) {
+                                    CHECK_STRSCPY(strscpy(params[param_count], tok.text, sizeof(params[param_count])), "generic parameter name too long");
+                                    param_count++;
+                                }
+                                tok = lexer_next(&scan);
+                                if (tok.kind == TOK_COMMA) {
+                                    tok = lexer_next(&scan);
+                                }
+                            }
+                            if (param_count > 0) {
+                                const char* param_ptrs[MAX_GENERIC_PARAMS];
+                                int k;
+                                for (k = 0; k < param_count && k < MAX_GENERIC_PARAMS; k++) {
+                                    param_ptrs[k] = params[k];
+                                }
+                                symtab_mark_class_generic(info, NULL, param_count, param_ptrs);
+                            }
+                        }
+                        if (!info->is_generic) {
+                            info->type_id = symtab_next_type_id();
+                        }
+                        symtab_add_class(name.text, info);
+                    }
+                } else if (decl_kind == TOK_KW_STRUCT) {
+                    if (!symtab_find_struct(name.text)) {
+                        StructInfo* info = (StructInfo*)calloc(1, sizeof(StructInfo));
+                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
+                        info->name[63] = '\0';
+                        info->type_id = symtab_next_type_id() | TYPE_IS_STRUCT;
+                        symtab_add_struct(name.text, info);
+                    }
+                } else if (decl_kind == TOK_KW_INTERFACE) {
+                    if (!symtab_find_interface(name.text)) {
+                        InterfaceInfo* info = (InterfaceInfo*)calloc(1, sizeof(InterfaceInfo));
+                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
+                        info->name[63] = '\0';
+                        info->type_id = symtab_next_type_id();
+                        symtab_add_interface(name.text, info);
+                    }
+                }
+            }
+        }
+        cur = lexer_next(&scan);
+    }
+}
+
 AstNode* parser_parse_program(Parser* p) {
     Type void_type;
     memset(&void_type, 0, sizeof(void_type));
@@ -1729,6 +1823,10 @@ AstNode* parser_parse_program(Parser* p) {
     program->ast_resolved_type = void_type;
 
     symtab_init();
+
+    /* Register all class/struct/interface names first, so fields and method
+       signatures can refer to types that are defined later in the source. */
+    parser_register_forward_decls(p);
 
     AstNode* decls = NULL;
     while (!check(p, TOK_EOF)) {

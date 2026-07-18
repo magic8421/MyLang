@@ -58,6 +58,11 @@ Source code lives under `src/`:
   and value types (`primitive`, `struct`, `bool`) do not implicitly convert.
   Codegen rejects these mismatches at variable init, assignment, array element
   assignment, and weak/unowned declarations.
+- Top-level `class`, `struct`, and `interface` names are pre-registered before
+  their bodies are parsed, so types can refer to each other regardless of
+  declaration order (e.g., `SdlWindow` can hold an `SdlApp` field while `SdlApp`
+  is defined later). The parser reuses the pre-registered entry when the real
+  definition is reached.
 
 ## Bool and Null Literals
 - `bool` is a primitive type mapping to C `int`; `true`/`false` literals emit `1`/`0`.
