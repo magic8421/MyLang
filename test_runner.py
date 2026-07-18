@@ -97,7 +97,7 @@ def compile_c(src, exe, extra_sources=None):
     extras = ""
     if extra_sources:
         extras = " " + " ".join(extra_sources)
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /I"{testdir}" /Fe:{exe} {src} {runtime_c}{extras}'
+    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /I"{testdir}" /Fo:"{exedir.replace(os.sep, "/")}/" /Fe:{exe} {src} {runtime_c}{extras}'
     r = shell(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
