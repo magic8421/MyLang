@@ -167,6 +167,14 @@ void String_append_bool(String* thiz, int v) {
     mylang_string_append_cstr(thiz, v ? "true" : "false");
 }
 
+int String_equals(String* thiz, String* s) {
+    if (thiz == s) return 1;
+    if (!thiz || !s) return 0;
+    if (thiz->bytes.length != s->bytes.length) return 0;
+    if (thiz->bytes.length == 0) return 1;
+    return memcmp(thiz->bytes.data, s->bytes.data, thiz->bytes.length) == 0;
+}
+
 /* --- Array helpers ------------------------------------------------------ */
 
 static void mylang_array_release_elements(void* data, size_t length, int elem_kind) {

@@ -90,6 +90,7 @@ void String_append_f32(String* thiz, float v);
 void String_append_f64(String* thiz, double v);
 void String_append_char(String* thiz, int8_t c);
 void String_append_bool(String* thiz, int v);
+int  String_equals(String* thiz, String* s);
 
 /* Codegen-only helper: append a C string literal to a String without
    allocating a temporary String object. */

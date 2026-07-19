@@ -2846,6 +2846,21 @@ int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
 }
 """),
 
+    ("string_equals_method", """
+i32 main() {
+    string a = "hello";
+    string b = "hello";
+    string c = "world";
+    if (!a.equals(b)) { return 1; }
+    if (a.equals(c)) { return 2; }
+    if (!a.equals(a)) { return 3; }
+    string empty1;
+    string empty2;
+    if (!empty1.equals(empty2)) { return 4; }
+    return 0;
+}
+""", 0),
+
     ("fstring_tostring", """
 class Asserts {
     native i32 string_equals(string a, string b);

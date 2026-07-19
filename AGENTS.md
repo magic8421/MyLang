@@ -204,7 +204,7 @@ Source code lives under `src/`:
 
 ## Strings and f-strings
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
-- `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`.  There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
+- `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`, and `equals`. There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
 - Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
