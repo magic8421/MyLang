@@ -1254,9 +1254,14 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
         }
     }
     if (callee->ast_kind == AST_MEMBER_ACCESS) {
-    codegen_expr(ctx, callee);
-    } else {
+        codegen_expr(ctx, callee);
+    } else if (callee->ast_kind == AST_IDENT) {
+        if (!fi) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col, "unknown function '%s'", callee->ast_token.text);
+        }
         fprintf(ctx->out, "%s", callee->ast_token.text);
+    } else {
+        codegen_expr(ctx, callee);
     }
     fprintf(ctx->out, "(");
     AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
