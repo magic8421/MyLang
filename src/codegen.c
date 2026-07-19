@@ -62,6 +62,8 @@ struct CodegenContext {
     int          loop_entry_cleanup_count[MAX_LOOP];
     int          loop_break_label_id[MAX_LOOP];
     int          loop_continue_label_id[MAX_LOOP];
+    int          xor_strings;
+    int          xor_str_id;
 };
 
 static int s_last_codegen_error = 0;
@@ -1428,11 +1430,59 @@ static void emit_c_string_literal(CodegenContext* ctx, const char* s) {
     }
 }
 
+static uint8_t xor_string_key(int id) {
+    return (uint8_t)(1 + ((id - 1) % 255));
+}
+
+static void emit_xor_string_array_decl(CodegenContext* ctx, const char* s, int id) {
+    size_t len = strlen(s);
+    if (len == 0) return;
+    uint8_t key = xor_string_key(id);
+    fprintf(ctx->out, "static const uint8_t _xs%d[] = {", id);
+    size_t i;
+    for (i = 0; i < len; i++) {
+        if (i > 0) fprintf(ctx->out, ",");
+        fprintf(ctx->out, "0x%02X", (unsigned char)(s[i] ^ key));
+    }
+    fprintf(ctx->out, "};\n");
+}
+
+static void codegen_collect_xor_strings(CodegenContext* ctx, AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_STRING_LIT) {
+        if (node->xor_str_id == 0 && strlen(node->ast_token.text) > 0) {
+            node->xor_str_id = ++ctx->xor_str_id;
+            emit_xor_string_array_decl(ctx, node->ast_token.text, node->xor_str_id);
+        }
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        codegen_collect_xor_strings(ctx, node->ast_children[i]);
+    }
+    codegen_collect_xor_strings(ctx, node->next);
+}
+
 static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
     const char* s = node->ast_token.text;
-    fprintf(ctx->out, "mylang_string_new(MYLANG_TID_String, \"");
-    emit_c_string_literal(ctx, s);
-    fprintf(ctx->out, "\")");
+    if (ctx->xor_strings) {
+        size_t len = strlen(s);
+        if (len == 0) {
+            fprintf(ctx->out, "mylang_string_new_encrypted(MYLANG_TID_String, NULL, 0, 1)");
+        } else {
+            int id = node->xor_str_id;
+            if (id == 0) {
+                id = ++ctx->xor_str_id;
+                node->xor_str_id = id;
+                emit_xor_string_array_decl(ctx, s, id);
+            }
+            fprintf(ctx->out, "mylang_string_new_encrypted(MYLANG_TID_String, _xs%d, %zu, %u)",
+                    id, len, (unsigned)xor_string_key(id));
+        }
+    } else {
+        fprintf(ctx->out, "mylang_string_new(MYLANG_TID_String, \"");
+        emit_c_string_literal(ctx, s);
+        fprintf(ctx->out, "\")");
+    }
 }
 
 /* Expression entry point.  Reading an unowned reference as a value goes
@@ -2456,7 +2506,11 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
 
     const char* acc = fstring_temp_name("_fs", ctx->fstring_tmp_id++);
     indent_line(ctx, indent);
-    fprintf(ctx->out, "String* %s = mylang_string_new(MYLANG_TID_String, \"\");\n", acc);
+    if (ctx->xor_strings) {
+        fprintf(ctx->out, "String* %s = mylang_string_new_encrypted(MYLANG_TID_String, NULL, 0, 1);\n", acc);
+    } else {
+        fprintf(ctx->out, "String* %s = mylang_string_new(MYLANG_TID_String, \"\");\n", acc);
+    }
     cleanup_add(ctx, acc, 0, 0);
 
     part = node->ast_children[0];
@@ -2464,10 +2518,29 @@ static void codegen_fstring_preamble(CodegenContext* ctx, AstNode* node, int ind
         if (part->ast_kind == AST_STRING_LIT) {
             /* Literal segments are appended directly from the C string; no
                temporary String object is allocated. */
-            indent_line(ctx, indent);
-            fprintf(ctx->out, "mylang_string_append_cstr(%s, \"", acc);
-            emit_c_string_literal(ctx, part->ast_token.text);
-            fprintf(ctx->out, "\");\n");
+            if (ctx->xor_strings) {
+                const char* s = part->ast_token.text;
+                size_t len = strlen(s);
+                if (len == 0) {
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "mylang_string_append_cstr_encrypted(%s, NULL, 0, 1);\n", acc);
+                } else {
+                    int id = part->xor_str_id;
+                    if (id == 0) {
+                        id = ++ctx->xor_str_id;
+                        part->xor_str_id = id;
+                        emit_xor_string_array_decl(ctx, s, id);
+                    }
+                    indent_line(ctx, indent);
+                    fprintf(ctx->out, "mylang_string_append_cstr_encrypted(%s, _xs%d, %zu, %u);\n",
+                            acc, id, len, (unsigned)xor_string_key(id));
+                }
+            } else {
+                indent_line(ctx, indent);
+                fprintf(ctx->out, "mylang_string_append_cstr(%s, \"", acc);
+                emit_c_string_literal(ctx, part->ast_token.text);
+                fprintf(ctx->out, "\");\n");
+            }
         } else {
             /* Owned class/interface subexpressions inside the interpolation
                are extracted into temporaries first so they are evaluated
@@ -4574,7 +4647,7 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
 
 void codegen_program(AstNode* program, FILE* out, FILE* header,
                      const char* source_file, int leak_check,
-                     const char* header_include_name) {
+                     const char* header_include_name, int xor_strings) {
     CodegenContext ctx;
     memset(&ctx, 0, sizeof(ctx));
     ctx.out = out;
@@ -4582,6 +4655,8 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     ctx.header_include_name = header_include_name ? header_include_name : "";
     ctx.last_loc_line = -1;
     s_last_codegen_error = 0;
+    ctx.xor_strings = xor_strings;
+    ctx.xor_str_id = 0;
     ctx.source_file = source_file ? source_file : "";
     escape_source_file(&ctx, ctx.source_file);
 
@@ -4649,6 +4724,11 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     fprintf(ctx.out, "#else\n");
     fprintf(ctx.out, "#define __debugbreak() __builtin_trap()\n");
     fprintf(ctx.out, "#endif\n\n");
+
+    if (ctx.xor_strings) {
+        codegen_collect_xor_strings(&ctx, program);
+        fprintf(ctx.out, "\n");
+    }
 
     emit_interface_c_helpers(&ctx);
     emit_interface_default_methods(&ctx);

@@ -60,11 +60,14 @@ int main(int argc, char** argv) {
     const char* src_path = NULL;
     const char* out_path = "out.c";
     int leak_check = 0;
+    int xor_strings = 0;
 
     int argi;
     for (argi = 1; argi < argc; argi++) {
         if (strcmp(argv[argi], "--leak-check") == 0) {
             leak_check = 1;
+        } else if (strcmp(argv[argi], "--xor-strings") == 0) {
+            xor_strings = 1;
         } else if (!src_path) {
             src_path = argv[argi];
         } else {
@@ -73,7 +76,7 @@ int main(int argc, char** argv) {
     }
 
     if (!src_path) {
-        fprintf(stderr, "usage: mylang [--leak-check] <source.my> [output.c]\n");
+        fprintf(stderr, "usage: mylang [--leak-check] [--xor-strings] <source.my> [output.c]\n");
         return 1;
     }
 
@@ -114,7 +117,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    codegen_program(ast, out, header, src_path, leak_check, header_name);
+    codegen_program(ast, out, header, src_path, leak_check, header_name, xor_strings);
     fclose(out);
     fclose(header);
 

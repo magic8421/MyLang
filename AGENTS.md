@@ -38,10 +38,19 @@ Source code lives under `src/`:
 - Common codegen diagnostics include:
   - `unknown identifier 'x'`: an identifier is not in scope as a local, parameter,
     field, or builtin (function names are resolved separately at call sites).
+  - `unknown function 'f'`: the callee of a call is not a known function, method,
+    or in-scope local variable (e.g., the name was never declared).
   - `method 'ClassName.method' does not exist`: a method call targets a method
     not declared on the receiver's class or interface type.
 - The printed path is the input path as given on the command line (relative if
   the user passed a relative path).
+
+## Compiler Flags
+- `mylang --leak-check source.my out.c` — enables the `MYLANG_LEAK_CHECK` macro
+  so the generated program tracks every class/interface allocation and prints
+  unreleased objects at exit.
+- `mylang --xor-strings source.my out.c` — encrypts every source string literal
+  at compile time; see "String Encryption" below.
 
 ## Codegen Conventions
 - `CodegenContext` holds the output stream in `ctx->out`. Helper functions in `codegen.c` do not take a separate `FILE*` parameter.
@@ -316,6 +325,21 @@ Source code lives under `src/`:
 - Stack traces are hashed into a 512-bucket table so identical call stacks share one `LeakTrace` record.
 - The list and hash table are protected by a global lock: `SRWLOCK` on Windows (`SRWLOCK_INIT`), `pthread_mutex_t` with `PTHREAD_MUTEX_INITIALIZER` on POSIX.
 - In `--mode debug` or when `--leak-check` is enabled, the test runner prints captured stdout/stderr so the CRT leak dump (`_CrtDumpMemoryLeaks`) or the MyLang leak report is visible.
+
+## String Encryption (`--xor-strings`)
+- Optional compiler flag: `mylang --xor-strings source.my out.c`.
+- When enabled, every source string literal is XOR-encrypted at compile time with
+  a per-literal 8-bit key. The generated C file contains `static const uint8_t _xsN[]`
+  cipher arrays and no original source text.
+- Codegen uses:
+  - `mylang_string_new_encrypted(MYLANG_TID_String, _xsN, len, key)` for plain literals.
+  - `mylang_string_append_cstr_encrypted(acc, _xsN, len, key)` for f-string literal segments.
+  - `mylang_string_new_encrypted(..., NULL, 0, 1)` for empty strings.
+- The runtime decrypts the bytes into a `String` object. This is a convenience
+  obfuscation switch, not strong cryptography; each literal is trivially recovered
+  from the key shipped in the generated C.
+- The flag does not affect string semantics at runtime: interpolation, `print`,
+  `String.equals`, and IToString all work identically.
 
 ## Lexer Safety
 - `read_char_literal` has EOF guards after opening quote, after backslash, and before closing quote peek.

@@ -76,6 +76,7 @@ typedef struct String {
 
 void _mylang_dtor_String(String* p);
 String* mylang_string_new(uint32_t type_id, const char* cstr);
+String* mylang_string_new_encrypted(uint32_t type_id, const uint8_t* data, size_t len, uint8_t key);
 void    mylang_print_string(String* s);
 void    mylang_print_i32(int32_t v);
 
@@ -95,6 +96,7 @@ int  String_equals(String* thiz, String* s);
 /* Codegen-only helper: append a C string literal to a String without
    allocating a temporary String object. */
 void mylang_string_append_cstr(String* thiz, const char* cstr);
+void mylang_string_append_cstr_encrypted(String* thiz, const uint8_t* data, size_t len, uint8_t key);
 
 /* Stack trace support.  Defined as translation-unit globals in runtime.c;
    macros below are used by generated code. */

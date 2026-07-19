@@ -84,6 +84,19 @@ String* mylang_string_new(uint32_t type_id, const char* cstr) {
     return s;
 }
 
+String* mylang_string_new_encrypted(uint32_t type_id, const uint8_t* data, size_t len, uint8_t key) {
+    String* s = (String*)mylang_new_object(sizeof(String), type_id, (void (*)(void*))_mylang_dtor_String);
+    if (len > 0) {
+        mylang_array_resize(&s->bytes, len, 1, MYLANG_ELEM_PRIMITIVE);
+        size_t i;
+        char* dest = (char*)s->bytes.data;
+        for (i = 0; i < len; i++) {
+            dest[i] = (char)(data[i] ^ key);
+        }
+    }
+    return s;
+}
+
 void mylang_print_string(String* s) {
     if (s && s->bytes.data) {
         fwrite(s->bytes.data, 1, s->bytes.length, stdout);
@@ -121,6 +134,18 @@ void mylang_string_append_cstr(String* thiz, const char* cstr) {
     if (thiz && cstr) {
         str_append_bytes(thiz, cstr, strlen(cstr));
     }
+}
+
+void mylang_string_append_cstr_encrypted(String* thiz, const uint8_t* data, size_t len, uint8_t key) {
+    if (len == 0 || !thiz) return;
+    char* buf = (char*)malloc(len);
+    if (!buf) return;
+    size_t i;
+    for (i = 0; i < len; i++) {
+        buf[i] = (char)(data[i] ^ key);
+    }
+    str_append_bytes(thiz, buf, len);
+    free(buf);
 }
 
 void String_append_i32(String* thiz, int32_t v) {

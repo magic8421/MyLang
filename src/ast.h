@@ -112,6 +112,7 @@ struct AstNode {
     char     ast_temp_name[64];
     char     ast_match_var[64];
     int      ast_is_native;
+    int      xor_str_id;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
     /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */

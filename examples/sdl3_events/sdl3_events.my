@@ -32,9 +32,17 @@ class SdlApp {
 
 class Logger : SdlEventListener {
     public unowned SdlApp app;
+    private string lastMsg;
     void onEvent(SdlEvent e) {
+        //app.eventTypeToString(e.type);
+        if (e.type == 1024) {
+            return;
+        }
         string type_str = this.app.eventTypeToString(e.type);
-        print(f"SDL Event: {type_str} {e.code}");
+        if (type_str == this.lastMsg) {
+            return;
+        }
+        print(f"SDL Event: [{e.type}]{type_str} {e.code}");
     }
 }
 
