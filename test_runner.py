@@ -1341,6 +1341,96 @@ i32 main() {
 }
 """, 42),
 
+    ("struct_nested_basic", """
+struct Rect {
+    Point tl;
+    Point br;
+}
+struct Point {
+    i32 x;
+    i32 y;
+}
+i32 main() {
+    Rect r;
+    r.tl.x = 1;
+    r.tl.y = 2;
+    r.br.x = 3;
+    r.br.y = 4;
+    return r.tl.x + r.tl.y + r.br.x + r.br.y;
+}
+""", 10),
+
+    ("struct_nested_copy", """
+struct Inner {
+    i32 v;
+}
+struct Outer {
+    Inner a;
+    Inner b;
+}
+i32 main() {
+    Outer o1;
+    o1.a.v = 10;
+    o1.b.v = 20;
+    Outer o2 = o1;
+    o2.a.v = 99;
+    return o1.a.v + o2.a.v + o2.b.v;
+}
+""", 129),
+
+    ("struct_nested_in_class", """
+struct Point {
+    i32 x;
+    i32 y;
+}
+struct Line {
+    Point a;
+    Point b;
+}
+class Shape {
+    Line line;
+}
+i32 main() {
+    Shape s = new Shape;
+    s.line.a.x = 5;
+    s.line.b.y = 7;
+    return s.line.a.x + s.line.b.y;
+}
+""", 12),
+
+    ("struct_nested_array", """
+struct Point {
+    i32 x;
+}
+struct Pair {
+    Point p;
+    Point q;
+}
+i32 main() {
+    Pair[] arr;
+    arr.resize(2);
+    arr[0].p.x = 1;
+    arr[0].q.x = 2;
+    arr[1].p.x = 3;
+    arr[1].q.x = 4;
+    return arr[0].p.x + arr[0].q.x + arr[1].p.x + arr[1].q.x;
+}
+""", 10),
+
+    ("struct_class_field_forward", """
+class Holder {
+    Point p;
+}
+struct Point {
+    i32 x;
+}
+i32 main() {
+    Holder h = new Holder;
+    h.p.x = 21;
+    return h.p.x * 2;
+}
+""", 42),
+
     ("weak_basic", """
 class Node {
     i32 v;
@@ -4330,7 +4420,28 @@ struct S {
 i32 main() {
     return 0;
 }
-""", "struct fields must be primitive types"),
+""", "struct fields must be primitive or struct types"),
+
+    ("bad_struct_recursive", """
+struct A {
+    A a;
+}
+i32 main() {
+    return 0;
+}
+""", "recursively contains itself"),
+
+    ("bad_struct_cycle", """
+struct A {
+    B b;
+}
+struct B {
+    A a;
+}
+i32 main() {
+    return 0;
+}
+""", "recursively contains itself"),
 
     ("bad_object_to_class", """
 class Node {

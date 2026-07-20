@@ -76,6 +76,8 @@ typedef struct StructInfo {
     int  field_count;
     char field_names[MAX_FIELDS][64];
     Type field_types[MAX_FIELDS];
+    int  visit_state;        /* scratch marker for cycle detection */
+    int  emitted_in_header;  /* set once the C definition has been emitted */
     struct StructInfo* next;
 } StructInfo;
 
@@ -141,6 +143,7 @@ InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
 void symtab_add_class_impl(ClassInfo* cls, const char* iface_name);
 
 int  symtab_validate_impls(void);
+int  symtab_validate_structs(void);
 int  symtab_validate_generic_method_calls(ClassInfo* generic_def);
 
 int  symtab_next_type_id(void);

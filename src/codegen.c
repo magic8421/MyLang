@@ -447,6 +447,34 @@ static void emit_struct_def_to_header(CodegenContext* ctx, StructInfo* si) {
     fprintf(h, "} %s;\n\n", si->name);
 }
 
+/* Emit a struct's C definition after the definitions of all structs it
+   contains, so nested struct fields always refer to a completed type. */
+static void emit_struct_def_ordered(CodegenContext* ctx, StructInfo* si) {
+    if (!si || si->emitted_in_header) return;
+    int i;
+    for (i = 0; i < si->field_count; i++) {
+        Type* ft = &si->field_types[i];
+        if (ft->type_kind == TYPE_STRUCT) {
+            emit_struct_def_ordered(ctx, symtab_find_struct(ft->class_name));
+        }
+    }
+    si->emitted_in_header = 1;
+    emit_struct_def_to_header(ctx, si);
+}
+
+/* Emit the C definitions of all struct types a class embeds by value, so
+   the class struct definition can be emitted regardless of declaration
+   order.  Array fields embed only MyArray and need no dependency. */
+static void emit_class_field_struct_deps(CodegenContext* ctx, ClassInfo* ci) {
+    int i;
+    for (i = 0; i < ci->field_count; i++) {
+        Type* ft = &ci->field_types[i];
+        if (!ft->is_array && ft->type_kind == TYPE_STRUCT) {
+            emit_struct_def_ordered(ctx, symtab_find_struct(ft->class_name));
+        }
+    }
+}
+
 static void emit_header_type_ids(CodegenContext* ctx) {
     FILE* h = ctx->header;
     ClassInfo* ci = class_list;
@@ -4660,7 +4688,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     ctx.source_file = source_file ? source_file : "";
     escape_source_file(&ctx, ctx.source_file);
 
-    if (symtab_validate_impls() != 0) {
+    if (symtab_validate_impls() != 0 || symtab_validate_structs() != 0) {
         fprintf(stderr, "error: semantic errors found, no output generated\n");
         ctx.codegen_error = 1;
         s_last_codegen_error = 1;
@@ -4674,17 +4702,20 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     emit_header_forward_decls(&ctx);
 
     /* Emit struct and class definitions before interface typedefs so that
-       interface method signatures can reference value types like SdlEvent. */
+       interface method signatures can reference value types like SdlEvent.
+       Structs are emitted in dependency order (inner before outer), and
+       struct types embedded in class fields are emitted before the class. */
     {
         AstNode* decl = program->ast_children[0];
         while (decl) {
             if (decl->ast_kind == AST_STRUCT_DECL) {
                 StructInfo* si = symtab_find_struct(decl->ast_token.text);
-                if (si) emit_struct_def_to_header(&ctx, si);
+                if (si) emit_struct_def_ordered(&ctx, si);
             } else if (decl->ast_kind == AST_CLASS_DECL) {
                 ClassInfo* ci = symtab_find_class_by_mangled(decl->ast_token.text);
                 if (!ci) ci = symtab_find_class(decl->ast_token.text);
                 if (ci && !ci->is_generic) {
+                    emit_class_field_struct_deps(&ctx, ci);
                     emit_class_struct_def_to_header(&ctx, ci, class_c_name(ci));
                 }
             }
@@ -4694,6 +4725,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
         ClassInfo* ci = class_list;
         while (ci) {
             if (ci->is_instantiation && ci->generic_ast) {
+                emit_class_field_struct_deps(&ctx, ci);
                 emit_class_struct_def_to_header(&ctx, ci, class_c_name(ci));
             }
             ci = ci->next;

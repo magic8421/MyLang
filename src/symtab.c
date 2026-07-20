@@ -534,6 +534,43 @@ int symtab_validate_impls(void) {
     return errors;
 }
 
+/* Detect recursive struct nesting: a struct that directly or indirectly
+   contains itself would have infinite size.  Three-color DFS over the
+   struct field graph (visit_state: 0 = unvisited, 1 = on stack, 2 = done). */
+static int struct_cycle_dfs(StructInfo* si) {
+    if (si->visit_state == 2) return 0;
+    if (si->visit_state == 1) {
+        fprintf(stderr, "error: struct '%s' recursively contains itself\n", si->name);
+        return 1;
+    }
+    si->visit_state = 1;
+    int i;
+    for (i = 0; i < si->field_count; i++) {
+        Type* ft = &si->field_types[i];
+        if (ft->type_kind == TYPE_STRUCT) {
+            StructInfo* dep = symtab_find_struct(ft->class_name);
+            if (dep && struct_cycle_dfs(dep)) return 1;
+        }
+    }
+    si->visit_state = 2;
+    return 0;
+}
+
+int symtab_validate_structs(void) {
+    int errors = 0;
+    StructInfo* si = struct_list;
+    while (si) {
+        si->visit_state = 0;
+        si = si->next;
+    }
+    si = struct_list;
+    while (si) {
+        if (si->visit_state == 0 && struct_cycle_dfs(si)) errors++;
+        si = si->next;
+    }
+    return errors;
+}
+
 int symtab_next_type_id(void) {
     return next_type_id++;
 }
