@@ -4753,6 +4753,8 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     fprintf(ctx.out, "#ifdef _MSC_VER\n");
     fprintf(ctx.out, "#include <intrin.h>\n");
     fprintf(ctx.out, "#include <crtdbg.h>\n");
+    fprintf(ctx.out, "/* Loops always emit a _my_continue label; it is unreferenced when the body has no 'continue'. */\n");
+    fprintf(ctx.out, "#pragma warning(disable: 4102)\n");
     fprintf(ctx.out, "#else\n");
     fprintf(ctx.out, "#define __debugbreak() __builtin_trap()\n");
     fprintf(ctx.out, "#endif\n\n");

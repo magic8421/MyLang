@@ -53,6 +53,7 @@ Source code lives under `src/`:
 ## Codegen Conventions
 - `CodegenContext` holds the output stream in `ctx->out`. Helper functions in `codegen.c` do not take a separate `FILE*` parameter.
 - The current source line is tracked in the thread-local `__my_line` variable. The compiler emits `MY_LOC(line)` before expressions that may trigger runtime panics (e.g., array access) so `my_panic` can report the offending line.
+- `break`/`continue` compile to `goto _my_breakN` / `goto _my_continueN` after emitting scope cleanup, so per-iteration releases are never skipped. Loops always emit the `_my_continueN` label even when the body has no `continue`, so the generated C preamble disables MSVC warning C4102 (unreferenced label) via `#pragma warning(disable: 4102)`.
 
 ## Type System
 - Primitives: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `bool`, `void`.
