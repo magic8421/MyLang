@@ -22,12 +22,13 @@ if not exist "%VSPATH%" (
 call "%VSPATH%" >nul 2>&1
 
 set "MYLANG=build\mylang.exe"
+set "MY_LANG_FLAGS=--xor-strings"
 set "SRC=examples\sdl3_events\sdl3_events.my"
 set "OUT=build\sdl3_events"
 
 if not exist %OUT% mkdir %OUT%
 
-"%MYLANG%" "%SRC%" "%OUT%\sdl3_events.c"
+"%MYLANG%" %MY_LANG_FLAGS% "%SRC%" "%OUT%\sdl3_events.c"
 if %ERRORLEVEL% neq 0 (
     echo ERROR: mylang compilation failed
     exit /b 1

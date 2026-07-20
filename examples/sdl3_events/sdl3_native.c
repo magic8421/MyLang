@@ -188,6 +188,19 @@ static bool SDLCALL sdl_event_filter(void* userdata, SDL_Event* event) {
         if (g_listeners[i].active) {
             SdlEventListener* l = &g_listeners[i].listener;
             l->vtable->onEvent(l->data, ev);
+            switch (event->type) {
+                case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                    {
+                        SdlMouseButtonEvent ev = { 0 };
+                        ev.button = event->button.button;
+                        ev.x = event->button.x;
+                        ev.y = event->button.y;
+                        l->vtable->onMouseButtonDown(l->data, &ev);
+                    }
+                    break;
+                default:
+                    break;
+            }
         }
     }
     ReleaseSRWLockShared(&g_lock);
@@ -204,7 +217,7 @@ SdlWindow* SdlApp_createWindow(SdlApp* thiz, int32_t w, int32_t h) {
     (void)thiz;
     g_window = SDL_CreateWindow("MyLang SDL3 events", w, h, 0);
     SdlWindow *win = mylang_new_object(sizeof(SdlWindow), MYLANG_TID_SdlWindow, _mylang_dtor_SdlWindow);
-    win->handle = g_window;
+    win->handle = (int64_t)g_window;
     return win;
 }
 

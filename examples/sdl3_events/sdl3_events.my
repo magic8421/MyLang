@@ -3,8 +3,15 @@ struct SdlEvent {
     u32 code;
 }
 
+struct SdlMouseButtonEvent {
+    u8 button;
+    f32 x;
+    f32 y;
+}
+
 interface SdlEventListener {
     void onEvent(SdlEvent e);
+    void onMouseButtonDown(ref SdlMouseButtonEvent ev) {}
 }
 
 
@@ -25,24 +32,24 @@ class SdlApp {
     native void pump();
     native i32 shouldQuit();
     native void delay(i32 ms);
-    native void destroyWindow(u64 win);
+    native void destroyWindow(SdlWindow win);
     native void quit();
     native string eventTypeToString(u32 type);
 }
 
 class Logger : SdlEventListener {
     public unowned SdlApp app;
-    private string lastMsg;
-    void onEvent(SdlEvent e) {
-        //app.eventTypeToString(e.type);
-        if (e.type == 1024) {
-            return;
+    override void onEvent(SdlEvent e) {
+        match(e.type) {
+            1024 => { return; } // SDL_EVENT_MOUSE_MOTION
+            516 => { return; } // SDL_EVENT_WINDOW_EXPOSED
+            517 => { return; } // SDL_EVENT_WINDOW_MOVED
         }
         string type_str = this.app.eventTypeToString(e.type);
-        if (type_str == this.lastMsg) {
-            return;
-        }
         print(f"SDL Event: [{e.type}]{type_str} {e.code}");
+    }
+    override void onMouseButtonDown(ref SdlMouseButtonEvent e) {
+        print(f"SDL Event: SdlMouseButtonEvent {e.button} {e.x} {e.y}");
     }
 }
 
