@@ -17,7 +17,7 @@ Keep everything ASCII.
 - Windows MSVC build: run `build.bat` (it calls `vcvars64.bat`).
 - The compiler itself is built with AddressSanitizer (`/fsanitize=address`).
 - Build artifacts go to `build/` (mylang.exe, .obj, .pdb, ASan DLL); test executables go to `build/test/`.
-- Run the test suite with: `python test_runner.py`.
+- Run the test suite with: `python test_runner.py` (runs both release and debug modes by default; use `--mode release` or `--mode debug` to run just one).
 - Generated C files are compiled with `cl /std:c11`.
 
 ## Source Layout

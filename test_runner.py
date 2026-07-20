@@ -4696,26 +4696,7 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
     return True, f"exit {exit_code}"
 
 
-def main():
-    global TEST_MODE
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["release", "debug"], default="release",
-                        help="release = ASan + release CRT, debug = no ASan + debug CRT")
-    parser.add_argument("--leak-check", action="store_true",
-                        help="pass --leak-check to mylang.exe to enable memory leak tracking")
-    parser.add_argument("filters", nargs="*", default=None,
-                        help="optional test name keywords to filter (case-insensitive)")
-    args = parser.parse_args()
-    TEST_MODE = args.mode
-    leak_check = args.leak_check
-    filters = [f.lower() for f in args.filters] if args.filters else None
-
-    if not os.path.exists(MYLANG_EXE):
-        print("Building mylang.exe...")
-        if not compile_mylang():
-            sys.exit(1)
-
+def run_suite(leak_check, filters):
     asan_dll_dir = ""
     if TEST_MODE == "release":
         asan_dll_dir = ensure_asan_dll()
@@ -4764,7 +4745,35 @@ def main():
         print(f"\n{passed}/{total} passed, {failed} failed  (filtered from {all_tests} tests)")
     else:
         print(f"\n{passed}/{total} passed, {failed} failed")
-    sys.exit(0 if failed == 0 else 1)
+    return failed
+
+
+def main():
+    global TEST_MODE
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["release", "debug"], default=None,
+                        help="release = ASan + release CRT, debug = no ASan + debug CRT (default: run both)")
+    parser.add_argument("--leak-check", action="store_true",
+                        help="pass --leak-check to mylang.exe to enable memory leak tracking")
+    parser.add_argument("filters", nargs="*", default=None,
+                        help="optional test name keywords to filter (case-insensitive)")
+    args = parser.parse_args()
+    leak_check = args.leak_check
+    filters = [f.lower() for f in args.filters] if args.filters else None
+
+    modes = [args.mode] if args.mode else ["release", "debug"]
+    total_failed = 0
+    for mode in modes:
+        TEST_MODE = mode
+        if len(modes) > 1:
+            print(f"===== mode: {mode} =====")
+        # The compiler flags differ per mode (ASan vs debug CRT), so rebuild.
+        print(f"Building mylang.exe ({mode})...")
+        if not compile_mylang():
+            sys.exit(1)
+        total_failed += run_suite(leak_check, filters)
+    sys.exit(0 if total_failed == 0 else 1)
 
 if __name__ == "__main__":
     main()
