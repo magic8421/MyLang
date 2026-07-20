@@ -16,9 +16,8 @@ Keep everything ASCII.
 ## Build & Test
 - Windows MSVC build: run `build.bat` (it calls `vcvars64.bat`).
 - The compiler itself is built with AddressSanitizer (`/fsanitize=address`).
-- Build artifacts go to `build/` directory (mylang.exe, .obj, .pdb, ASan DLL).
+- Build artifacts go to `build/` (mylang.exe, .obj, .pdb, ASan DLL); test executables go to `build/test/`.
 - Run the test suite with: `python test_runner.py`.
-- Test executables go to `build/test/`.
 - Generated C files are compiled with `cl /std:c11`.
 
 ## Source Layout
@@ -30,7 +29,8 @@ Source code lives under `src/`:
 
 ## Error Message Format
 - All compiler diagnostics are emitted as `path(line,col): error: message`
-  (MSVC / VS Code problem-matcher style).
+  (MSVC / VS Code problem-matcher style). The printed path is the input path
+  as given on the command line (relative if the user passed a relative path).
 - Lexer/parser errors use `Lexer.filename` (set from `src_path` in `src/main.c`)
   and `parser_filename(p)` in `src/parser.c`.
 - Codegen errors use `CodegenContext.source_file` via the `codegen_report_error()`
@@ -42,8 +42,6 @@ Source code lives under `src/`:
     or in-scope local variable (e.g., the name was never declared).
   - `method 'ClassName.method' does not exist`: a method call targets a method
     not declared on the receiver's class or interface type.
-- The printed path is the input path as given on the command line (relative if
-  the user passed a relative path).
 
 ## Compiler Flags
 - `mylang --leak-check source.my out.c` — enables the `MYLANG_LEAK_CHECK` macro
@@ -64,14 +62,8 @@ Source code lives under `src/`:
 - `TYPE_OBJECT` is the top reference type (`void*` in C); see "The object Type" section.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`, `TYPE_IS_UNOWNED = 0x08000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `is_unowned`, `type_id`.
-- `T[]` is a value-type vector (`MyArray`), not reference-counted and not copyable by assignment. Transfer is explicit via `move_to(ref)` and `copy_to(ref)`.
-- `T[] a;` declares a zero-initialized empty vector; `a.push(x)` will auto-grow from capacity 0.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
-- Reference-like types (`class`, `interface`, `object`, including weak/unowned)
-  and value types (`primitive`, `struct`, `bool`) do not implicitly convert.
-  Codegen rejects these mismatches at variable init, assignment, array element
-  assignment, and weak/unowned declarations.
 - Top-level `class`, `struct`, and `interface` names are pre-registered before
   their bodies are parsed, so types can refer to each other regardless of
   declaration order (e.g., `SdlWindow` can hold an `SdlApp` field while `SdlApp`
@@ -80,7 +72,7 @@ Source code lives under `src/`:
 
 ## Bool and Null Literals
 - `bool` is a primitive type mapping to C `int`; `true`/`false` literals emit `1`/`0`.
-- Comparison (`== != < <= > >=`), logical (`&& ||`), and logical-not (`!`) expressions have type `bool` (changed in `resolve_type`; previously `i32`).
+- Comparison (`== != < <= > >=`), logical (`&& ||`), and logical-not (`!`) expressions have type `bool`.
 - Strict bool rule: bool and numeric types do not implicitly convert. Checked at the assignment boundaries — variable initializers, assignments, call arguments, and `return` — via `bool_mismatch` in codegen.c. `bool b = 5;`, `i32 x = true;`, and `i32 x = a < b;` are compile errors.
 - Reference/value type mismatch: reference-like types (`class`/`interface`/`object`,
   including weak/unowned) and value types (`primitive`/`struct`/`bool`) do not
@@ -91,11 +83,10 @@ Source code lives under `src/`:
   types may only be compared with other reference-like types (or `null` for
   equality); `win == 0` is a compile error.
 - Conditions are NOT required to be bool: `if (ptr)`, `while (w.lock())`, and `while (1)` keep C truthiness semantics.
-- bool does not support compound assignment or `++`/`--` (it is not in the primitive-numeric lists, so the existing checks reject it automatically).
+- bool does not support compound assignment or `++`/`--`.
 - f-string interpolation of bool prints `true`/`false` via the runtime method `String_append_bool`.
 - `null` is a literal for reference types: class (including `string`), interface, weak class, and weak interface. It is allowed in variable initializers, assignments (locals, fields, array elements), `==`/`!=` comparisons, call arguments, and `return`.
-- Generated shape of null: `NULL` for class/weak class pointers, `{ NULL, NULL }` for interface and weak interface fat pointers.
-- Interface/null comparison emits `.data == NULL`; weak interface/null emits `.wr == NULL`.
+- Generated shape of null: `NULL` for class/weak class pointers, `{ NULL, NULL }` for interface and weak interface fat pointers. Interface/null comparison emits `.data == NULL`; weak interface/null emits `.wr == NULL`.
 - null is rejected at compile time for: primitive/bool/struct/array targets, `unowned` references (declaration, assignment, argument), arithmetic and relational operators, member access and method calls, array indexing, `as` casts, `match` expressions, and f-string interpolation.
 - `mylang_weak_init(NULL)` returns NULL (guard in runtime.c), which makes the weak-class codegen paths (init, assignment, array elements, push) safe without special-casing.
 
@@ -113,7 +104,7 @@ Source code lives under `src/`:
 - Per-member modifiers on class fields and methods: `private i32 x;`, `private i32 helper() { ... }`. Parsed in the same modifier loop as `native`/`override`, in any order.
 - Default is `public`; `public` may be written explicitly. `public` + `private` together is a compile error.
 - Access rule (C++ style): a private member is visible only inside methods of the same class — any instance of that class (`this.x` and `other.x` both work), not from other classes or free functions.
-- Not supported on structs (pure data value types), interfaces (methods are inherently public), or top-level functions/types — these positions produce a dedicated parse error.
+- Not supported on structs, interfaces, or top-level functions/types — these positions produce a dedicated parse error.
 - Interface constraints: a method implementing an interface method must be public (`symtab_validate_impls` rejects a private implementation); `private` + `override` is a compile error.
 - Storage: `ClassInfo.field_private[MAX_FIELDS]` parallels `field_types`; `MethodInfo.is_private`. Generic instantiations clone both.
 - Enforcement is compile-time only: `codegen_member_access` (fields) and `codegen_call` (methods) check against `CodegenContext.current_class`, which `codegen_method_decl` sets while emitting a method body (NULL in free functions and interface default methods). f-string interpolation rejects a private `toString`.
@@ -131,7 +122,6 @@ Source code lives under `src/`:
 - Operands must be integer types (`i8/i16/i32/i64`, `u8/u16/u32/u64`) — floats, bool, and reference types are compile-time errors (`operator '<op>' requires integer operands`).
 - The result type is the left operand's type (same as arithmetic); `~` yields the operand type. Shift counts are unchecked (C semantics; `>>` on signed values is an arithmetic shift on MSVC).
 - bool logic continues to use `&&`, `||`, `!`; there are no bool `&`/`|` operators.
-- Bitwise compound assignments (`&=`, `|=`, `^=`, `<<=`, `>>=`) require integer types; see "Compound Assignment Operators".
 
 ## Const Value Types
 - `const <primitive> name = expr;` declares a read-only local: `i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`, `bool`. An initializer is required.
@@ -158,7 +148,6 @@ Source code lives under `src/`:
 - `break` exits the innermost loop; `continue` skips to the next iteration. Both correctly run cleanup for local variables.
 
 ## Match Statement
-
 - Syntax: `match (expr) { ClassName var => { body } ... else => { body } }`.
 - Arms are evaluated in order; the first matching arm runs and the rest are skipped.
 - Type-pattern arms match the concrete class type of an interface or class expression:
@@ -170,7 +159,7 @@ Source code lives under `src/`:
   if it is owned by the expression.
 - Binding variables are scoped to the arm body and do not participate in reference counting.
 
-## Interface System (Phase 1 + Phase 2 weak interfaces)
+## Interface System
 - Syntax: `interface Name { method_sigs; }`, `class Foo : Iface1, Iface2 { ... }`.
 - Multiple interfaces per class are supported via comma-separated `:` list.
 - Interface values are fat pointers: `{void* data, const VTable* vtable}` struct in generated C.
@@ -189,7 +178,7 @@ Source code lives under `src/`:
 - Interface parameters pass by value (struct copy). Caller-side guard extraction handles complex expressions.
 - `as` keyword is parsed in `parse_postfix` as a postfix operator.
 
-## Weak Interface Types (Phase 2)
+## Weak Interface Types
 - Syntax: `weak InterfaceName v = obj;` to declare; `v.lock()` returns a strong interface fat pointer.
 - Generated C type is `WeakIFoo { WeakRef* wr; IFooVTable* vt; }` per interface.
 - Conversion helpers are emitted per interface: `mylang_lock_IFoo`, `mylang_weakify_IFoo`, `mylang_weakify_IFoo_owned`, `mylang_weakify_IFoo_from_ptr`, `mylang_weakify_IFoo_from_ptr_owned`.
@@ -204,11 +193,11 @@ Source code lives under `src/`:
 - At the call site the argument must be a local variable and the `ref` keyword is **required** (e.g. `inc(ref a)`, `fill(ref arr)`).
 - Codegen emits `&var` for normal locals and bare `var` when the argument itself is already a `ref` parameter.
 
-## Struct Value Types (Phase 1)
+## Struct Value Types
 - Structs are stack-allocated value types; assignment copies the whole struct.
 - `new StructName` is illegal.
 - `new StructName[N]` creates a dynamic array of structs.
-- Struct fields are restricted to primitive types only.
+- Struct fields are restricted to primitive types and other structs. Nested structs are embedded by value; recursive nesting (direct or indirect) is rejected by `symtab_validate_structs`. In the generated header, struct definitions are emitted in dependency order (inner before outer, and before any class that embeds them).
 - The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements correctly.
 
 ## Strings and f-strings
@@ -216,8 +205,8 @@ Source code lives under `src/`:
 - `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`, and `equals`. There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
-- Codegen emits a temporary `String` accumulator (`_fsN`, tracked by the cleanup list), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`.  Each interpolated expression is evaluated exactly once and in source order.
-- The f-string accumulator is owned (+1) through the cleanup list.  Caller-side
+- Codegen emits a temporary `String` accumulator (`_fsN`), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`. Each interpolated expression is evaluated exactly once and in source order.
+- The accumulator is owned (+1) through the cleanup list, and caller-side
   retain/release guards (`guard_expr_is_owned`) treat `AST_FSTRING` as owned,
   so calls like `print(f"...")` do not emit redundant retain/release pairs.
 - Interpolation dispatch: `string` and primitive types map to `String_append_*`; class types require a `string toString()` method (IToString) which is called directly; interface values dispatch through the vtable.
@@ -245,11 +234,11 @@ Source code lives under `src/`:
 - **Discarded class return**: `(void)mylang_release(call(...))` in expression statements.
 - **This in methods**: retained on entry, released via cleanup. Name mapped to `thiz` in generated C.
 
-## Weak References (Implemented)
+## Weak References
 - Syntax: `weak ClassName v = obj;` to declare, `v.lock()` to acquire.
 - There is no separate control block: the weak count lives inside the object header (`ObjHeader::weak_count`), make_shared style. `WeakRef` is just a typedef of `ObjHeader`, and a weak variable holds a pointer to the header. Codegen only manipulates `WeakRef*` opaquely through the runtime functions.
 - `weak_count` counts live weak shares plus one implicit share held by the object itself: it starts at 1 in `mylang_new_object` and `mylang_release` drops the implicit share after the strong count reaches zero. `weak_count == 0` therefore implies the destructor has already run, and the block is freed exactly once, by whichever release drops the count to zero.
-- While any weak share is held, the object block stays allocated. This is what makes `mylang_lock` safe against a concurrent free; the trade-off is that the shallow object block (header + fields) is freed only when the last weak share dies (the destructor still runs immediately at strong-count zero, same as `make_shared`).
+- While any weak share is held, the object block stays allocated. This is what makes `mylang_lock` safe against a concurrent free; the trade-off is that the shallow object block (header + fields) is freed only when the last weak share dies (the destructor still runs immediately at strong-count zero).
 - `mylang_lock(wr)`: CAS loop on `ObjHeader::refcount`. `refcount == 0` is the liveness test; a successful CAS from a positive value returns a retained (+1) strong pointer, otherwise NULL.
 - `mylang_weak_init(ptr)`: one atomic inc of `weak_count` and returns the header pointer. No allocation and no installation race; the caller always holds a strong reference, so the object is alive while its share is taken.
 - `mylang_weak_init_owned(ptr)`: weakifies an owned strong reference — takes a WeakRef share, then releases the strong reference (used when the statement consumes RHS ownership, e.g. weak array element assignment from a call result).
@@ -260,7 +249,7 @@ Source code lives under `src/`:
 - Cleanup uses `CleanupEntry.is_weak` to dispatch to `mylang_weak_release` vs `mylang_release`.
 - Strong-to-weak parameter conversion is automatic: codegen wraps the argument in `mylang_weak_init()`.
 
-## Unowned References (Implemented)
+## Unowned References
 - Syntax: `unowned ClassName v = obj;` to declare. No `lock()`: the reference is used directly like a strong one (`u.field`, `u.method()`).
 - Semantics (like Swift `unowned(safe)`): non-owning, but every read is checked — reading a dead reference calls `my_panic("unowned reference to dead object")`; reading a never-initialized one panics with `"unowned reference is null"`. Memory-safe: the share pins the object block, so the check can never touch freed memory.
 - Representation: identical to weak — the variable holds a `WeakRef*` (header pointer) and takes a share of the same `ObjHeader::weak_count`. All share management (init, copy, release, cleanup, field destructors) reuses the weak machinery.
@@ -272,11 +261,11 @@ Source code lives under `src/`:
 ## Array / Vector Value Types
 - `T[]` compiles to the C value type `MyArray { size_t capacity; size_t length; void* data; }`.
 - The vector is not reference-counted; its data buffer is allocated with `malloc`/`realloc` and freed with `free` via `mylang_array_free`.
-- Arrays are created empty: `T[] a;` initializes `capacity = length = 0` and `data = NULL`. There is no `new T[N]` syntax.
+- Arrays are created empty: `T[] a;` initializes `capacity = length = 0` and `data = NULL`; `a.push(x)` auto-grows from capacity 0. There is no `new T[N]` syntax.
 - To preallocate capacity use `a.reserve(n)`; to set the initial length use `a.resize(n)`.
 - Arrays cannot be returned by value, passed by value, or assigned with `=`. Use `ref T[]` parameters for mutation and `move_to(ref dst)` / `copy_to(ref dst)` for transfer or duplication.
 - Builtin vector methods: `.push(v)`, `.pop()`, `.reserve(n)`, `.resize(n)`, `.clear()`, `.compact()`, `.move_to(ref dst)`, `.copy_to(ref dst)`.
-- Element access uses `arr[i]` and is bounds-checked at runtime via `mylang_array_at()`.
+- Element access uses `arr[i]` and is bounds-checked at runtime via `mylang_array_at()`; out-of-bounds triggers `my_panic` which calls `abort()`.
 
 ## Cleanup System
 - `CleanupEntry` array tracks class/weak/array variables requiring release at scope exit.
@@ -285,17 +274,11 @@ Source code lives under `src/`:
 - `cleanup_reset` was removed: it zeroed `cleanup_scope_depth`, corrupting state for fallthrough code paths and causing memory leaks.
 - Subsequent `cleanup_pop_scope` calls after returns generate dead code (harmless — after `return` in C, function exits immediately).
 
-## Bounds Checking
-- Arrays use runtime bounds checks via `mylang_array_at()`.
-- Out-of-bounds triggers `my_panic` which calls `abort()`.
-
 ## Method Dispatch
 - Methods name-mangled: `ClassName_method(ClassName* thiz, ...)`.
 - `this` in MyLang source emits as `thiz` in C to avoid C++ keyword conflict.
 - `p.foo(args)` emits as `ClassName_foo(p, args)`.
 - Class name registered early in symtab for self-referential method return types.
-- Calling a method that does not exist on a class or interface is a compile-time error
-  reported by `codegen_call` (`method 'ClassName.method' does not exist`).
 
 ## Native Methods
 - Syntax: `native RetType ClassName.method(Params);` inside a class. Method body is omitted and ends with `;`.
@@ -309,7 +292,7 @@ Source code lives under `src/`:
 ## Runtime Functions
 - `mylang_new_object(sz, type_id)` — allocates ObjHeader + data, refcount=1.
 - `mylang_array_free(a, elem_size, elem_kind)` — releases elements according to kind and frees the data buffer.
-- `mylang_array_at(a, idx, elem_size)` — bounds-checked pointer to element. The current source line is tracked via `MY_LOC(line)` and reported by `my_panic` on out-of-bounds access.
+- `mylang_array_at(a, idx, elem_size)` — bounds-checked pointer to element.
 - `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.
 - `mylang_array_push(a, elem_size, elem_kind, value)` / `mylang_array_pop(a, elem_size, elem_kind)` / `mylang_array_clear(a, elem_size, elem_kind)` / `mylang_array_compact(a, elem_size)` — vector methods.
 - `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.
@@ -317,7 +300,7 @@ Source code lives under `src/`:
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging
-- During compiler development, when need verify no memory leak, run the test suite in debug mode: `python test_runner.py --mode debug`.
+- To verify there are no memory leaks, run the test suite in debug mode: `python test_runner.py --mode debug`.
 - Tracks only `ObjHeader` based allocations (class instances and interface objects). Arrays are not tracked by the MyLang leak list.
 - When enabled, the generated C code adds `next`/`prev`/`alloc_trace` to `ObjHeader` and records every allocation in a global circular doubly-linked list.
 - `mylang_release` removes the block from the list when the destructor runs (the memory itself may be freed later, once the last weak share is gone).
@@ -351,15 +334,11 @@ Source code lives under `src/`:
 - All `snprintf` and `strscpy` call sites are checked.
 
 ## Known Limitations
-- `ref` arguments must be local variables; field/array-element arguments are rejected.
-- `out`/`in` keywords were removed for simplicity.
-- Arrays cannot be returned by value, passed by value, or assigned directly; use `ref T[]` parameters and `move_to(ref)` / `copy_to(ref)`.
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
-- Interface default method implementations are now supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
+- Interface default method implementations are supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
 - `match` does not support `true`/`false` literal arms; `match (null)` is a compile error.
 - Mixed arithmetic containing bool operands (e.g. `1 + (a < b)`) is not checked at the operand level; C promotion rules apply. The strict bool rule is enforced only at assignment boundaries.
-- Access modifiers are class-only: structs, interfaces, and top-level declarations do not accept `public`/`private`. Enforcement is compile-time only; generated C does not hide private members.
 - `const` covers only primitive value types; const fields and const-qualified reference types are not supported yet.
 - No AST deallocation function (one-shot compiler).
 
