@@ -387,7 +387,7 @@ static void emit_interface_forward_decls(CodegenContext* ctx) {
         fprintf(h, "} %s;\n\n", ii->name);
         fprintf(h, "typedef struct Weak%s {\n", ii->name);
         fprintf(h, "    WeakRef* wr;\n");
-        fprintf(h, "    %sVTable* vt;\n", ii->name);
+        fprintf(h, "    const %sVTable* vt;\n", ii->name);
         fprintf(h, "} Weak%s;\n\n", ii->name);
         ii = ii->next;
     }
@@ -4264,7 +4264,7 @@ static void emit_interface_c_helpers(CodegenContext* ctx) {
     InterfaceInfo* ii = interface_list;
     while (ii) {
         /* Weak interface lock helper returns a strong fat pointer */
-        fprintf(ctx->out, "static %s mylang_lock_%s(WeakRef* wr, %sVTable* vt) {\n",
+        fprintf(ctx->out, "static %s mylang_lock_%s(WeakRef* wr, const %sVTable* vt) {\n",
                 ii->name, ii->name, ii->name);
         fprintf(ctx->out, "    void* _p = mylang_lock(wr);\n");
         fprintf(ctx->out, "    %s _r;\n", ii->name);
@@ -4291,7 +4291,7 @@ static void emit_interface_c_helpers(CodegenContext* ctx) {
         fprintf(ctx->out, "    return w;\n");
         fprintf(ctx->out, "}\n\n");
 
-        fprintf(ctx->out, "static Weak%s mylang_weakify_%s_from_ptr(void* p, %sVTable* vt) {\n",
+        fprintf(ctx->out, "static Weak%s mylang_weakify_%s_from_ptr(void* p, const %sVTable* vt) {\n",
                 ii->name, ii->name, ii->name);
         fprintf(ctx->out, "    Weak%s w;\n", ii->name);
         fprintf(ctx->out, "    w.wr = mylang_weak_init(p);\n");
@@ -4299,7 +4299,7 @@ static void emit_interface_c_helpers(CodegenContext* ctx) {
         fprintf(ctx->out, "    return w;\n");
         fprintf(ctx->out, "}\n\n");
 
-        fprintf(ctx->out, "static Weak%s mylang_weakify_%s_from_ptr_owned(void* p, %sVTable* vt) {\n",
+        fprintf(ctx->out, "static Weak%s mylang_weakify_%s_from_ptr_owned(void* p, const %sVTable* vt) {\n",
                 ii->name, ii->name, ii->name);
         fprintf(ctx->out, "    Weak%s w;\n", ii->name);
         fprintf(ctx->out, "    w.wr = mylang_weak_init(p);\n");
