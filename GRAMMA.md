@@ -27,7 +27,7 @@ new this as
 ### Literals
 | Form | Example | Note |
 |------|---------|------|
-| Integer literal | `0`, `42`, `12345` | Decimal digits only |
+| Integer literal | `0`, `42`, `12345`, `0x2A` | Decimal, or hexadecimal with a `0x`/`0X` prefix |
 | Character literal | `'A'`, `'\n'`, `'\t'`, `'\\'`, `'\''`, `'\0'` | Resolves to `i8` |
 
 ### Delimiters and Operators
