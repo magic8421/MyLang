@@ -152,6 +152,28 @@ static Token read_number(Lexer* lexer) {
     int start = lexer->pos;
     int is_float = 0;
 
+    /* Hexadecimal integer literal: 0x / 0X prefix followed by hex digits. */
+    if (lexer_peek_char(lexer) == '0' &&
+        (lexer_peek_ahead(lexer, 1) == 'x' || lexer_peek_ahead(lexer, 1) == 'X')) {
+        lexer_advance(lexer); /* 0 */
+        lexer_advance(lexer); /* x */
+        int digit_count = 0;
+        while (!lexer_is_eof(lexer) && isxdigit((unsigned char)lexer_peek_char(lexer))) {
+            lexer_advance(lexer);
+            digit_count++;
+        }
+        int len = lexer->pos - start;
+        const char* s = lexer->source + start;
+        Token tok = make_token(lexer, TOK_INT_LIT, s, len, len);
+        if (digit_count == 0) {
+            fprintf(stderr, "%s(%d,%d): error: expected hexadecimal digits after '0x'\n",
+                    lexer_filename(lexer), tok.line, tok.col);
+            return make_token(lexer, TOK_EOF, NULL, 0, 0);
+        }
+        tok.int_val = (int)strtol(tok.text, NULL, 16);
+        return tok;
+    }
+
     while (!lexer_is_eof(lexer) && isdigit((unsigned char)lexer_peek_char(lexer))) {
         lexer_advance(lexer);
     }

@@ -136,6 +136,31 @@ i32 main() {
 }
 """, 100),
 
+    ("hex_literals", """
+i32 main() {
+    i32 a = 0x10;        // 16
+    i32 b = 0xff;        // 255
+    i32 c = 0X2A;        // 42 (uppercase prefix and digits)
+    i32 d = 0xAb1;       // 2737 (mixed case digits)
+    if (a != 16) { return 1; }
+    if (b != 255) { return 2; }
+    if (c != 42) { return 3; }
+    if (d != 2737) { return 4; }
+    i32 flags = (0x1 << 4) | 0x3;
+    if (flags != 19) { return 5; }
+    i32 neg = -0x10;
+    if (neg != -16) { return 6; }
+    i32 m = 0;
+    match (0x2) {
+        0x1 => { m = 1; }
+        0x2 => { m = 20; }
+        else => { m = 30; }
+    }
+    if (m != 20) { return 7; }
+    return a + c;
+}
+""", 58),
+
     ("while_sum", """
 i32 main() {
     i32 i = 1;
@@ -3732,6 +3757,13 @@ i32 main() {
 # ============================================================
 
 NEGATIVE_TESTS = [
+    ("bad_hex_no_digits", """
+i32 main() {
+    i32 x = 0x;
+    return x;
+}
+""", "expected hexadecimal digits after '0x'"),
+
     ("bad_new_interface", """
 interface IShape {
     i32 area();
