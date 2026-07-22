@@ -341,11 +341,11 @@ InterfaceInfo* symtab_find_interface(const char* name) {
     return NULL;
 }
 
-void symtab_add_interface_method(InterfaceInfo* iface, const char* name,
-                                  Type ret_type, int pc,
-                                  const char pn[][64], const Type pt[],
-                                  AstNode* default_body, int line) {
-    if (iface->method_count >= MAX_IFACE_METHODS) return;
+int symtab_add_interface_method(InterfaceInfo* iface, const char* name,
+                                 Type ret_type, int pc,
+                                 const char pn[][64], const Type pt[],
+                                 AstNode* default_body, int line) {
+    if (iface->method_count >= MAX_IFACE_METHODS) return -1;
     InterfaceMethodInfo* m = &iface->methods[iface->method_count++];
     CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "interface method name too long");
     m->return_type = ret_type;
@@ -357,6 +357,7 @@ void symtab_add_interface_method(InterfaceInfo* iface, const char* name,
     }
     m->interface_method_default_body = default_body;
     m->interface_method_line = line;
+    return 0;
 }
 
 InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,

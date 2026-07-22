@@ -336,6 +336,10 @@ Source code lives under `src/`:
 
 ## Known Limitations
 - `lock()` is a pseudo-method on weak refs; not a general keyword.
+- Fixed caps, each reported as a compile error when exceeded: 32 fields per class/struct
+  (`MAX_FIELDS`), 32 methods per interface (`MAX_IFACE_METHODS`), 8 implemented
+  interfaces per class (`MAX_IMPL`), 16 parameters per function/method, 8 generic
+  parameters (`MAX_GENERIC_PARAMS`). Class method count is unlimited (linked list).
 - Weak refs cannot be declared in if/while conditions (no `if (Node s = w.lock())`).
 - Interface default method implementations are supported. Default bodies cannot use `this` and may only reference parameters, literals, and control flow.
 - `match` does not support `true`/`false` literal arms; `match (null)` is a compile error.

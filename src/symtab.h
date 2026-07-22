@@ -133,10 +133,10 @@ FuncInfo*  symtab_first_func(void);
 
 void           symtab_add_interface(const char* name, InterfaceInfo* info);
 InterfaceInfo* symtab_find_interface(const char* name);
-void           symtab_add_interface_method(InterfaceInfo* iface, const char* name,
-                                           Type ret_type, int pc,
-                                           const char pn[][64], const Type pt[],
-                                           AstNode* default_body, int line);
+int  symtab_add_interface_method(InterfaceInfo* iface, const char* name,
+                                 Type ret_type, int pc,
+                                 const char pn[][64], const Type pt[],
+                                 AstNode* default_body, int line);
 InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
                                                    const char* method_name);
 

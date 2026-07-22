@@ -1087,6 +1087,12 @@ Common traps, grouped by topic:
 - Bound variables are only visible inside their arm body.
 - No true/false literal arms; cannot match on null or unowned expressions.
 
+**Fixed caps (compile error when exceeded)**
+
+- 32 fields per class/struct; 32 methods per interface; 8 implemented interfaces per
+  class; 16 parameters per function/method; 8 generic type parameters.
+- Class method count is unlimited.
+
 ---
 
 ## 16. Runtime Tips

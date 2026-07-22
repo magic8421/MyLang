@@ -3764,6 +3764,18 @@ i32 main() {
 }
 """, "expected hexadecimal digits after '0x'"),
 
+    ("bad_class_too_many_fields", "class Big {\n" + "".join(
+        f"    i32 field{i};\n" for i in range(33)) + "}\ni32 main() {\n    return 0;\n}\n",
+     "too many fields in class 'Big'"),
+
+    ("bad_struct_too_many_fields", "struct BigS {\n" + "".join(
+        f"    i32 field{i};\n" for i in range(33)) + "}\ni32 main() {\n    return 0;\n}\n",
+     "too many fields in struct 'BigS'"),
+
+    ("bad_iface_too_many_methods", "interface IBig {\n" + "".join(
+        f"    i32 m{i}();\n" for i in range(33)) + "}\ni32 main() {\n    return 0;\n}\n",
+     "too many methods in interface 'IBig'"),
+
     ("bad_new_interface", """
 interface IShape {
     i32 area();

@@ -1171,7 +1171,11 @@ static AstNode* parse_struct_decl(Parser* p) {
             break;
         }
         Token fname = p->current; advance(p);
-        symtab_add_struct_field(info, fname.text, ft);
+        if (symtab_add_struct_field(info, fname.text, ft) != 0) {
+            fprintf(stderr, "%s(%d,%d): error: too many fields in struct '%s' (max %d)\n",
+                    parser_filename(p), fname.line, fname.col, name.text, MAX_FIELDS);
+            p->had_error = 1;
+        }
         expect(p, TOK_SEMI);
     }
     expect(p, TOK_RBRACE);
@@ -1451,7 +1455,11 @@ static AstNode* parse_class_decl(Parser* p) {
                 p->had_error = 1;
             }
             expect(p, TOK_SEMI);
-            symtab_add_field(info, fname.text, ft, is_private);
+            if (symtab_add_field(info, fname.text, ft, is_private) != 0) {
+                fprintf(stderr, "%s(%d,%d): error: too many fields in class '%s' (max %d)\n",
+                        parser_filename(p), fname.line, fname.col, name.text, MAX_FIELDS);
+                p->had_error = 1;
+            }
         }
     }
     expect(p, TOK_RBRACE);
@@ -1613,7 +1621,11 @@ static AstNode* parse_interface_decl(Parser* p) {
             break;
         }
 
-        symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt, default_body, mname.line);
+        if (symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt, default_body, mname.line) != 0) {
+            fprintf(stderr, "%s(%d,%d): error: too many methods in interface '%s' (max %d)\n",
+                    parser_filename(p), mname.line, mname.col, name.text, MAX_IFACE_METHODS);
+            p->had_error = 1;
+        }
     }
 
     expect(p, TOK_RBRACE);
