@@ -13,7 +13,7 @@ AstNode* ast_new_node(AstKind kind, Token tok) {
 }
 
 void ast_add_child(AstNode* parent, AstNode* child) {
-    if (parent->ast_child_count < 4) {
+    if (parent->ast_child_count < MAX_AST_CHILDREN) {
         parent->ast_children[parent->ast_child_count++] = child;
     } else {
         fprintf(stderr, "error: too many children for AST node kind=%d\n", parent->ast_kind);
@@ -204,7 +204,7 @@ static void ast_substitute_types_node(AstNode* node, const char* params[], const
     node->ast_resolved_type = *sub;
     free(sub);
     int i;
-    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         ast_substitute_types_node(node->ast_children[i], params, args, count);
     }
     ast_substitute_types_node(node->next, params, args, count);

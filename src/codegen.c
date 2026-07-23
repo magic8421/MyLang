@@ -306,7 +306,7 @@ static void preinstantiate_generic_types(AstNode* node) {
         symtab_instantiate_class_from_type(&node->ast_resolved_type);
     }
     int i;
-    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         preinstantiate_generic_types(node->ast_children[i]);
     }
     preinstantiate_generic_types(node->next);
@@ -3445,13 +3445,16 @@ static void codegen_if_stmt(CodegenContext* ctx, AstNode* node, int indent) {
 }
 
 static void codegen_while_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    if (ctx->loop_depth >= MAX_LOOP) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "too many nested loops (max %d)", MAX_LOOP);
+        return;
+    }
     int break_lbl = ctx->assign_tmp_id++;
     int continue_lbl = ctx->assign_tmp_id++;
-    if (ctx->loop_depth < MAX_LOOP) {
-        ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
-        ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
-        ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
-    }
+    ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
+    ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
+    ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
     ctx->loop_depth++;
 
     indent_line(ctx, indent);
@@ -3520,13 +3523,19 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         }
     }
 
+    if (ctx->loop_depth >= MAX_LOOP) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "too many nested loops (max %d)", MAX_LOOP);
+        cleanup_pop_scope(ctx, indent + 1);
+        indent_line(ctx, indent);
+        fprintf(ctx->out, "}\n");
+        return;
+    }
     int break_lbl = ctx->assign_tmp_id++;
     int continue_lbl = ctx->assign_tmp_id++;
-    if (ctx->loop_depth < MAX_LOOP) {
-        ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
-        ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
-        ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
-    }
+    ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
+    ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
+    ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
     ctx->loop_depth++;
 
     indent_line(ctx, indent + 1);
@@ -3604,6 +3613,11 @@ static void codegen_break_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         return;
     }
     int idx = ctx->loop_depth - 1;
+    if (idx >= MAX_LOOP) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "'break' in loop beyond max nesting depth");
+        return;
+    }
     int target = ctx->loop_entry_cleanup_count[idx];
     cleanup_emit_to(ctx, target, indent);
     indent_line(ctx, indent);
@@ -3617,6 +3631,11 @@ static void codegen_continue_stmt(CodegenContext* ctx, AstNode* node, int indent
         return;
     }
     int idx = ctx->loop_depth - 1;
+    if (idx >= MAX_LOOP) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "'continue' in loop beyond max nesting depth");
+        return;
+    }
     int target = ctx->loop_entry_cleanup_count[idx];
     cleanup_emit_to(ctx, target, indent);
     indent_line(ctx, indent);

@@ -637,8 +637,7 @@ static AstNode* parse_postfix(Parser* p) {
                     }
                     break;
                 }
-                call->ast_children[1] = args;
-                call->ast_child_count = 2;
+                if (args) ast_add_child(call, args);
             }
             expect(p, TOK_RPAREN);
             node = call;
@@ -792,8 +791,7 @@ static AstNode* parse_block(Parser* p) {
         if (s) stmts = ast_append_list(stmts, s);
     }
     expect(p, TOK_RBRACE);
-    block->ast_children[0] = stmts;
-    block->ast_child_count = 1;
+    ast_add_child(block, stmts);
     return block;
 }
 
@@ -1247,8 +1245,8 @@ static AstNode* parse_struct_decl(Parser* p) {
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
-            if (mparams) { mnode->ast_children[mnode->ast_child_count++] = mparams; }
-            mnode->ast_children[mnode->ast_child_count++] = mbody;
+            if (mparams) { ast_add_child(mnode, mparams); }
+            ast_add_child(mnode, mbody);
             methods = ast_append_list(methods, mnode);
             continue;
         }
@@ -1276,11 +1274,9 @@ static AstNode* parse_struct_decl(Parser* p) {
     node->ast_resolved_type.type_kind = TYPE_STRUCT;
     CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "struct name too long");
     node->ast_resolved_type.type_id = info->type_id;
-    node->ast_children[0] = methods;
-    if (methods) node->ast_child_count = 1;
+    if (methods) ast_add_child(node, methods);
     return node;
 }
-
 
 static AstNode* parse_class_decl(Parser* p) {
     advance(p); /* class */
@@ -1537,8 +1533,8 @@ static AstNode* parse_class_decl(Parser* p) {
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
             mnode->ast_is_native = is_native;
-            if (mparams) { mnode->ast_children[mnode->ast_child_count++] = mparams; }
-            mnode->ast_children[mnode->ast_child_count++] = mbody;
+            if (mparams) { ast_add_child(mnode, mparams); }
+            ast_add_child(mnode, mbody);
             methods = ast_append_list(methods, mnode);
 
         } else {
@@ -1564,8 +1560,7 @@ static AstNode* parse_class_decl(Parser* p) {
     node->ast_resolved_type.type_kind = TYPE_CLASS;
     CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "class name too long");
     node->ast_resolved_type.type_id = info->type_id;
-    node->ast_children[0] = methods;
-    if (methods) node->ast_child_count = 1;
+    if (methods) ast_add_child(node, methods);
     if (info->is_generic) {
         info->generic_ast = node;
         if (symtab_validate_generic_method_calls(info) > 0) {
@@ -1798,8 +1793,8 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
 
     AstNode* node = ast_new_node(AST_FUNC_DECL, name);
     node->ast_resolved_type = ret_type;
-    if (params) { node->ast_children[node->ast_child_count++] = params; }
-    node->ast_children[node->ast_child_count++] = body;
+    if (params) { ast_add_child(node, params); }
+    ast_add_child(node, body);
     return node;
 }
 
@@ -1940,8 +1935,7 @@ AstNode* parser_parse_program(Parser* p) {
         if (d) decls = ast_append_list(decls, d);
     }
 
-    program->ast_children[0] = decls;
-    program->ast_child_count = 1;
+    ast_add_child(program, decls);
     return program;
 }
 

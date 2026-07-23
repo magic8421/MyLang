@@ -816,7 +816,7 @@ static int validate_generic_calls_impl(AstNode* node, ClassInfo* cls, LocalScope
     }
 
     int i;
-    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         errors += validate_generic_calls_impl(node->ast_children[i], cls, scope);
     }
     errors += validate_generic_calls_impl(node->next, cls, scope);

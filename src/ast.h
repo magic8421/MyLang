@@ -45,6 +45,7 @@ typedef enum {
 #define TYPE_IS_UNOWNED  0x08000000U
 
 #define MAX_TYPE_ARGS 4
+#define MAX_AST_CHILDREN 4
 
 typedef struct Type {
     TypeKind type_kind;
@@ -107,7 +108,7 @@ struct AstNode {
     AstKind  ast_kind;
     Type     ast_resolved_type;
     Token    ast_token;
-    AstNode* ast_children[4];
+    AstNode* ast_children[MAX_AST_CHILDREN];
     int      ast_child_count;
     char     ast_temp_name[64];
     char     ast_match_var[64];
