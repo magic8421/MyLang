@@ -1555,6 +1555,112 @@ i32 main() {
 }
 """, 42),
 
+    ("import_basic", """
+import("import_basic_lib.my");
+import("import_basic_inner.my")
+import("import_basic_lib.my");
+
+i32 main() {
+    Point p = new Point;
+    p.x = 1;
+    p.y = 2;
+    Vec v;
+    v.v = 5;
+    v.double_it();
+    return helper(p.sum()) + v.v + inner_val();
+}
+""", 47, None, [
+    ("import_basic_lib.my", """
+class Point {
+    i32 x;
+    i32 y;
+    i32 sum() { return this.x + this.y; }
+}
+struct Vec {
+    i32 v;
+    void double_it() { this.v = this.v * 2; }
+}
+i32 helper(i32 n) {
+    return n * 10;
+}
+"""),
+    ("import_basic_inner.my", """
+i32 inner_val() {
+    return 7;
+}
+"""),
+]),
+
+    ("import_diamond", """
+import("import_b.my");
+import("import_c.my");
+
+i32 main() {
+    Shared s = new Shared;
+    s.v = 5;
+    return dval() + bval() + cval() + s.v;
+}
+""", 23, None, [
+    ("import_d.my", """
+class Shared {
+    i32 v;
+}
+i32 dval() {
+    return 5;
+}
+"""),
+    ("import_b.my", """
+import("import_d.my");
+i32 bval() {
+    return dval() + 1;
+}
+"""),
+    ("import_c.my", """
+import("import_d.my");
+i32 cval() {
+    return dval() + 2;
+}
+"""),
+]),
+
+    ("import_cycle", """
+import("import_x.my");
+
+i32 main() {
+    return xval() + yval();
+}
+""", 7, None, [
+    ("import_x.my", """
+import("import_y.my");
+i32 xval() {
+    return 3;
+}
+"""),
+    ("import_y.my", """
+import("import_x.my");
+i32 yval() {
+    return 4;
+}
+"""),
+]),
+
+    ("import_panic_location", """
+import("import_pl_lib.my");
+
+i32 main() {
+    boom();
+    return 0;
+}
+""", ("crash_contains", "import_pl_lib.my:4"), None, [
+    ("import_pl_lib.my", """
+void boom() {
+    i32[] a;
+    a.resize(2);
+    a[9] = 1;
+}
+"""),
+]),
+
     ("weak_basic", """
 class Node {
     i32 v;
@@ -3819,6 +3925,31 @@ i32 main() {
 }
 """, "method 'S.nope' does not exist"),
 
+    ("bad_import_missing", """
+import("no_such_import_file_xyz.my");
+
+i32 main() {
+    return 0;
+}
+""", "cannot open imported file"),
+
+    ("bad_import_main_in_imported", """
+import("import_dup_main.my");
+
+i32 main() {
+    return 0;
+}
+""", "must not define 'main'", [
+    ("import_dup_main.my", """
+i32 helper() {
+    return 1;
+}
+i32 main() {
+    return helper();
+}
+"""),
+]),
+
     ("bad_new_interface", """
 interface IShape {
     i32 area();
@@ -4709,7 +4840,7 @@ i32 main() {
 # RUNNER
 # ============================================================
 
-def run_negative_test(idx, name, source, expected_substring):
+def run_negative_test(idx, name, source, expected_substring, extra_files=None):
     testdir = os.path.join(SCRIPT_DIR, "test")
     os.makedirs(testdir, exist_ok=True)
 
@@ -4717,6 +4848,11 @@ def run_negative_test(idx, name, source, expected_substring):
 
     with open(my_file, "w", encoding="utf-8") as f:
         f.write(source.strip() + "\n")
+
+    if extra_files:
+        for ef_name, ef_src in extra_files:
+            with open(os.path.join(testdir, ef_name), "w", encoding="utf-8") as f:
+                f.write(ef_src.strip() + "\n")
 
     r = shell(f'"{MYLANG_EXE}" {my_file} nul', cwd=SCRIPT_DIR)
     if r.returncode == 0:
@@ -4729,7 +4865,7 @@ def run_negative_test(idx, name, source, expected_substring):
     return True, f"mylang exit {r.returncode}"
 
 
-def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native_c=None):
+def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native_c=None, extra_files=None):
     testdir = os.path.join(SCRIPT_DIR, "test")
     os.makedirs(testdir, exist_ok=True)
     exedir = os.path.join(SCRIPT_DIR, "build", "test")
@@ -4741,6 +4877,12 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
 
     with open(my_file, "w", encoding="utf-8") as f:
         f.write(source.strip() + "\n")
+
+    # Additional source files (e.g. import targets), written next to the test.
+    if extra_files:
+        for ef_name, ef_src in extra_files:
+            with open(os.path.join(testdir, ef_name), "w", encoding="utf-8") as f:
+                f.write(ef_src.strip() + "\n")
 
     # Compile .my -> .c
     leak_arg = " --leak-check" if leak_check else ""
@@ -4767,6 +4909,16 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
     except subprocess.TimeoutExpired:
         return False, "timeout"
     output = out + err
+
+    if isinstance(expected, tuple) and expected and expected[0] == "crash_contains":
+        # Crash expected, and the panic output must mention the given text
+        # (e.g. a file:line from an imported module).
+        if exit_code == 0:
+            return False, "exit 0, expected crash"
+        if expected[1] not in output:
+            snippet = output[-300:] if len(output) > 300 else output
+            return False, f"crashed but output missing {expected[1]!r}\n  {snippet}"
+        return True, f"exited {exit_code & 0xFFFFFFFF} (crash, matched {expected[1]!r})"
 
     if expected == "crash":
         # Any non-zero exit means the program was terminated (breakpoint/ASan)
@@ -4816,14 +4968,18 @@ def run_suite(leak_check, filters):
         if len(t) == 3:
             name, source, expected = t
             native_c = None
-        else:
+            extra_files = None
+        elif len(t) == 4:
             name, source, expected, native_c = t
+            extra_files = None
+        else:
+            name, source, expected, native_c, extra_files = t
         if filters:
             name_lower = name.lower()
             if not any(k in name_lower for k in filters):
                 continue
         total += 1
-        ok, msg = run_test(i, name, source, expected, asan_dll_dir, leak_check, native_c)
+        ok, msg = run_test(i, name, source, expected, asan_dll_dir, leak_check, native_c, extra_files)
         status = "PASS" if ok else "FAIL"
         print(f"[{status}] {name:30s} {msg}")
         if ok:
@@ -4831,13 +4987,18 @@ def run_suite(leak_check, filters):
         else:
             failed += 1
 
-    for i, (name, source, expected) in enumerate(NEGATIVE_TESTS):
+    for i, t in enumerate(NEGATIVE_TESTS):
+        if len(t) == 3:
+            name, source, expected = t
+            extra_files = None
+        else:
+            name, source, expected, extra_files = t
         if filters:
             name_lower = name.lower()
             if not any(k in name_lower for k in filters):
                 continue
         total += 1
-        ok, msg = run_negative_test(i, name, source, expected)
+        ok, msg = run_negative_test(i, name, source, expected, extra_files)
         status = "PASS" if ok else "FAIL"
         print(f"[{status}] {name:30s} {msg}")
         if ok:

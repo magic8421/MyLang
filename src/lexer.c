@@ -121,6 +121,7 @@ static Token make_token(Lexer* lexer, TokenKind kind, const char* text, int leng
     tok.col      = lexer->col - col_offset;
     tok.int_val  = 0;
     tok.char_val = 0;
+    tok.filename = lexer->filename;
     if (text && length > 0) {
         int n = length < 255 ? length : 255;
         memcpy(tok.text, text, n);

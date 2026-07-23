@@ -42,6 +42,10 @@ struct CodegenContext {
     const char* header_include_name;
     const char* source_file;
     char        source_file_escaped[1024];
+    /* Per-declaration source file: with imports, each function/method reports
+       panics and errors against the file it was defined in. */
+    char        current_file[1024];
+    char        current_file_escaped[1024];
     Type        return_type;
     int         has_main;
     Type        main_return_type;
@@ -82,6 +86,24 @@ static void escape_source_file(CodegenContext* ctx, const char* src) {
         ctx->source_file_escaped[j++] = src[i];
     }
     ctx->source_file_escaped[j] = '\0';
+}
+
+/* Switch the per-declaration source file used by MY_PUSH and error reports.
+   Falls back to the root source file when the declaration's token carries
+   no filename. */
+static void codegen_set_current_file(CodegenContext* ctx, const char* filename) {
+    const char* f = (filename && filename[0] != '\0') ? filename : ctx->source_file;
+    size_t i, j;
+    if (!f) f = "";
+    for (i = 0, j = 0; f[i] != '\0' && j < sizeof(ctx->current_file) - 1; i++, j++) {
+        ctx->current_file[j] = f[i];
+    }
+    ctx->current_file[j] = '\0';
+    for (i = 0, j = 0; ctx->current_file[i] != '\0' && j < sizeof(ctx->current_file_escaped) - 2; i++) {
+        if (ctx->current_file[i] == '\\' || ctx->current_file[i] == '"') ctx->current_file_escaped[j++] = '\\';
+        ctx->current_file_escaped[j++] = ctx->current_file[i];
+    }
+    ctx->current_file_escaped[j] = '\0';
 }
 
 static const char* c_base_name(const Type* t) {
@@ -176,7 +198,7 @@ static int expr_is_unowned_lock(AstNode* node) {
    (including MSVC style) can jump to the source location. */
 static void codegen_report_error(CodegenContext* ctx, int line, int col, const char* fmt, ...) {
     va_list ap;
-    fprintf(stderr, "%s(%d,%d): error: ", ctx->source_file ? ctx->source_file : "<unknown>", line, col);
+    fprintf(stderr, "%s(%d,%d): error: ", ctx->current_file[0] ? ctx->current_file : "<unknown>", line, col);
     va_start(ap, fmt);
     vfprintf(stderr, fmt, ap);
     va_end(ap);
@@ -4473,8 +4495,11 @@ static void emit_interface_default_methods(CodegenContext* ctx) {
             ctx->is_interface_default_method = 1;
 
             indent_line(ctx, 1);
+            if (im->interface_method_default_body) {
+                codegen_set_current_file(ctx, im->interface_method_default_body->ast_token.filename);
+            }
             fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n",
-                    ii->name, im->name, ctx->source_file_escaped, im->interface_method_line);
+                    ii->name, im->name, ctx->current_file_escaped, im->interface_method_line);
 
             fprintf(ctx->out, "{\n");
             AstNode* body = im->interface_method_default_body;
@@ -4663,7 +4688,8 @@ static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const
         p = p->next; } }
 
     indent_line(ctx, 1);
-    fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", struct_name, node->ast_token.text, ctx->source_file_escaped, node->ast_token.line);
+    codegen_set_current_file(ctx, node->ast_token.filename);
+    fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", struct_name, node->ast_token.text, ctx->current_file_escaped, node->ast_token.line);
 
     fprintf(ctx->out, "{\n");
     if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
@@ -4735,7 +4761,8 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
         p = p->next; } }
 
     indent_line(ctx, 1);
-    fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->ast_token.text, ctx->source_file_escaped, node->ast_token.line);
+    codegen_set_current_file(ctx, node->ast_token.filename);
+    fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->ast_token.text, ctx->current_file_escaped, node->ast_token.line);
 
     fprintf(ctx->out, "{\n");
     if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
@@ -4827,7 +4854,8 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     }
 
     indent_line(ctx, 1);
-    fprintf(ctx->out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, ctx->source_file_escaped, node->ast_token.line);
+    codegen_set_current_file(ctx, node->ast_token.filename);
+    fprintf(ctx->out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, ctx->current_file_escaped, node->ast_token.line);
 
     fprintf(ctx->out, "{\n");
 
@@ -4866,6 +4894,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     ctx.xor_str_id = 0;
     ctx.source_file = source_file ? source_file : "";
     escape_source_file(&ctx, ctx.source_file);
+    codegen_set_current_file(&ctx, ctx.source_file);
 
     if (symtab_validate_impls() != 0 || symtab_validate_structs() != 0) {
         fprintf(stderr, "error: semantic errors found, no output generated\n");

@@ -102,6 +102,7 @@ typedef struct {
     int  int_val;
     char char_val;
     float float_val;
+    const char* filename;   /* source file this token came from (for imports) */
 } Token;
 
 /* Sentinel bytes used inside string-literal token text: the lexer maps the

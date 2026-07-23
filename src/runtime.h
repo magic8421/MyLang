@@ -125,8 +125,12 @@ extern MY_TL int         __my_depth;
         MyFrame* _fr = &__my_stack[__my_depth++]; \
         _fr->func = (fn); _fr->file = (f); _fr->line = (l); \
     } \
+    __my_file = (f); \
 } while(0)
-#define MY_POP() do { if (__my_depth > 0) __my_depth--; } while(0)
+#define MY_POP() do { \
+    if (__my_depth > 0) __my_depth--; \
+    __my_file = (__my_depth > 0) ? __my_stack[__my_depth - 1].file : NULL; \
+} while(0)
 
 void my_backtrace(void);
 void my_panic(const char* msg);

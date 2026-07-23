@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 
 static const char* parser_filename(Parser* p) {
     return lexer_filename(p->lexer);
@@ -1915,6 +1916,200 @@ static void parser_register_forward_decls(Parser* p) {
     }
 }
 
+/* ================================================================
+   IMPORTS
+   import("path/to/file.my") merges the referenced file's top-level
+   declarations into the current compilation unit (whole-program
+   compilation).  Paths are resolved relative to the importing file,
+   canonicalized, and parsed at most once, so diamond imports and
+   import cycles are handled by dedup rather than by error.
+   ================================================================ */
+
+#define MAX_IMPORT_FILES 64
+#define MAX_IMPORT_DEPTH 16
+
+static char g_import_paths[MAX_IMPORT_FILES][1024];
+static int  g_import_path_count = 0;
+
+static void import_normalize_seps(char* s) {
+    for (; *s; s++) { if (*s == '\\') *s = '/'; }
+}
+
+static int import_paths_equal(const char* a, const char* b) {
+#ifdef _WIN32
+    return _stricmp(a, b) == 0;
+#else
+    return strcmp(a, b) == 0;
+#endif
+}
+
+/* Resolve spec relative to the requesting file's directory and
+   canonicalize to an absolute path with forward slashes. */
+static void import_resolve_path(const char* requester, const char* spec,
+                                char* out, size_t outsz) {
+    char joined[1024];
+    int is_absolute = (spec[0] == '/' || spec[0] == '\\' ||
+                       (isalpha((unsigned char)spec[0]) && spec[1] == ':'));
+    if (is_absolute) {
+        int n = snprintf(joined, sizeof(joined), "%s", spec);
+        CHECK_SNPRINTF(n, sizeof(joined), "import path too long");
+    } else {
+        char dir[1024];
+        int n = snprintf(dir, sizeof(dir), "%s", requester ? requester : "");
+        CHECK_SNPRINTF(n, sizeof(dir), "import path too long");
+        import_normalize_seps(dir);
+        char* slash = strrchr(dir, '/');
+        if (slash) { *slash = '\0'; } else { dir[0] = '\0'; }
+        if (dir[0] != '\0') {
+            n = snprintf(joined, sizeof(joined), "%s/%s", dir, spec);
+        } else {
+            n = snprintf(joined, sizeof(joined), "%s", spec);
+        }
+        CHECK_SNPRINTF(n, sizeof(joined), "import path too long");
+    }
+#ifdef _WIN32
+    if (_fullpath(out, joined, outsz) == NULL) {
+        int n = snprintf(out, outsz, "%s", joined);
+        CHECK_SNPRINTF(n, outsz, "import path too long");
+    }
+#else
+    {
+        char* rp = realpath(joined, NULL);
+        if (rp) {
+            int n = snprintf(out, outsz, "%s", rp);
+            CHECK_SNPRINTF(n, outsz, "import path too long");
+            free(rp);
+        } else {
+            int n = snprintf(out, outsz, "%s", joined);
+            CHECK_SNPRINTF(n, outsz, "import path too long");
+        }
+    }
+#endif
+    import_normalize_seps(out);
+}
+
+static char* import_read_file(const char* path) {
+    FILE* f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char* buf = malloc(size + 1);
+    if (!buf) { fclose(f); return NULL; }
+    fread(buf, 1, size, f);
+    buf[size] = '\0';
+    fclose(f);
+    return buf;
+}
+
+static AstNode* parser_parse_file_decls(Parser* p, int depth);
+
+/* Parse import("path") and splice the imported file's declarations into
+   the current declaration list.  Returns the imported decls (or NULL). */
+static AstNode* parser_parse_import(Parser* p, int depth) {
+    Token kw = p->current;   /* the 'import' identifier, for error positions */
+    advance(p);              /* import */
+    advance(p);              /* ( */
+    if (!check(p, TOK_STRING_LIT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected string literal path after 'import('\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    Token path_tok = p->current; advance(p);
+    expect(p, TOK_RPAREN);
+    if (check(p, TOK_SEMI)) advance(p);
+
+    if (depth >= MAX_IMPORT_DEPTH) {
+        fprintf(stderr, "%s(%d,%d): error: import depth exceeds %d\n",
+                parser_filename(p), kw.line, kw.col, MAX_IMPORT_DEPTH);
+        p->had_error = 1;
+        return NULL;
+    }
+
+    char resolved[1024];
+    import_resolve_path(parser_filename(p), path_tok.text, resolved, sizeof(resolved));
+
+    int i;
+    for (i = 0; i < g_import_path_count; i++) {
+        if (import_paths_equal(g_import_paths[i], resolved)) {
+            return NULL;   /* already parsed: diamond import or cycle */
+        }
+    }
+    if (g_import_path_count >= MAX_IMPORT_FILES) {
+        fprintf(stderr, "%s(%d,%d): error: too many imported files (max %d)\n",
+                parser_filename(p), kw.line, kw.col, MAX_IMPORT_FILES);
+        p->had_error = 1;
+        return NULL;
+    }
+    /* Register before parsing so import cycles terminate by dedup.  The
+       stored path doubles as the sub-lexer's filename: tokens keep the
+       pointer, so it must outlive this function (a local buffer would
+       dangle by the time codegen reads token filenames). */
+    CHECK_STRSCPY(strscpy(g_import_paths[g_import_path_count], resolved,
+                          sizeof(g_import_paths[0])), "import path too long");
+    const char* stored_path = g_import_paths[g_import_path_count];
+    g_import_path_count++;
+
+    char* src = import_read_file(resolved);
+    if (!src) {
+        fprintf(stderr, "%s(%d,%d): error: cannot open imported file '%s' (resolved to '%s')\n",
+                parser_filename(p), path_tok.line, path_tok.col, path_tok.text, resolved);
+        p->had_error = 1;
+        return NULL;
+    }
+
+    Lexer sub_lexer;
+    lexer_init(&sub_lexer, src);
+    lexer_set_filename(&sub_lexer, stored_path);
+    Parser sub;
+    parser_init(&sub, &sub_lexer);
+    AstNode* decls = parser_parse_file_decls(&sub, depth + 1);
+    if (sub.had_error) p->had_error = 1;
+
+    /* Only the root file may define main. */
+    {
+        AstNode* d = decls;
+        while (d) {
+            if (d->ast_kind == AST_FUNC_DECL && strcmp(d->ast_token.text, "main") == 0) {
+                fprintf(stderr, "%s(%d,%d): error: imported file '%s' must not define 'main'\n",
+                        parser_filename(p), kw.line, kw.col, path_tok.text);
+                p->had_error = 1;
+            }
+            d = d->next;
+        }
+    }
+    return decls;
+}
+
+static int at_import_directive(Parser* p) {
+    return check(p, TOK_IDENT) && strcmp(p->current.text, "import") == 0 &&
+           p->peek.kind == TOK_LPAREN;
+}
+
+static AstNode* parser_parse_file_decls(Parser* p, int depth) {
+    /* Register all class/struct/interface names first, so fields and method
+       signatures can refer to types that are defined later in the source. */
+    parser_register_forward_decls(p);
+
+    AstNode* decls = NULL;
+    while (!check(p, TOK_EOF)) {
+        if (at_import_directive(p)) {
+            AstNode* imported = parser_parse_import(p, depth);
+            while (imported) {
+                AstNode* nxt = imported->next;
+                imported->next = NULL;
+                decls = ast_append_list(decls, imported);
+                imported = nxt;
+            }
+            continue;
+        }
+        AstNode* d = parse_top_level(p);
+        if (d) decls = ast_append_list(decls, d);
+    }
+    return decls;
+}
+
 AstNode* parser_parse_program(Parser* p) {
     Type void_type;
     memset(&void_type, 0, sizeof(void_type));
@@ -1925,18 +2120,20 @@ AstNode* parser_parse_program(Parser* p) {
 
     symtab_init();
 
-    /* Register all class/struct/interface names first, so fields and method
-       signatures can refer to types that are defined later in the source. */
-    parser_register_forward_decls(p);
-
-    AstNode* decls = NULL;
-    while (!check(p, TOK_EOF)) {
-        AstNode* d = parse_top_level(p);
-        if (d) decls = ast_append_list(decls, d);
+    /* Reset the import dedup set and register the root file so an import
+       cycle back to it terminates. */
+    g_import_path_count = 0;
+    {
+        char root[1024];
+        import_resolve_path("", parser_filename(p), root, sizeof(root));
+        CHECK_STRSCPY(strscpy(g_import_paths[0], root, sizeof(g_import_paths[0])),
+                      "import path too long");
+        g_import_path_count = 1;
     }
+
+    AstNode* decls = parser_parse_file_decls(p, 0);
 
     ast_add_child(program, decls);
     return program;
 }
-
 int parser_had_error(Parser* p) { return p->had_error; }

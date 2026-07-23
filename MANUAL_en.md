@@ -499,6 +499,39 @@ Rules:
 - Arrays `T[]` **cannot** be returned by value or passed by value; use `ref T[]`
   parameters or `move_to` / `copy_to` instead.
 
+### 6.4 Multi-file Modules: import
+
+`import("path")` merges another source file's top-level declarations (classes,
+structs, interfaces, functions) into the current compilation unit:
+
+```mylang
+import("lib/geometry.my");   // the semicolon is optional
+import("lib/utils.my")
+
+i32 main() {
+    Point p = new Point;     // from geometry.my
+    return helper(p);        // from utils.my
+}
+```
+
+Rules:
+
+- Only allowed at the **top level** (conventionally at the top of the file);
+  the path is a string literal.
+- Paths resolve relative to the **importing file's directory** (not the
+  compiler's working directory).
+- Each file is compiled once: diamond imports (a and b both import c) and
+  import cycles (a ↔ b) are deduplicated automatically — no duplicate
+  definitions, no infinite recursion.
+- There are no namespaces: imported declarations enter the global namespace;
+  name clashes are reported as duplicate definitions.
+- Only the root file may define `main`; a `main` in an imported file is a
+  compile error.
+- Runtime panics report the file and line of the **definition site**, so
+  cross-file debugging works.
+- The output is still a single `.c`/`.h`; native method implementations keep
+  `#include`-ing the final generated header as before.
+
 ---
 
 ## 7. Classes

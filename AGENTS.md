@@ -35,10 +35,16 @@ Source code lives under `src/`:
 - All compiler diagnostics are emitted as `path(line,col): error: message`
   (MSVC / VS Code problem-matcher style). The printed path is the input path
   as given on the command line (relative if the user passed a relative path).
+- Every `Token` carries a `filename` pointer (set from `Lexer.filename`), so
+  diagnostics and panic frames follow the file the code was defined in, which
+  matters once `import` merges multiple source files.
 - Lexer/parser errors use `Lexer.filename` (set from `src_path` in `src/main.c`)
   and `parser_filename(p)` in `src/parser.c`.
-- Codegen errors use `CodegenContext.source_file` via the `codegen_report_error()`
-  helper in `src/codegen.c`.
+- Codegen errors use `CodegenContext.current_file` via the `codegen_report_error()`
+  helper in `src/codegen.c`. `codegen_set_current_file()` switches it per
+  declaration from `node->ast_token.filename`, so `MY_PUSH` frames and errors
+  from imported functions report the imported file. `MY_PUSH`/`MY_POP` also
+  maintain the runtime `__my_file` used by `my_panic`'s "triggered at" line.
 - Common codegen diagnostics include:
   - `unknown identifier 'x'`: an identifier is not in scope as a local, parameter,
     field, or builtin (function names are resolved separately at call sites).
@@ -46,6 +52,29 @@ Source code lives under `src/`:
     or in-scope local variable (e.g., the name was never declared).
   - `method 'ClassName.method' does not exist`: a method call targets a method
     not declared on the receiver's class or interface type.
+
+## Modules (import)
+- `import("path/to/file.my")` at top level merges the referenced file's
+  top-level declarations into the current compilation unit (whole-program
+  compilation, no separate compilation and no namespaces). The trailing
+  semicolon is optional.
+- Implementation lives in `src/parser.c`: `parser_parse_import()` recursively
+  parses the imported file with a fresh lexer/parser (the symtab is global),
+  and the imported declarations are spliced into the importing file's
+  declaration list at the import position.
+- Paths are resolved relative to the importing file's directory, then
+  canonicalized to an absolute path with forward slashes
+  (`import_resolve_path()`). The canonical path is stored in the global dedup
+  set `g_import_paths` and doubles as the sub-lexer's filename — tokens keep
+  the pointer, so the path must outlive the parse (do not use a local buffer).
+- Dedup happens before parsing, so diamond imports and import cycles are
+  compiled once and never recurse forever. `MAX_IMPORT_FILES` (64) caps the
+  file count and `MAX_IMPORT_DEPTH` (16) caps nesting.
+- Only the root file may define `main`; an imported file defining `main` is a
+  compile error.
+- Panic file/line correctness across files: tokens carry `filename`, codegen
+  switches `CodegenContext.current_file` per declaration, and the runtime
+  `__my_file` is maintained by `MY_PUSH`/`MY_POP`.
 
 ## Compiler Flags
 - `mylang --leak-check source.my out.c` — enables the `MYLANG_LEAK_CHECK` macro
