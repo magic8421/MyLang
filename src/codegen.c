@@ -32,6 +32,8 @@ typedef struct {
     int         is_array;
     int         array_elem_kind;
     char        array_elem_size_expr[NAME_BUF_SIZE];
+    int         is_struct_dtor;      /* struct with reference fields */
+    char        struct_dtor_name[64];
 } CleanupEntry;
 
 #define MAX_LOOP 64
@@ -178,6 +180,25 @@ static int bool_mismatch(const Type* dst, const Type* src) {
 static int type_is_reference(const Type* t) {
     return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
            t->type_kind == TYPE_OBJECT;
+}
+
+/* Structs that (transitively) own reference-counted shares get compiler-
+   generated _mylang_retain_S / _mylang_release_S hooks: copies retain each
+   reference field and scope exit releases them. */
+static int struct_has_ref_fields(const Type* t) {
+    if (t->type_kind != TYPE_STRUCT) return 0;
+    StructInfo* si = symtab_find_struct(t->class_name);
+    return si && si->has_ref_fields;
+}
+
+/* Arrays of such structs are rejected: MyArray is type-erased and cannot run
+   per-element retain/release hooks yet. */
+static int type_is_ref_struct_array(const Type* t) {
+    if (!t->is_array) return 0;
+    Type et = *t;
+    et.is_array = 0;
+    et.array_size = 0;
+    return struct_has_ref_fields(&et);
 }
 
 /* Detect the special case of calling .lock() on an unowned reference.  The
@@ -628,6 +649,10 @@ static void emit_header_method_prototypes(CodegenContext* ctx) {
             }
             fprintf(h, ");\n");
             m = m->next;
+        }
+        if (si->has_ref_fields) {
+            fprintf(h, "void _mylang_retain_%s(%s* p);\n", si->name, si->name);
+            fprintf(h, "void _mylang_release_%s(%s* p);\n", si->name, si->name);
         }
         si = si->next;
     }
@@ -2194,6 +2219,25 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 } else if (type_is_reference(&rt)) {
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid reference assignment */");
+                } else if (struct_has_ref_fields(&lt)) {
+                    /* Struct with reference fields: retain the new value's
+                       shares, release the old value's, then copy.  Retain
+                       first so self-assignment is safe.  Owned RHS (a call
+                       result) moves without an extra retain. */
+                    if (!expr_is_owned(rhs)) {
+                        fprintf(ctx->out, "((void)_mylang_retain_%s(&(", lt.class_name);
+                        codegen_expr(ctx, rhs);
+                        fprintf(ctx->out, ")), ");
+                    } else {
+                        fprintf(ctx->out, "(");
+                    }
+                    fprintf(ctx->out, "(void)_mylang_release_%s(&(", lt.class_name);
+                    codegen_expr(ctx, lhs);
+                    fprintf(ctx->out, ")), (");
+                    codegen_expr(ctx, lhs);
+                    fprintf(ctx->out, " = ");
+                    codegen_expr(ctx, rhs);
+                    fprintf(ctx->out, "))");
                 } else {
                     codegen_expr(ctx, lhs);
                     fprintf(ctx->out, " = ");
@@ -2836,20 +2880,23 @@ static void emit_call_guards(CodegenContext* ctx, AstNode* expr, int is_retain) 
         if (callee->ast_kind == AST_MEMBER_ACCESS) {
             AstNode* obj = callee->ast_children[0];
             if (call_needs_guard(obj) && guard_needs_retain(obj)) {
+                /* Interface temps are fat-pointer structs: retain .data. */
+                int is_iface = obj->ast_resolved_type.type_kind == TYPE_INTERFACE;
                 if (is_retain) {
-                    fprintf(ctx->out, "mylang_retain(%s); ", obj->ast_temp_name);
+                    fprintf(ctx->out, is_iface ? "mylang_retain(%s.data); " : "mylang_retain(%s); ", obj->ast_temp_name);
                 } else {
-                    fprintf(ctx->out, "mylang_release(%s); ", obj->ast_temp_name);
+                    fprintf(ctx->out, is_iface ? "mylang_release(%s.data); " : "mylang_release(%s); ", obj->ast_temp_name);
                 }
             }
         }
         AstNode* a = args;
         while (a) {
             if (call_needs_guard(a) && guard_needs_retain(a)) {
+                int is_iface = a->ast_resolved_type.type_kind == TYPE_INTERFACE;
                 if (is_retain) {
-                    fprintf(ctx->out, "mylang_retain(%s); ", a->ast_temp_name);
+                    fprintf(ctx->out, is_iface ? "mylang_retain(%s.data); " : "mylang_retain(%s); ", a->ast_temp_name);
                 } else {
-                    fprintf(ctx->out, "mylang_release(%s); ", a->ast_temp_name);
+                    fprintf(ctx->out, is_iface ? "mylang_release(%s.data); " : "mylang_release(%s); ", a->ast_temp_name);
                 }
             }
             a = a->next;
@@ -2890,6 +2937,8 @@ static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int 
         e->is_array = 0;
         e->array_elem_kind = 0;
         e->array_elem_size_expr[0] = '\0';
+        e->is_struct_dtor = 0;
+        e->struct_dtor_name[0] = '\0';
         ctx->cleanup_count++;
     }
 }
@@ -2907,6 +2956,8 @@ static void cleanup_add_interface_array(CodegenContext* ctx, const char* name, i
         ctx->cleanup_entries[ctx->cleanup_count].is_array = 0;
         ctx->cleanup_entries[ctx->cleanup_count].array_elem_kind = 0;
         ctx->cleanup_entries[ctx->cleanup_count].array_elem_size_expr[0] = '\0';
+        ctx->cleanup_entries[ctx->cleanup_count].is_struct_dtor = 0;
+        ctx->cleanup_entries[ctx->cleanup_count].struct_dtor_name[0] = '\0';
         ctx->cleanup_count++;
     }
 }
@@ -2925,6 +2976,8 @@ static void cleanup_add_array(CodegenContext* ctx, const char* name, const Type*
         e->is_array = 1;
         e->array_elem_kind = array_elem_kind(arr_type);
         array_elem_size_expr(arr_type, e->array_elem_size_expr, sizeof(e->array_elem_size_expr));
+        e->is_struct_dtor = 0;
+        e->struct_dtor_name[0] = '\0';
         ctx->cleanup_count++;
     }
 }
@@ -2943,6 +2996,8 @@ static void cleanup_add_weak_interface(CodegenContext* ctx, const char* name) {
         e->is_array = 0;
         e->array_elem_kind = 0;
         e->array_elem_size_expr[0] = '\0';
+        e->is_struct_dtor = 0;
+        e->struct_dtor_name[0] = '\0';
         ctx->cleanup_count++;
     }
 }
@@ -2961,6 +3016,31 @@ static void cleanup_add_weak_interface_array(CodegenContext* ctx, const char* na
         e->is_array = 0;
         e->array_elem_kind = 0;
         e->array_elem_size_expr[0] = '\0';
+        e->is_struct_dtor = 0;
+        e->struct_dtor_name[0] = '\0';
+        ctx->cleanup_count++;
+    }
+}
+
+/* Struct with reference fields: the compiler-generated release hook drops
+   every owned share the struct holds (class/interface/weak fields). */
+static void cleanup_add_struct_dtor(CodegenContext* ctx, const char* name, const char* struct_name) {
+    if (ctx->cleanup_count < MAX_CLEANUP) {
+        CleanupEntry* e = &ctx->cleanup_entries[ctx->cleanup_count];
+        e->name = name;
+        e->is_weak = 0;
+        e->is_interface = 0;
+        e->is_interface_array = 0;
+        e->interface_array_size = 0;
+        e->is_weak_interface = 0;
+        e->is_weak_interface_array = 0;
+        e->weak_interface_array_size = 0;
+        e->is_array = 0;
+        e->array_elem_kind = 0;
+        e->array_elem_size_expr[0] = '\0';
+        e->is_struct_dtor = 1;
+        CHECK_STRSCPY(strscpy(e->struct_dtor_name, struct_name, sizeof(e->struct_dtor_name)),
+                      "struct name too long");
         ctx->cleanup_count++;
     }
 }
@@ -2970,7 +3050,10 @@ static void cleanup_emit(CodegenContext* ctx, int indent) {
     for (i = ctx->cleanup_count - 1; i >= 0; i--) {
         const char* name = ctx->cleanup_entries[i].name;
         indent_line(ctx, indent);
-        if (ctx->cleanup_entries[i].is_weak) {
+        if (ctx->cleanup_entries[i].is_struct_dtor) {
+            fprintf(ctx->out, "_mylang_release_%s(&%s);\n",
+                    ctx->cleanup_entries[i].struct_dtor_name, name);
+        } else if (ctx->cleanup_entries[i].is_weak) {
             fprintf(ctx->out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
         } else if (ctx->cleanup_entries[i].is_weak_interface) {
@@ -3013,7 +3096,10 @@ static void cleanup_pop_scope(CodegenContext* ctx, int indent) {
     for (i = ctx->cleanup_count - 1; i >= saved; i--) {
         const char* name = ctx->cleanup_entries[i].name;
         indent_line(ctx, indent);
-        if (ctx->cleanup_entries[i].is_weak) {
+        if (ctx->cleanup_entries[i].is_struct_dtor) {
+            fprintf(ctx->out, "_mylang_release_%s(&%s);\n",
+                    ctx->cleanup_entries[i].struct_dtor_name, name);
+        } else if (ctx->cleanup_entries[i].is_weak) {
             fprintf(ctx->out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
         } else if (ctx->cleanup_entries[i].is_weak_interface) {
@@ -3049,7 +3135,10 @@ static void cleanup_emit_to(CodegenContext* ctx, int target_count, int indent) {
     for (i = ctx->cleanup_count - 1; i >= target_count; i--) {
         const char* name = ctx->cleanup_entries[i].name;
         indent_line(ctx, indent);
-        if (ctx->cleanup_entries[i].is_weak) {
+        if (ctx->cleanup_entries[i].is_struct_dtor) {
+            fprintf(ctx->out, "_mylang_release_%s(&%s);\n",
+                    ctx->cleanup_entries[i].struct_dtor_name, name);
+        } else if (ctx->cleanup_entries[i].is_weak) {
             fprintf(ctx->out, "mylang_weak_release(%s);\n",
                     strcmp(name, "this") == 0 ? "thiz" : name);
         } else if (ctx->cleanup_entries[i].is_weak_interface) {
@@ -3167,6 +3256,9 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
     symtab_insert(node->ast_token.text, type);
 
     if (type.is_array) {
+        if (type_is_ref_struct_array(&type)) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "arrays of struct '%s' with reference fields are not supported yet", type.class_name);
+        }
         char typename_buf[128];
         c_type_str(&type, typename_buf, sizeof(typename_buf));
         indent_line(ctx, indent);
@@ -3457,12 +3549,25 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
             fprintf(ctx->out, " = ");
             codegen_expr(ctx, init);
         }
+    } else if (struct_has_ref_fields(&type)) {
+        fprintf(ctx->out, " = {0}");
     } else if (type.is_pointer || type.is_weak) {
         fprintf(ctx->out, " = NULL");
     }
     fprintf(ctx->out, ";\n");
 
-    if ((type.type_kind == TYPE_CLASS || type.type_kind == TYPE_OBJECT) && type.is_pointer) {
+    /* Struct with reference fields: borrowed initializers are retained (call
+       results are already owned); the variable is released at scope exit. */
+    if (struct_has_ref_fields(&type)) {
+        if (node->ast_child_count > 0 && !expr_is_owned(node->ast_children[0])) {
+            indent_line(ctx, indent);
+            fprintf(ctx->out, "_mylang_retain_%s(&%s);\n", type.class_name, node->ast_token.text);
+        }
+        cleanup_add_struct_dtor(ctx, node->ast_token.text, type.class_name);
+    }
+
+    if ((type.type_kind == TYPE_CLASS || type.type_kind == TYPE_OBJECT) &&
+        type.is_pointer && !type.is_weak) {
         cleanup_add(ctx, node->ast_token.text, 0, 0);
     }
     if (type.is_weak) {
@@ -4026,6 +4131,13 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             fprintf(ctx->out, "%s _mylang_ret = ", tbuf);
             codegen_expr(ctx, ret);
             fprintf(ctx->out, ";\n");
+            /* Struct with reference fields returning a borrowed value: retain
+               its shares for the caller before the local cleanup releases
+               the callee's own.  Call results are already owned. */
+            if (struct_has_ref_fields(&ret->ast_resolved_type) && !expr_is_owned(ret)) {
+                indent_line(ctx, indent);
+                fprintf(ctx->out, "_mylang_retain_%s(&_mylang_ret);\n", ret->ast_resolved_type.class_name);
+            }
             cleanup_emit(ctx, indent);
             indent_line(ctx, indent);
             fprintf(ctx->out, "MY_POP();\n");
@@ -4313,6 +4425,12 @@ static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
         fprintf(ctx->out, "%s _dt%d = ", c_base_name(&expr->ast_resolved_type), dtid);
         codegen_expr(ctx, expr);
         fprintf(ctx->out, "; (void)mylang_release(_dt%d.data)", dtid);
+    } else if (expr->ast_kind == AST_CALL && struct_has_ref_fields(&expr->ast_resolved_type)) {
+        /* discarded struct return owning reference fields: release its shares */
+        int dtid = ctx->assign_tmp_id++;
+        fprintf(ctx->out, "%s _dt%d = ", c_base_name(&expr->ast_resolved_type), dtid);
+        codegen_expr(ctx, expr);
+        fprintf(ctx->out, "; _mylang_release_%s(&_dt%d)", expr->ast_resolved_type.class_name, dtid);
     } else {
         codegen_expr(ctx, expr);
     }
@@ -4625,6 +4743,13 @@ static void codegen_class_destructor(CodegenContext* ctx, ClassInfo* ci, const c
             fprintf(ctx->out, "    mylang_release(p->%s.data);\n", fname);
         } else if (ft.type_kind == TYPE_CLASS || ft.type_kind == TYPE_OBJECT) {
             fprintf(ctx->out, "    mylang_release(p->%s);\n", fname);
+        } else if (ft.type_kind == TYPE_STRUCT) {
+            /* Struct fields owning reference fields are torn down with the
+               struct's compiler-generated release hook. */
+            StructInfo* si = symtab_find_struct(ft.class_name);
+            if (si && si->has_ref_fields) {
+                fprintf(ctx->out, "    _mylang_release_%s(&p->%s);\n", si->name, fname);
+            }
         }
     }
     fprintf(ctx->out, "}\n\n");
@@ -4638,6 +4763,17 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
 
     const char* class_c = class_c_name(ci);
 
+    /* Fields of type (ref-struct)[] are rejected: MyArray cannot run
+       per-element retain/release hooks yet. */
+    {
+        int i;
+        for (i = 0; i < ci->field_count; i++) {
+            if (type_is_ref_struct_array(&ci->field_types[i])) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "arrays of struct '%s' with reference fields are not supported yet (field '%s')", ci->field_types[i].class_name, ci->field_names[i]);
+            }
+        }
+    }
+
     codegen_class_destructor(ctx, ci, class_c);
 
     /* emit method declarations */
@@ -4649,6 +4785,57 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
 
     /* emit interface thunks and vtables */
     codegen_class_interface_vtables(ctx, ci);
+}
+
+/* Per-struct retain/release hooks for structs that own reference fields
+   (class/interface/object strong fields, weak/unowned shares, or nested
+   structs with any of those).  Copies call the retain hook; destruction
+   (scope exit, overwrite, field teardown) calls the release hook. */
+static void codegen_struct_hooks(CodegenContext* ctx, StructInfo* si) {
+    if (!si->has_ref_fields) return;
+
+    int i;
+    fprintf(ctx->out, "void _mylang_retain_%s(%s* p) {\n", si->name, si->name);
+    for (i = 0; i < si->field_count; i++) {
+        Type* ft = &si->field_types[i];
+        const char* fn = si->field_names[i];
+        if (ft->is_weak && ft->type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "    p->%s.wr = mylang_weak_copy(p->%s.wr);\n", fn, fn);
+        } else if (ft->is_weak || ft->is_unowned) {
+            fprintf(ctx->out, "    p->%s = mylang_weak_copy(p->%s);\n", fn, fn);
+        } else if (ft->type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "    mylang_retain(p->%s.data);\n", fn);
+        } else if (ft->type_kind == TYPE_CLASS || ft->type_kind == TYPE_OBJECT) {
+            fprintf(ctx->out, "    mylang_retain(p->%s);\n", fn);
+        } else if (ft->type_kind == TYPE_STRUCT) {
+            StructInfo* dep = symtab_find_struct(ft->class_name);
+            if (dep && dep->has_ref_fields) {
+                fprintf(ctx->out, "    _mylang_retain_%s(&p->%s);\n", dep->name, fn);
+            }
+        }
+    }
+    fprintf(ctx->out, "}\n\n");
+
+    fprintf(ctx->out, "void _mylang_release_%s(%s* p) {\n", si->name, si->name);
+    for (i = 0; i < si->field_count; i++) {
+        Type* ft = &si->field_types[i];
+        const char* fn = si->field_names[i];
+        if (ft->is_weak && ft->type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "    mylang_weak_release(p->%s.wr);\n", fn);
+        } else if (ft->is_weak || ft->is_unowned) {
+            fprintf(ctx->out, "    mylang_weak_release(p->%s);\n", fn);
+        } else if (ft->type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "    mylang_release(p->%s.data);\n", fn);
+        } else if (ft->type_kind == TYPE_CLASS || ft->type_kind == TYPE_OBJECT) {
+            fprintf(ctx->out, "    mylang_release(p->%s);\n", fn);
+        } else if (ft->type_kind == TYPE_STRUCT) {
+            StructInfo* dep = symtab_find_struct(ft->class_name);
+            if (dep && dep->has_ref_fields) {
+                fprintf(ctx->out, "    _mylang_release_%s(&p->%s);\n", dep->name, fn);
+            }
+        }
+    }
+    fprintf(ctx->out, "}\n\n");
 }
 
 static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const char* struct_name) {
@@ -4664,6 +4851,9 @@ static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const
     { AstNode* p = params; while (p) { fprintf(ctx->out, ", ");
         if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
             codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
+        }
+        if (type_is_ref_struct_array(&p->ast_resolved_type)) {
+            codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "arrays of struct '%s' with reference fields are not supported yet", p->ast_resolved_type.class_name);
         }
         char pt[128]; c_type_str(&p->ast_resolved_type, pt, sizeof(pt));
         if (type_is_ref(&p->ast_resolved_type)) {
@@ -4693,6 +4883,16 @@ static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const
     codegen_set_current_file(ctx, node->ast_token.filename);
     fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", struct_name, node->ast_token.text, ctx->current_file_escaped, node->ast_token.line);
 
+    /* By-value struct parameters owning reference fields: the callee's copy
+       retains on entry and is released at scope exit. */
+    { AstNode* p = params; while (p) {
+        if (struct_has_ref_fields(&p->ast_resolved_type) && !type_is_ref(&p->ast_resolved_type)) {
+            indent_line(ctx, 1);
+            fprintf(ctx->out, "_mylang_retain_%s(&%s);\n", p->ast_resolved_type.class_name, p->ast_token.text);
+            cleanup_add_struct_dtor(ctx, p->ast_token.text, p->ast_resolved_type.class_name);
+        }
+        p = p->next; } }
+
     fprintf(ctx->out, "{\n");
     if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
         while (s) { codegen_stmt(ctx, s, 2); s = s->next; } }
@@ -4710,6 +4910,7 @@ static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const
 static void codegen_struct_methods(CodegenContext* ctx, AstNode* node) {
     StructInfo* si = symtab_find_struct(node->ast_token.text);
     if (!si) return;
+    codegen_struct_hooks(ctx, si);
     AstNode* m = node->ast_child_count > 0 ? node->ast_children[0] : NULL;
     while (m) {
         codegen_struct_method_decl(ctx, m, si->name);
@@ -4736,6 +4937,9 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     { AstNode* p = params; while (p) { fprintf(ctx->out, ", ");
         if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
             codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
+        }
+        if (type_is_ref_struct_array(&p->ast_resolved_type)) {
+            codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "arrays of struct '%s' with reference fields are not supported yet", p->ast_resolved_type.class_name);
         }
         char pt[128]; c_type_str(&p->ast_resolved_type, pt, sizeof(pt));
         if (type_is_ref(&p->ast_resolved_type)) {
@@ -4765,6 +4969,16 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     indent_line(ctx, 1);
     codegen_set_current_file(ctx, node->ast_token.filename);
     fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", class_name, node->ast_token.text, ctx->current_file_escaped, node->ast_token.line);
+
+    /* By-value struct parameters owning reference fields: the callee's copy
+       retains on entry and is released at scope exit. */
+    { AstNode* p = params; while (p) {
+        if (struct_has_ref_fields(&p->ast_resolved_type) && !type_is_ref(&p->ast_resolved_type)) {
+            indent_line(ctx, 1);
+            fprintf(ctx->out, "_mylang_retain_%s(&%s);\n", p->ast_resolved_type.class_name, p->ast_token.text);
+            cleanup_add_struct_dtor(ctx, p->ast_token.text, p->ast_resolved_type.class_name);
+        }
+        p = p->next; } }
 
     fprintf(ctx->out, "{\n");
     if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
@@ -4817,6 +5031,9 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
             if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
                 codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
             }
+            if (type_is_ref_struct_array(&p->ast_resolved_type)) {
+                codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "arrays of struct '%s' with reference fields are not supported yet", p->ast_resolved_type.class_name);
+            }
             char ptype_buf[128];
             c_type_str(&p->ast_resolved_type, ptype_buf, sizeof(ptype_buf));
             if (type_is_ref(&p->ast_resolved_type)) {
@@ -4858,6 +5075,20 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     indent_line(ctx, 1);
     codegen_set_current_file(ctx, node->ast_token.filename);
     fprintf(ctx->out, "MY_PUSH(\"%s\", \"%s\", %d);\n", func_name, ctx->current_file_escaped, node->ast_token.line);
+
+    /* By-value struct parameters owning reference fields: the callee's copy
+       retains on entry and is released at scope exit. */
+    {
+        AstNode* p = params;
+        while (p) {
+            if (struct_has_ref_fields(&p->ast_resolved_type) && !type_is_ref(&p->ast_resolved_type)) {
+                indent_line(ctx, 1);
+                fprintf(ctx->out, "_mylang_retain_%s(&%s);\n", p->ast_resolved_type.class_name, p->ast_token.text);
+                cleanup_add_struct_dtor(ctx, p->ast_token.text, p->ast_resolved_type.class_name);
+            }
+            p = p->next;
+        }
+    }
 
     fprintf(ctx->out, "{\n");
 

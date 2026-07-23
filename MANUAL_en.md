@@ -697,7 +697,9 @@ Vec w = v;        // copies the whole value; w and v are independent
 ```
 
 - Value type, stack-allocated; assignment copies the whole struct.
-- Fields may be primitives, bool, **or other structs** (embedded by value):
+- Fields may be primitives, bool, **other structs** (embedded by value), and
+  **reference types** (class, interface, object, string, weak, unowned — see 9.2
+  for the ownership semantics):
 
 ```mylang
 struct Point { i32 x; i32 y; }
@@ -710,9 +712,10 @@ struct Rect {
 
   Direct or indirect recursive embedding (`A` contains `B`, `B` contains `A`) is a
   compile error.
-- Struct fields cannot be reference types (class / string / array / interface).
+- Array fields are not allowed (`T[]` cannot be a struct field).
 - `new Vec` is illegal (structs need no `new`); `Vec[] arr; arr.resize(3);` creates an
-  array of structs.
+  array of structs — but structs owning reference fields cannot be array elements
+  (see 9.2).
 
 ### 9.1 Struct Methods
 
@@ -756,6 +759,45 @@ Rules:
 - Methods add behavior only — value semantics are unchanged: assignment, parameter
   passing, and returns still copy the whole struct, and there are no
   constructors/destructors.
+
+### 9.2 Ownership of Reference Fields
+
+Structs may hold reference-type fields (class, interface, object, string, weak,
+unowned). The compiler generates retain/release hooks for such structs — you never
+write any counting code yourself:
+
+```mylang
+class Node { i32 v; }
+struct Box {
+    Node n;              // Box holds one strong reference to the Node
+}
+
+Box a;
+a.n = new Node;
+Box b = a;               // copying retains: both Boxes hold a reference
+// a and b each release automatically at scope exit
+```
+
+Rules:
+
+- **Copying retains**: variable initialization (`Box b = a;`), assignment
+  (`b = a;` — retains the new value before releasing the old, self-assignment
+  safe), by-value parameters (the callee retains on entry and releases at scope
+  exit), and by-value returns (retained for the caller) are all handled.
+- **Destruction releases**: locals at scope exit, overwritten values, structs in
+  a class being destructed, and nested structs torn down with their parent all
+  release what they hold.
+- A struct returned from a function is already owned; storing it does not
+  double-retain.
+- Uninitialized struct locals are zero-initialized (reference fields are null),
+  so releasing is always safe.
+- Nesting is recursive: copying/destroying the outer struct reaches the innermost
+  fields.
+- **Limitation**: structs owning reference fields cannot be array elements
+  (`Box[] a;` is a compile error) — arrays cannot run per-element hooks yet;
+  support is planned.
+- weak / unowned fields are managed too: copying takes a weak share, destruction
+  releases it.
 
 ---
 
@@ -1124,8 +1166,9 @@ Common traps, grouped by topic:
 - One variable per declaration statement.
 - Classes are reference semantics, structs are value semantics, strings are mutable
   reference types — aliases share mutations.
-- Struct fields can be primitives, bool, or other structs (no recursive nesting);
-  no reference-type fields.
+- Struct fields can be primitives, bool, other structs (no recursive nesting), or
+  reference types (class/interface/object/string/weak/unowned, with automatic
+  retain/release); structs owning reference fields cannot be array elements.
 - Structs can have methods, but the receiver must be an lvalue (no calls on
   temporaries like `make().m()`); no native/override/interface implementation.
 - `new Class` has no parentheses and no constructors; fields are zero-initialized.

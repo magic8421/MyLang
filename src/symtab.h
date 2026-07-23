@@ -78,6 +78,7 @@ typedef struct StructInfo {
     char field_names[MAX_FIELDS][NAME_BUF_SIZE];
     Type field_types[MAX_FIELDS];
     MethodInfo* methods;
+    int  has_ref_fields;     /* transitive: owns class/interface/weak shares */
     int  visit_state;        /* scratch marker for cycle detection */
     int  emitted_in_header;  /* set once the C definition has been emitted */
     struct StructInfo* next;

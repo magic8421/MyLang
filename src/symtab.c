@@ -560,9 +560,20 @@ int symtab_validate_impls(void) {
     return errors;
 }
 
+/* A field type that directly holds a reference-counted share: a strong
+   class/interface/object reference, or a weak/unowned weak share. */
+static int type_is_ref_owning(const Type* t) {
+    if (t->is_array) return 0;
+    if (t->is_weak || t->is_unowned) return 1;
+    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
+           t->type_kind == TYPE_OBJECT;
+}
+
 /* Detect recursive struct nesting: a struct that directly or indirectly
    contains itself would have infinite size.  Three-color DFS over the
-   struct field graph (visit_state: 0 = unvisited, 1 = on stack, 2 = done). */
+   struct field graph (visit_state: 0 = unvisited, 1 = on stack, 2 = done).
+   Also computes has_ref_fields bottom-up: dependencies reach state 2 (and
+   have their flag set) before the enclosing struct is evaluated. */
 static int struct_cycle_dfs(StructInfo* si) {
     if (si->visit_state == 2) return 0;
     if (si->visit_state == 1) {
@@ -570,14 +581,18 @@ static int struct_cycle_dfs(StructInfo* si) {
         return 1;
     }
     si->visit_state = 1;
+    int has = 0;
     int i;
     for (i = 0; i < si->field_count; i++) {
         Type* ft = &si->field_types[i];
         if (ft->type_kind == TYPE_STRUCT) {
             StructInfo* dep = symtab_find_struct(ft->class_name);
             if (dep && struct_cycle_dfs(dep)) return 1;
+            if (dep && dep->has_ref_fields) has = 1;
         }
+        if (type_is_ref_owning(ft)) has = 1;
     }
+    si->has_ref_fields = has;
     si->visit_state = 2;
     return 0;
 }

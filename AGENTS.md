@@ -231,11 +231,42 @@ Source code lives under `src/`:
 - Structs are stack-allocated value types; assignment copies the whole struct.
 - `new StructName` is illegal.
 - `new StructName[N]` creates a dynamic array of structs.
-- Struct fields are restricted to primitive types and other structs. Nested structs are embedded by value; recursive nesting (direct or indirect) is rejected by `symtab_validate_structs`. In the generated header, struct definitions are emitted in dependency order (inner before outer, and before any class that embeds them).
-- Structs may declare methods: `RetType name(Params) { body }`. Emitted as `RetType StructName_method(StructName* thiz, ...)`, mirroring the class method path. Inside the body `this` is a ref-style alias of the receiver (no retain/release); the parser/codegen model it as a struct Type with `is_ref = 1`, and `codegen_expr` maps it to `(*thiz)` so ordinary `.` member access works.
-- Calls require an lvalue receiver (local, field access, or array element): `v.m()` emits `StructName_m(&(v), ...)`, which also covers ref parameters and `this` (already `(*x)` in C). Calls on rvalues such as `make().m()` are a compile error.
-- Struct methods are always public and cannot be `native` or `override`; structs do not implement interfaces (a struct-to-interface conversion would need boxing, which is not implemented).
-- The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements correctly.
+- Struct fields may be primitives, bool, other structs, and reference types
+  (class, interface, object, string, weak, unowned). Nested structs are embedded
+  by value; recursive nesting (direct or indirect) is rejected by
+  `symtab_validate_structs`. In the generated header, struct definitions are
+  emitted in dependency order (inner before outer, and before any class that
+  embeds them).
+- Structs owning reference fields (transitively, `StructInfo.has_ref_fields`
+  computed bottom-up in `struct_cycle_dfs`) get compiler-generated hooks
+  `_mylang_retain_S(S*)` / `_mylang_release_S(S*)`: the retain hook retains /
+  weak-copies every reference field (recursing into nested structs), the release
+  hook drops them. The hooks are wired into every copy/destruction point:
+  variable init (borrowed initializers retain; call results are already owned),
+  plain assignment (retain new, release old, then copy — self-assign safe),
+  by-value parameters (callee retains on entry, releases at scope exit via the
+  cleanup list), `return` (borrowed values retain for the caller), discarded
+  call results, class destructors (struct fields), and local cleanup
+  (`CleanupEntry.is_struct_dtor`). Struct locals with reference fields are
+  zero-initialized (`= {0}`) so the release hook is NULL-safe.
+- Arrays of such structs are rejected (`type_is_ref_struct_array`): MyArray is
+  type-erased and cannot run per-element hooks yet. Checked at local
+  declarations, parameters, and class fields.
+- Structs may declare methods: `RetType name(Params) { body }`. Emitted as
+  `RetType StructName_method(StructName* thiz, ...)`, mirroring the class
+  method path. Inside the body `this` is a ref-style alias of the receiver
+  (no retain/release); the parser/codegen model it as a struct Type with
+  `is_ref = 1`, and `codegen_expr` maps it to `(*thiz)` so ordinary `.` member
+  access works.
+- Calls require an lvalue receiver (local, field access, or array element):
+  `v.m()` emits `StructName_m(&(v), ...)`, which also covers ref parameters and
+  `this` (already `(*x)` in C). Calls on rvalues such as `make().m()` are a
+  compile error.
+- Struct methods are always public and cannot be `native` or `override`;
+  structs do not implement interfaces (a struct-to-interface conversion would
+  need boxing, which is not implemented).
+- The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements
+  correctly.
 
 ## Strings and f-strings
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.

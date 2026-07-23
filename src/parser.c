@@ -1253,9 +1253,8 @@ static AstNode* parse_struct_decl(Parser* p) {
         }
 
         /* FIELD */
-        if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS ||
-            ft.type_kind == TYPE_OBJECT || ft.is_array || ft.array_size > 0) {
-            fprintf(stderr, "%s(%d,%d): error: struct fields must be primitive or struct types\n",
+        if (ft.type_kind == TYPE_VOID || ft.is_array || ft.array_size > 0) {
+            fprintf(stderr, "%s(%d,%d): error: struct fields cannot be void or array types\n",
                     parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             /* try to recover */

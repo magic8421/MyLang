@@ -1722,6 +1722,299 @@ void boom() {
 """),
 ]),
 
+    ("struct_ref_retain_release", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+i32 main() {
+    weak Node w;
+    i32 r = 0;
+    {
+        Box b;
+        {
+            Node n = new Node;
+            n.v = 7;
+            w = n;
+            b.n = n;
+        }
+        Node s = w.lock();
+        if (!s) { return 1; }
+        r = s.v;
+    }
+    Node s2 = w.lock();
+    if (s2) { return 2; }
+    return r;
+}
+""", 7),
+
+    ("struct_ref_param", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+i32 read_v(Box b, weak Node w) {
+    Node s = w.lock();
+    if (!s) { return 0; }
+    return s.v;
+}
+i32 main() {
+    weak Node w;
+    i32 r;
+    {
+        Box b;
+        {
+            Node n = new Node;
+            n.v = 11;
+            w = n;
+            b.n = n;
+        }
+        r = read_v(b, w);
+    }
+    Node s2 = w.lock();
+    if (s2) { return 99; }
+    return r;
+}
+""", 11),
+
+    ("struct_ref_return", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+Box make(i32 v) {
+    Box b;
+    Node n = new Node;
+    n.v = v;
+    b.n = n;
+    return b;
+}
+i32 main() {
+    weak Node w;
+    i32 r;
+    {
+        Box x = make(13);
+        w = x.n;
+        Node s = w.lock();
+        if (!s) { return 98; }
+        r = s.v;
+    }
+    Node s2 = w.lock();
+    if (s2) { return 99; }
+    return r;
+}
+""", 13),
+
+    ("struct_ref_assign", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+i32 main() {
+    weak Node w1;
+    weak Node w2;
+    {
+        Box b;
+        {
+            Node n1 = new Node;
+            n1.v = 1;
+            w1 = n1;
+            b.n = n1;
+        }
+        {
+            Box b2;
+            {
+                Node n2 = new Node;
+                n2.v = 2;
+                w2 = n2;
+                b2.n = n2;
+            }
+            b = b2;
+            if (!w2.lock()) { return 96; }
+        }
+        if (w1.lock()) { return 97; }
+        if (!w2.lock()) { return 98; }
+    }
+    if (w2.lock()) { return 99; }
+    return 5;
+}
+""", 5),
+
+    ("struct_ref_iface", """
+interface IVal {
+    i32 get();
+}
+class Num : IVal {
+    i32 v;
+    override i32 get() { return this.v; }
+}
+struct Box {
+    IVal s;
+}
+i32 main() {
+    weak Num w;
+    i32 r;
+    {
+        Box b;
+        {
+            Num n = new Num;
+            n.v = 21;
+            w = n;
+            b.s = n;
+        }
+        r = b.s.get();
+    }
+    if (w.lock()) { return 99; }
+    return r;
+}
+""", 21),
+
+    ("struct_ref_nested", """
+class Node {
+    i32 v;
+}
+struct Inner {
+    Node n;
+}
+struct Outer {
+    Inner in;
+}
+i32 main() {
+    weak Node w;
+    i32 r = 0;
+    {
+        Outer o1;
+        {
+            Node n = new Node;
+            n.v = 17;
+            w = n;
+            o1.in.n = n;
+        }
+        Outer o2 = o1;
+        Node s = w.lock();
+        if (!s) { return 1; }
+        r = s.v;
+    }
+    Node s2 = w.lock();
+    if (s2) { return 2; }
+    return r;
+}
+""", 17),
+
+    ("struct_ref_class_field", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+class Holder {
+    Box b;
+}
+i32 main() {
+    weak Node w;
+    {
+        Holder h = new Holder;
+        {
+            Node n = new Node;
+            n.v = 3;
+            w = n;
+            h.b.n = n;
+        }
+    }
+    if (w.lock()) { return 99; }
+    return 6;
+}
+""", 6),
+
+    ("struct_ref_weak_field", """
+class Node {
+    i32 v;
+}
+struct WBox {
+    weak Node w;
+}
+i32 main() {
+    weak Node probe;
+    i32 r = 0;
+    {
+        WBox b;
+        {
+            Node n = new Node;
+            n.v = 9;
+            probe = n;
+            b.w = n;
+        }
+        WBox b2 = b;
+        if (probe.lock()) { return 95; }
+        r = 8;
+    }
+    if (probe.lock()) { return 96; }
+    return r;
+}
+""", 8),
+
+    ("struct_ref_discard", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+Box make_with(Node n) {
+    Box b;
+    b.n = n;
+    return b;
+}
+i32 main() {
+    weak Node w;
+    {
+        Node n = new Node;
+        n.v = 1;
+        w = n;
+        make_with(n);
+    }
+    if (w.lock()) { return 99; }
+    return 4;
+}
+""", 4),
+
+    ("struct_ref_object_field", """
+class Node {
+    i32 v;
+}
+struct Box {
+    object o;
+}
+i32 main() {
+    weak Node w;
+    i32 r = 0;
+    {
+        Box b;
+        {
+            Node n = new Node;
+            n.v = 33;
+            w = n;
+            b.o = n;
+        }
+        Node s = w.lock();
+        if (!s) { return 1; }
+        r = s.v;
+    }
+    Node s2 = w.lock();
+    if (s2) { return 2; }
+    return r;
+}
+""", 33),
+
     ("weak_basic", """
 class Node {
     i32 v;
@@ -3986,6 +4279,50 @@ i32 main() {
 }
 """, "method 'S.nope' does not exist"),
 
+    ("bad_struct_ref_array_local", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+i32 main() {
+    Box[] a;
+    a.resize(1);
+    return 0;
+}
+""", "arrays of struct 'Box' with reference fields are not supported yet"),
+
+    ("bad_struct_ref_array_field", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+class Holder {
+    Box[] a;
+}
+i32 main() {
+    return 0;
+}
+""", "arrays of struct 'Box' with reference fields are not supported yet"),
+
+    ("bad_struct_ref_array_param", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+void fill(ref Box[] a) {
+    a.resize(1);
+}
+i32 main() {
+    return 0;
+}
+""", "arrays of struct 'Box' with reference fields are not supported yet"),
+
     ("bad_import_missing", """
 import("no_such_import_file_xyz.my");
 
@@ -4691,15 +5028,6 @@ i32 main() {
     return 0;
 }
 """, "cannot pass 'i32' to 'object' parameter"),
-
-    ("bad_object_struct", """
-struct S {
-    object o;
-}
-i32 main() {
-    return 0;
-}
-""", "struct fields must be primitive or struct types"),
 
     ("bad_struct_recursive", """
 struct A {
