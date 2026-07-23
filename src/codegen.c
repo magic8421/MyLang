@@ -1330,6 +1330,23 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
     if (callee->ast_kind == AST_IDENT) {
         fi = symtab_find_func(callee->ast_token.text);
     }
+    /* Builtin assert(cond): not registered in symtab (the condition accepts any
+       truthy expression).  A user-defined function named 'assert' shadows it. */
+    if (callee->ast_kind == AST_IDENT && !fi &&
+        strcmp(callee->ast_token.text, "assert") == 0) {
+        AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        if (!args || args->next) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "assert expects 1 argument");
+            fprintf(ctx->out, "(void)0");
+            return;
+        }
+        fprintf(ctx->out, "((");
+        codegen_expr(ctx, args);
+        fprintf(ctx->out, ") ? (void)0 : mylang_assert_failed(%d, \"assertion failed\"))",
+                callee->ast_token.line);
+        return;
+    }
     if (fi && fi->is_builtin) {
         if (strcmp(fi->name, "print") == 0) {
             AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;

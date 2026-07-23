@@ -106,16 +106,22 @@ def compile_c(src, exe, extra_sources=None):
     return True
 
 def run_exe(exe, asan_dll_dir=""):
-    """Run executable and return exit code + stdout+stderr."""
+    """Run executable and return (exit code, stdout, stderr)."""
     env = os.environ.copy()
     if asan_dll_dir:
         env["PATH"] = asan_dll_dir + ";" + env.get("PATH", "")
     r = subprocess.run(exe, capture_output=True, text=True, shell=True,
                        cwd=SCRIPT_DIR, timeout=10, env=env)
-    return r.returncode, r.stdout + r.stderr
+    return r.returncode, r.stdout, r.stderr
 
 # ============================================================
-# TEST CASES: (name, source, expected_exit_code_or_pattern)
+# TEST CASES: (name, source, expected)
+#   expected is one of:
+#     int                  - expected process exit code
+#     "crash"              - any non-zero exit (abort/breakpoint/ASan)
+#     (exit_code, stdout)  - exit code plus exact stdout match
+#     "some output"        - shorthand for (0, "some output")
+# A 4th element may carry native C source for native-method tests.
 # ============================================================
 
 def ST(token):
@@ -2894,165 +2900,71 @@ int32_t Math_add(Math* thiz, int32_t a, int32_t b) {
 """),
 
     ("fstring_basic", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     i32 n = 42;
     string name = "world";
-    string msg = f"hello {name}, n={n}\\n";
-    if (!a.string_equals(msg, "hello world, n=42\\n")) {
-        return 1;
-    }
+    print(f"hello {name}, n={n}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "hello world, n=42\n")),
 
     ("fstring_types", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     i8 c = 'X';
     i32 n = -123;
-    string s = f"{c}:{n}";
-    if (!a.string_equals(s, "X:-123")) {
-        return 1;
-    }
+    print(f"{c}:{n}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "X:-123\n")),
 
     ("fstring_arg", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     i32 n = 7;
-    if (!a.string_equals(f"n={n}", "n=7")) {
-        return 1;
-    }
+    print(f"n={n}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "n=7\n")),
 
     ("fstring_escape_dbl_braces", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     i32 n = 42;
-    if (!a.string_equals(f"{{{n}}}", "{42}")) { return 1; }
-    if (!a.string_equals(f"a{{b}}c", "a{b}c")) { return 2; }
-    if (!a.string_equals(f"}}", "}")) { return 3; }
-    if (!a.string_equals(f"lone } brace", "lone } brace")) { return 4; }
+    print(f"{{{n}}}");
+    print(f"a{{b}}c");
+    print(f"}}");
+    print(f"lone }} brace");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "{42}\na{b}c\n}\nlone } brace\n")),
 
     ("fstring_escape_bs_braces", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     i32 n = 42;
-    if (!a.string_equals(f"\\{n\\}={n}", "{n}=42")) { return 1; }
-    if (!a.string_equals(f"a\\{b", "a{b")) { return 2; }
-    if (!a.string_equals(f"b\\}c", "b}c")) { return 3; }
-    if (!a.string_equals(f"\\\\{{", "\\\\{")) { return 4; }
+    print(f"\\{n\\}={n}");
+    print(f"a\\{b");
+    print(f"b\\}c");
+    print(f"\\\\{{");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "{n}=42\na{b\nb}c\n\\{\n")),
 
     ("string_escape_braces", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
-    if (!a.string_equals("x\\{y\\}z", "x{y}z")) { return 1; }
-    if (!a.string_equals("{{not collapsed}}", "{{not collapsed}}")) { return 2; }
+    print("x\\{y\\}z");
+    print("{{not collapsed}}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "x{y}z\n{{not collapsed}}\n")),
 
     ("string_append", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     string s = "ab";
     s.append_string("cd");
     s.append_i32(12);
     s.append_char('X');
-    if (!a.string_equals(s, "abcd12X")) {
-        return 1;
-    }
+    print(s);
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "abcd12X\n")),
 
     ("string_equals_method", """
 i32 main() {
@@ -3070,9 +2982,6 @@ i32 main() {
 """, 0),
 
     ("fstring_tostring", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 class Point : IToString {
     i32 x;
     i32 y;
@@ -3092,34 +3001,17 @@ Point make_point() {
     return p;
 }
 i32 main() {
-    Asserts a = new Asserts;
     Point p = new Point;
     p.x = 3;
     p.y = 4;
-    if (!a.string_equals(f"p={p}", "p=(3, 4)")) {
-        return 1;
-    }
+    print(f"p={p}");
     IToString it = p;
-    if (!a.string_equals(f"it={it}", "it=(3, 4)")) {
-        return 2;
-    }
-    if (!a.string_equals(f"m={make_point()}", "m=(9, 8)")) {
-        return 3;
-    }
-    if (!a.string_equals(f"s={p.toString()}", "s=(3, 4)")) {
-        return 4;
-    }
+    print(f"it={it}");
+    print(f"m={make_point()}");
+    print(f"s={p.toString()}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "p=(3, 4)\nit=(3, 4)\nm=(9, 8)\ns=(3, 4)\n")),
 
     ("float_literal_arith", """
 f32 main() {
@@ -3130,36 +3022,50 @@ f32 main() {
 """, 4),
 
     ("float_literal_fstring", """
-class Asserts {
-    native i32 string_equals(string a, string b);
-}
 i32 main() {
-    Asserts a = new Asserts;
     f32 x = 1.5f;
     f64 y = 2.5;
-    string s = f"{x},{y}";
-    if (!a.string_equals(s, "1.5,2.5")) {
-        return 1;
-    }
+    print(f"{x},{y}");
     return 0;
 }
-""", 0, """
-#include <string.h>
-int32_t Asserts_string_equals(Asserts* thiz, String* a, String* b) {
-    (void)thiz;
-    if (!a || !b) return a == b;
-    if (a->bytes.length != b->bytes.length) return 0;
-    return memcmp(a->bytes.data, b->bytes.data, a->bytes.length) == 0;
-}
-"""),
+""", (0, "1.5,2.5\n")),
 
     ("print_builtin", """
 i32 main() {
-    print("hello\n");
-    print(f"world {42}\n");
+    print("hello");
+    print(f"world {42}");
+    return 0;
+}
+""", (0, "hello\nworld 42\n")),
+
+    ("assert_pass", """
+i32 main() {
+    i32 x = 5;
+    assert(x == 5);
+    assert(x);
+    assert(true);
     return 0;
 }
 """, 0),
+
+    ("assert_fail", """
+i32 main() {
+    assert(1 == 2);
+    return 0;
+}
+""", "crash"),
+
+    ("assert_in_func", """
+i32 check(i32 x) {
+    assert(x > 0);
+    return x;
+}
+i32 main() {
+    check(5);
+    check(0);
+    return 0;
+}
+""", "crash"),
 
 
     ("match_iface_type", """
@@ -3850,6 +3756,13 @@ i32 main() {
 # ============================================================
 
 NEGATIVE_TESTS = [
+    ("assert_arg_count", """
+i32 main() {
+    assert();
+    return 0;
+}
+""", "assert expects 1 argument"),
+
     ("bad_hex_no_digits", """
 i32 main() {
     i32 x = 0x;
@@ -4850,9 +4763,10 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
 
     # Run
     try:
-        exit_code, output = run_exe(exe_file, asan_dll_dir)
+        exit_code, out, err = run_exe(exe_file, asan_dll_dir)
     except subprocess.TimeoutExpired:
         return False, "timeout"
+    output = out + err
 
     if expected == "crash":
         # Any non-zero exit means the program was terminated (breakpoint/ASan)
@@ -4860,6 +4774,23 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
             return True, f"exited {exit_code & 0xFFFFFFFF} (crash)"
         else:
             return False, f"exit 0, expected crash"
+
+    # Tuple (exit_code, stdout) or plain string (= (0, stdout)): exact stdout match.
+    # stderr is ignored for matching (CRT leak dump / MyLang leak report / ASan).
+    if isinstance(expected, tuple) or (isinstance(expected, str) and expected != "crash"):
+        want_exit, want_out = expected if isinstance(expected, tuple) else (0, expected)
+        if exit_code != want_exit:
+            snippet = output[-300:] if len(output) > 300 else output
+            return False, f"exit {exit_code}, expected {want_exit}\n  {snippet}"
+        if out != want_out:
+            e = repr(want_out)
+            a = repr(out)
+            if len(e) > 300: e = e[:300] + "..."
+            if len(a) > 300: a = a[:300] + "..."
+            return False, f"stdout mismatch\n  expected: {e}\n  actual:   {a}"
+        if (TEST_MODE == "debug" or leak_check) and output:
+            return True, f"exit {exit_code}, stdout ok\n{output}"
+        return True, f"exit {exit_code}, stdout ok"
 
     if exit_code != expected:
         snippet = output[-300:] if len(output) > 300 else output

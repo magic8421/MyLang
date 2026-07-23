@@ -34,6 +34,11 @@ void my_panic(const char* msg) {
     abort();
 }
 
+void mylang_assert_failed(int line, const char* msg) {
+    __my_line = line;
+    my_panic(msg);
+}
+
 /* Core allocation for class/interface objects. */
 void* mylang_new_object(size_t sz, uint32_t type_id, void (*dtor)(void*)) {
     ObjHeader* h = (ObjHeader*)calloc(1, sizeof(ObjHeader) + sz);
@@ -101,7 +106,10 @@ void mylang_print_string(String* s) {
     if (s && s->bytes.data) {
         fwrite(s->bytes.data, 1, s->bytes.length, stdout);
     }
-    fwrite("\r\n", 1, 2, stdout);
+    /* print acts like println: append one newline.  Use a bare LF and let the
+       CRT text mode do the CRLF translation; writing "\r\n" here would be
+       translated again and produce stray carriage returns. */
+    fwrite("\n", 1, 1, stdout);
 }
 
 void mylang_print_i32(int32_t v) {

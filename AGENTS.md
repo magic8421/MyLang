@@ -19,6 +19,10 @@ Keep everything ASCII.
 - Build artifacts go to `build/` (mylang.exe, .obj, .pdb, ASan DLL); test executables go to `build/test/`.
 - Run the test suite with: `python test_runner.py` (runs both release and debug modes by default; use `--mode release` or `--mode debug` to run just one).
 - Generated C files are compiled with `cl /std:c11`.
+- Test expectations in test_runner.py: an `int` checks the process exit code,
+  `"crash"` accepts any non-zero exit, and a tuple `(exit_code, stdout)` (or a
+  plain string, meaning exit 0) additionally requires an exact stdout match.
+  stderr is ignored for matching, so CRT/MyLang leak reports do not interfere.
 
 ## Source Layout
 Source code lives under `src/`:
@@ -300,7 +304,8 @@ Source code lives under `src/`:
 - `mylang_array_reserve(a, new_capacity, elem_size)` / `mylang_array_resize(a, new_length, elem_size, elem_kind)` / `mylang_array_move(src, dst, elem_size, elem_kind)` / `mylang_array_copy(src, dst, elem_size, elem_kind)` — vector manipulation.
 - `mylang_array_push(a, elem_size, elem_kind, value)` / `mylang_array_pop(a, elem_size, elem_kind)` / `mylang_array_clear(a, elem_size, elem_kind)` / `mylang_array_compact(a, elem_size)` — vector methods.
 - `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.
-- `mylang_print_string(String* s)` — writes the string to stdout.  Exposed to MyLang as the builtin `print(string)` function.
+- `mylang_print_string(String* s)` — writes the string to stdout plus one trailing newline (println semantics; a bare LF, the CRT text mode turns it into CRLF).  Exposed to MyLang as the builtin `print(string)` function.
+- `mylang_assert_failed(line, msg)` — backs the builtin `assert(cond)`: sets `__my_line` to the assert's source line and calls `my_panic`. `assert` is special-cased in `codegen_call` (not registered in symtab), accepts any truthy expression as its single argument, and emits `((cond) ? (void)0 : mylang_assert_failed(line, "assertion failed"))`. It is always on (no release-mode elision), and a user-defined function named `assert` shadows the builtin.
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging

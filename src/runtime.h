@@ -131,6 +131,9 @@ extern MY_TL int         __my_depth;
 void my_backtrace(void);
 void my_panic(const char* msg);
 
+/* Builtin assert(cond): called with the source line when cond is false. */
+void mylang_assert_failed(int line, const char* msg);
+
 #define MY_CHECK(c, m) do { if (!(c)) my_panic(m); } while(0)
 
 /* Core allocation / refcounting for class and interface objects. */
