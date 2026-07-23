@@ -577,6 +577,33 @@ static void emit_header_method_prototypes(CodegenContext* ctx) {
         }
         ci = ci->next;
     }
+    StructInfo* si = symtab_first_struct();
+    while (si) {
+        MethodInfo* m = si->methods;
+        while (m) {
+            char ret[128];
+            char name_buf[256];
+            c_type_str(&m->return_type, ret, sizeof(ret));
+            int n = snprintf(name_buf, sizeof(name_buf), "%s_%s", si->name, m->name);
+            CHECK_SNPRINTF(n, (size_t)sizeof(name_buf), "method name too long");
+            fprintf(h, "%s %s(%s* thiz", ret, name_buf, si->name);
+            {
+                int i;
+                for (i = 0; i < m->param_count; i++) {
+                    char pt[128];
+                    c_type_str(&m->param_types[i], pt, sizeof(pt));
+                    if (m->param_types[i].is_ref) {
+                        fprintf(h, ", %s* %s", pt, m->param_names[i]);
+                    } else {
+                        fprintf(h, ", %s %s", pt, m->param_names[i]);
+                    }
+                }
+            }
+            fprintf(h, ");\n");
+            m = m->next;
+        }
+        si = si->next;
+    }
 }
 
 static Type resolve_type(AstNode* node);
@@ -744,6 +771,12 @@ static Type resolve_type(AstNode* node) {
                     if (ii) {
                         InterfaceMethodInfo* im = symtab_find_interface_method(ii, mem->ast_token.text);
                         if (im) { t = im->return_type; }
+                    }
+                } else if (obj->ast_resolved_type.type_kind == TYPE_STRUCT) {
+                    StructInfo* si = symtab_find_struct(obj->ast_resolved_type.class_name);
+                    if (si) {
+                        MethodInfo* mi = symtab_find_struct_method(si, mem->ast_token.text);
+                        if (mi) { t = mi->return_type; }
                     }
                 }
             } else {
@@ -1233,6 +1266,36 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             fprintf(ctx->out, ")");
             return;
         }
+        if (obj->ast_resolved_type.type_kind == TYPE_STRUCT) {
+            /* Struct method call: StructName_method(&recv, args...).  The
+               receiver must be an lvalue; '&' of the emitted expression works
+               for locals (v -> &v), ref params ((*c) -> &(*c)) and array
+               elements ((*p) -> &(*p)) alike. */
+            StructInfo* si = symtab_find_struct(obj->ast_resolved_type.class_name);
+            MethodInfo* mi = si ? symtab_find_struct_method(si, mname) : NULL;
+            if (si && !mi) {
+                codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", si->name, mname);
+            }
+            if (obj->ast_kind != AST_IDENT && obj->ast_kind != AST_MEMBER_ACCESS &&
+                obj->ast_kind != AST_ARRAY_ACCESS) {
+                codegen_report_error(ctx, obj->ast_token.line, obj->ast_token.col, "struct method receiver must be a variable, field, or array element");
+            }
+            fprintf(ctx->out, "%s_%s(&(", si ? si->name : obj->ast_resolved_type.class_name, mname);
+            codegen_expr(ctx, obj);
+            fprintf(ctx->out, ")");
+            int idx = 0;
+            while (args) {
+                fprintf(ctx->out, ", ");
+                Type expected;
+                memset(&expected, 0, sizeof(expected));
+                if (mi && idx < mi->param_count) expected = mi->param_types[idx];
+                codegen_call_arg(ctx, args, &expected);
+                idx++;
+                args = args->next;
+            }
+            fprintf(ctx->out, ")");
+            return;
+        }
         if (obj->ast_resolved_type.type_kind == TYPE_INTERFACE) {
             InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
             InterfaceMethodInfo* im = NULL;
@@ -1570,7 +1633,14 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 if (ctx->is_interface_default_method) {
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'this' is not allowed in interface default method");
                 }
-                fprintf(ctx->out, "thiz");
+                /* In struct methods 'this' is a ref alias: thiz is a pointer,
+                   so dereference it to produce the struct value. */
+                SymEntry* te = symtab_lookup("this");
+                if (te && type_is_ref(&te->type)) {
+                    fprintf(ctx->out, "(*thiz)");
+                } else {
+                    fprintf(ctx->out, "thiz");
+                }
             } else {
                 SymEntry* e = symtab_lookup(node->ast_token.text);
                 if (!e) {
@@ -4510,6 +4580,71 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
     codegen_class_interface_vtables(ctx, ci);
 }
 
+static void codegen_struct_method_decl(CodegenContext* ctx, AstNode* node, const char* struct_name) {
+    if (node->ast_resolved_type.is_array) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "method '%s.%s' cannot return array by value", struct_name, node->ast_token.text);
+    }
+    char ret_buf[128];
+    c_type_str(&node->ast_resolved_type, ret_buf, sizeof(ret_buf));
+    fprintf(ctx->out, "%s %s_%s(%s* thiz", ret_buf, struct_name, node->ast_token.text, struct_name);
+    AstNode* params = NULL; AstNode* body = NULL;
+    if (node->ast_child_count == 2) { params = node->ast_children[0]; body = node->ast_children[1]; }
+    else { body = node->ast_children[0]; }
+    { AstNode* p = params; while (p) { fprintf(ctx->out, ", ");
+        if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
+            codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
+        }
+        char pt[128]; c_type_str(&p->ast_resolved_type, pt, sizeof(pt));
+        if (type_is_ref(&p->ast_resolved_type)) {
+            fprintf(ctx->out, "%s* %s", pt, p->ast_token.text);
+        } else {
+            fprintf(ctx->out, "%s %s", pt, p->ast_token.text);
+        }
+        p = p->next; } }
+    fprintf(ctx->out, ")\n{\n");
+    cleanup_push_scope(ctx); symtab_enter_scope();
+    Type prev_ret = ctx->return_type;
+    ctx->return_type = node->ast_resolved_type;
+    /* 'this' is a borrowed pointer to the receiver: no retain/release. */
+    Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
+    thiz_type.type_kind = TYPE_STRUCT;
+    CHECK_STRSCPY(strscpy(thiz_type.class_name, struct_name, sizeof(thiz_type.class_name)), "struct name too long");
+    thiz_type.is_ref = 1; symtab_insert("this", thiz_type);
+    { AstNode* p = params; while (p) { symtab_insert(p->ast_token.text, p->ast_resolved_type);
+        if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
+            cleanup_add_weak_interface(ctx, p->ast_token.text);
+        } else if (p->ast_resolved_type.is_weak || p->ast_resolved_type.is_unowned) {
+            cleanup_add(ctx, p->ast_token.text, 1, 0);
+        }
+        p = p->next; } }
+
+    indent_line(ctx, 1);
+    fprintf(ctx->out, "MY_PUSH(\"%s.%s\", \"%s\", %d);\n", struct_name, node->ast_token.text, ctx->source_file_escaped, node->ast_token.line);
+
+    fprintf(ctx->out, "{\n");
+    if (body && body->ast_kind == AST_BLOCK) { AstNode* s = body->ast_children[0];
+        while (s) { codegen_stmt(ctx, s, 2); s = s->next; } }
+    cleanup_pop_scope(ctx, 2);
+    fprintf(ctx->out, "}\n");
+
+    cleanup_pop_scope(ctx, 1);
+    symtab_exit_scope();
+    indent_line(ctx, 1);
+    fprintf(ctx->out, "MY_POP();\n");
+    fprintf(ctx->out, "}\n\n");
+    ctx->return_type = prev_ret;
+}
+
+static void codegen_struct_methods(CodegenContext* ctx, AstNode* node) {
+    StructInfo* si = symtab_find_struct(node->ast_token.text);
+    if (!si) return;
+    AstNode* m = node->ast_child_count > 0 ? node->ast_children[0] : NULL;
+    while (m) {
+        codegen_struct_method_decl(ctx, m, si->name);
+        m = m->next;
+    }
+}
+
 
 static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* class_name) {
     if (node->ast_resolved_type.is_array) {
@@ -4771,6 +4906,8 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     while (decl) {
         if (decl->ast_kind == AST_CLASS_DECL) {
             codegen_class_decl(&ctx, decl);
+        } else if (decl->ast_kind == AST_STRUCT_DECL) {
+            codegen_struct_methods(&ctx, decl);
         }
         decl = decl->next;
     }

@@ -257,6 +257,31 @@ int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
     return 0;
 }
 
+void symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
+                              int pc, const char pn[][64], const Type pt[]) {
+    MethodInfo* m = calloc(1, sizeof(MethodInfo));
+    CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "method name too long");
+    m->return_type = ret_type;
+    m->param_count = pc;
+    int i;
+    for (i = 0; i < pc && i < 16; i++) {
+        CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
+        m->param_types[i] = pt[i];
+    }
+    m->next = st->methods;
+    st->methods = m;
+}
+
+MethodInfo* symtab_find_struct_method(StructInfo* st, const char* method_name) {
+    if (!st) return NULL;
+    MethodInfo* m = st->methods;
+    while (m) {
+        if (strcmp(m->name, method_name) == 0) return m;
+        m = m->next;
+    }
+    return NULL;
+}
+
 void symtab_add_func(const char* name, Type ret_type,
                      int pc, const char pn[][64], const Type pt[],
                      int is_builtin) {

@@ -1140,9 +1140,17 @@ static AstNode* parse_struct_decl(Parser* p) {
         symtab_add_struct(name.text, info);
     }
 
+    AstNode* methods = NULL;
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         if (check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
             fprintf(stderr, "%s(%d,%d): error: access modifiers are not allowed in structs\n",
+                    parser_filename(p), p->current.line, p->current.col);
+            p->had_error = 1;
+            advance(p);
+            continue;
+        }
+        if (check(p, TOK_KW_OVERRIDE)) {
+            fprintf(stderr, "%s(%d,%d): error: override is not allowed in structs\n",
                     parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             advance(p);
@@ -1154,23 +1162,107 @@ static AstNode* parse_struct_decl(Parser* p) {
             advance(p);
         }
         Type ft = parse_type(p);
+        if (!check(p, TOK_IDENT)) {
+            fprintf(stderr, "%s(%d,%d): error: expected field or method name\n",
+                    parser_filename(p), p->current.line, p->current.col);
+            p->had_error = 1;
+            break;
+        }
+        Token fname = p->current; advance(p);
+
+        if (check(p, TOK_LPAREN)) {
+            /* METHOD: emitted as StructName_method(StructName* thiz, ...). */
+            advance(p); /* consume ( */
+            if (is_native) {
+                fprintf(stderr, "%s(%d,%d): error: native methods are not supported in structs\n",
+                        parser_filename(p), fname.line, fname.col);
+                p->had_error = 1;
+            }
+            if (ft.is_array) {
+                fprintf(stderr, "%s(%d,%d): error: method '%s' cannot return array by value\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+
+            symtab_enter_scope();
+
+            /* 'this' aliases the receiver struct, like a ref parameter. */
+            Type this_type = type_make_user(TYPE_STRUCT, name.text);
+            this_type.is_ref = 1;
+            symtab_insert("this", this_type);
+
+            AstNode* mparams = NULL;
+            int mc = 0;
+            char mpn[16][64];
+            Type mpt[16];
+
+            if (!check(p, TOK_RPAREN)) {
+                do {
+                    int is_ref = 0;
+                    if (check(p, TOK_KW_REF)) {
+                        is_ref = 1; advance(p);
+                    }
+                    Type pt = parse_type(p);
+                    pt.is_ref = is_ref;
+                    if (is_ref && pt.is_const) {
+                        fprintf(stderr, "%s(%d,%d): error: ref parameters cannot be const\n",
+                                parser_filename(p), p->current.line, p->current.col);
+                        p->had_error = 1;
+                    }
+                    if (!check(p, TOK_IDENT)) {
+                        fprintf(stderr, "%s(%d,%d): error: expected parameter name\n",
+                                parser_filename(p), p->current.line, p->current.col);
+                        p->had_error = 1;
+                        break;
+                    }
+                    Token pn = p->current; advance(p);
+                    AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
+                    pd->ast_resolved_type = pt;
+                    symtab_insert(pn.text, pt);
+                    mparams = ast_append_list(mparams, pd);
+                    if (mc < 16) {
+                        CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
+                        mpt[mc] = pt;
+                        mc++;
+                    }
+                } while (check(p, TOK_COMMA) && (advance(p), 1));
+            }
+            expect(p, TOK_RPAREN);
+
+            {
+                int pi;
+                for (pi = 0; pi < mc; pi++) {
+                    if (mpt[pi].is_array && !mpt[pi].is_ref) {
+                        fprintf(stderr, "%s(%d,%d): error: array parameter '%s' of method '%s' must be ref\n",
+                                parser_filename(p), fname.line, fname.col, mpn[pi], fname.text);
+                        p->had_error = 1;
+                    }
+                }
+            }
+
+            AstNode* mbody = parse_stmt(p);
+            symtab_exit_scope();
+
+            symtab_add_struct_method(info, fname.text, ft, mc, mpn, mpt);
+
+            AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
+            mnode->ast_resolved_type = ft;
+            if (mparams) { mnode->ast_children[mnode->ast_child_count++] = mparams; }
+            mnode->ast_children[mnode->ast_child_count++] = mbody;
+            methods = ast_append_list(methods, mnode);
+            continue;
+        }
+
+        /* FIELD */
         if (ft.type_kind == TYPE_VOID || ft.type_kind == TYPE_CLASS ||
             ft.type_kind == TYPE_OBJECT || ft.is_array || ft.array_size > 0) {
             fprintf(stderr, "%s(%d,%d): error: struct fields must be primitive or struct types\n",
                     parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             /* try to recover */
-            if (check(p, TOK_IDENT)) advance(p);
             expect(p, TOK_SEMI);
             continue;
         }
-        if (!check(p, TOK_IDENT)) {
-            fprintf(stderr, "%s(%d,%d): error: expected field name\n",
-                    parser_filename(p), p->current.line, p->current.col);
-            p->had_error = 1;
-            break;
-        }
-        Token fname = p->current; advance(p);
         if (symtab_add_struct_field(info, fname.text, ft) != 0) {
             fprintf(stderr, "%s(%d,%d): error: too many fields in struct '%s' (max %d)\n",
                     parser_filename(p), fname.line, fname.col, name.text, MAX_FIELDS);
@@ -1184,6 +1276,8 @@ static AstNode* parse_struct_decl(Parser* p) {
     node->ast_resolved_type.type_kind = TYPE_STRUCT;
     CHECK_STRSCPY(strscpy(node->ast_resolved_type.class_name, name.text, sizeof(node->ast_resolved_type.class_name)), "struct name too long");
     node->ast_resolved_type.type_id = info->type_id;
+    node->ast_children[0] = methods;
+    if (methods) node->ast_child_count = 1;
     return node;
 }
 

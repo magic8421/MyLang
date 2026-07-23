@@ -1456,6 +1456,99 @@ i32 main() {
 }
 """, 42),
 
+    ("struct_method_basic", """
+struct Vec2 {
+    i32 x;
+    i32 y;
+    void set(i32 nx, i32 ny) {
+        this.x = nx;
+        this.y = ny;
+    }
+    i32 sum() {
+        return this.x + this.y;
+    }
+    Vec2 add(Vec2 o) {
+        Vec2 r;
+        r.x = this.x + o.x;
+        r.y = this.y + o.y;
+        return r;
+    }
+    void scale(i32 k) {
+        this.x = this.x * k;
+        this.y = this.y * k;
+    }
+}
+i32 main() {
+    Vec2 a;
+    a.set(1, 2);
+    Vec2 b;
+    b.set(3, 4);
+    Vec2 c = a.add(b);
+    if (c.sum() != 10) { return 1; }
+    c.scale(2);
+    if (c.sum() != 20) { return 2; }
+    a.scale(10);
+    if (a.sum() != 30) { return 3; }
+    if (b.sum() != 7) { return 4; }
+    return c.sum();
+}
+""", 20),
+
+    ("struct_method_ref_and_array", """
+struct Counter {
+    i32 n;
+    void bump() { this.n = this.n + 1; }
+    i32 get() { return this.n; }
+}
+void touch(ref Counter c) {
+    c.bump();
+}
+class Holder {
+    Counter c;
+}
+i32 main() {
+    Counter c;
+    c.n = 0;
+    touch(ref c);
+    if (c.get() != 1) { return 1; }
+    Counter[] arr;
+    arr.resize(2);
+    arr[0].n = 10;
+    arr[0].bump();
+    arr[1].n = 20;
+    arr[1].bump();
+    if (arr[0].get() != 11) { return 2; }
+    Holder h = new Holder;
+    h.c.n = 5;
+    h.c.bump();
+    if (h.c.get() != 6) { return 3; }
+    return arr[0].get() + arr[1].get() + c.get() + h.c.get();
+}
+""", 39),
+
+    ("struct_method_this_value", """
+struct Acc {
+    i32 v;
+    Acc plus(Acc o) {
+        Acc r;
+        r.v = this.v + o.v;
+        return r;
+    }
+    bool eq(Acc o) {
+        return this.v == o.v;
+    }
+}
+i32 main() {
+    Acc a;
+    a.v = 40;
+    Acc b;
+    b.v = 2;
+    Acc c = a.plus(b);
+    if (!c.eq(c)) { return 1; }
+    return c.v;
+}
+""", 42),
+
     ("weak_basic", """
 class Node {
     i32 v;
@@ -3775,6 +3868,43 @@ i32 main() {
     ("bad_iface_too_many_methods", "interface IBig {\n" + "".join(
         f"    i32 m{i}();\n" for i in range(33)) + "}\ni32 main() {\n    return 0;\n}\n",
      "too many methods in interface 'IBig'"),
+
+    ("bad_struct_method_rvalue", """
+struct Vec2 {
+    i32 x;
+    void bump() { this.x = this.x + 1; }
+}
+Vec2 make() {
+    Vec2 v;
+    v.x = 1;
+    return v;
+}
+i32 main() {
+    make().bump();
+    return 0;
+}
+""", "struct method receiver must be a variable, field, or array element"),
+
+    ("bad_struct_native_method", """
+struct S {
+    i32 x;
+    native void foo();
+}
+i32 main() {
+    return 0;
+}
+""", "native methods are not supported in structs"),
+
+    ("bad_struct_method_missing", """
+struct S {
+    i32 x;
+}
+i32 main() {
+    S s;
+    s.nope();
+    return 0;
+}
+""", "method 'S.nope' does not exist"),
 
     ("bad_new_interface", """
 interface IShape {

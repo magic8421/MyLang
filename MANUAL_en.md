@@ -681,6 +681,49 @@ struct Rect {
 - `new Vec` is illegal (structs need no `new`); `Vec[] arr; arr.resize(3);` creates an
   array of structs.
 
+### 9.1 Struct Methods
+
+Structs may declare methods. Inside a method, `this` refers to the receiver
+(mutating `this` mutates the original variable):
+
+```mylang
+struct Vec2 {
+    i32 x;
+    i32 y;
+
+    void set(i32 nx, i32 ny) {
+        this.x = nx;
+        this.y = ny;
+    }
+
+    Vec2 add(Vec2 o) {          // params and returns are by value
+        Vec2 r;
+        r.x = this.x + o.x;
+        r.y = this.y + o.y;
+        return r;
+    }
+}
+
+Vec2 a;
+a.set(1, 2);
+Vec2 b;
+b.set(3, 4);
+Vec2 c = a.add(b);              // c is an independent new value
+```
+
+Rules:
+
+- The receiver of a method call must be an **lvalue**: a local variable, a field
+  access, or an array element (`v.m()`, `obj.s.m()`, `arr[i].m()` all work); calling
+  on a temporary (e.g. `make().m()`) is a compile error.
+- Struct methods are always public; `native`, `override`, and access modifiers are
+  not supported.
+- Structs cannot implement interfaces (interface values reference heap objects;
+  polymorphism for value types would require boxing, which is not implemented).
+- Methods add behavior only — value semantics are unchanged: assignment, parameter
+  passing, and returns still copy the whole struct, and there are no
+  constructors/destructors.
+
 ---
 
 ## 10. Strings and f-strings
@@ -1050,6 +1093,8 @@ Common traps, grouped by topic:
   reference types — aliases share mutations.
 - Struct fields can be primitives, bool, or other structs (no recursive nesting);
   no reference-type fields.
+- Structs can have methods, but the receiver must be an lvalue (no calls on
+  temporaries like `make().m()`); no native/override/interface implementation.
 - `new Class` has no parentheses and no constructors; fields are zero-initialized.
 - No class inheritance; use interfaces for polymorphism.
 - `object` has no members; cast with `as` before use; it cannot be assigned back to a

@@ -76,6 +76,7 @@ typedef struct StructInfo {
     int  field_count;
     char field_names[MAX_FIELDS][64];
     Type field_types[MAX_FIELDS];
+    MethodInfo* methods;
     int  visit_state;        /* scratch marker for cycle detection */
     int  emitted_in_header;  /* set once the C definition has been emitted */
     struct StructInfo* next;
@@ -110,6 +111,9 @@ void        symtab_add_struct(const char* name, StructInfo* info);
 StructInfo* symtab_find_struct(const char* name);
 StructInfo* symtab_first_struct(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
+void        symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
+                                     int pc, const char pn[][64], const Type pt[]);
+MethodInfo* symtab_find_struct_method(StructInfo* st, const char* method_name);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
                               int is_native, int is_override, int is_private);

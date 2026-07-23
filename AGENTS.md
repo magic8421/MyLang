@@ -199,6 +199,9 @@ Source code lives under `src/`:
 - `new StructName` is illegal.
 - `new StructName[N]` creates a dynamic array of structs.
 - Struct fields are restricted to primitive types and other structs. Nested structs are embedded by value; recursive nesting (direct or indirect) is rejected by `symtab_validate_structs`. In the generated header, struct definitions are emitted in dependency order (inner before outer, and before any class that embeds them).
+- Structs may declare methods: `RetType name(Params) { body }`. Emitted as `RetType StructName_method(StructName* thiz, ...)`, mirroring the class method path. Inside the body `this` is a ref-style alias of the receiver (no retain/release); the parser/codegen model it as a struct Type with `is_ref = 1`, and `codegen_expr` maps it to `(*thiz)` so ordinary `.` member access works.
+- Calls require an lvalue receiver (local, field access, or array element): `v.m()` emits `StructName_m(&(v), ...)`, which also covers ref parameters and `this` (already `(*x)` in C). Calls on rvalues such as `make().m()` are a compile error.
+- Struct methods are always public and cannot be `native` or `override`; structs do not implement interfaces (a struct-to-interface conversion would need boxing, which is not implemented).
 - The runtime uses `MYLANG_ELEM_STRUCT` to copy/release struct array elements correctly.
 
 ## Strings and f-strings
