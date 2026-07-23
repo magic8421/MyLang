@@ -26,35 +26,41 @@ static void mangle_type_into(Type* t, char* out, size_t out_size) {
     if (t->is_weak) {
         Type inner = *t;
         char inner_buf[256];
+        int n;
         inner.is_weak = 0;
         inner.mangled_name[0] = '\0';
         mangle_type_into(&inner, inner_buf, sizeof(inner_buf));
-        CHECK_SNPRINTF(snprintf(out, out_size, "Weak_%s", inner_buf), out_size, "weak mangled name too long");
+        n = snprintf(out, out_size, "Weak_%s", inner_buf);
+        CHECK_SNPRINTF(n, out_size, "weak mangled name too long");
         return;
     }
 
     if (t->is_unowned) {
         Type inner = *t;
         char inner_buf[256];
+        int n;
         inner.is_unowned = 0;
         inner.mangled_name[0] = '\0';
         mangle_type_into(&inner, inner_buf, sizeof(inner_buf));
-        CHECK_SNPRINTF(snprintf(out, out_size, "Unowned_%s", inner_buf), out_size, "unowned mangled name too long");
+        n = snprintf(out, out_size, "Unowned_%s", inner_buf);
+        CHECK_SNPRINTF(n, out_size, "unowned mangled name too long");
         return;
     }
 
     if (t->is_array) {
         Type inner = *t;
         char inner_buf[256];
+        int n;
         inner.is_array = 0;
         inner.array_size = 0;
         inner.mangled_name[0] = '\0';
         mangle_type_into(&inner, inner_buf, sizeof(inner_buf));
         if (t->array_size > 0) {
-            CHECK_SNPRINTF(snprintf(out, out_size, "Arr%d_%s", t->array_size, inner_buf), out_size, "array mangled name too long");
+            n = snprintf(out, out_size, "Arr%d_%s", t->array_size, inner_buf);
         } else {
-            CHECK_SNPRINTF(snprintf(out, out_size, "Arr_%s", inner_buf), out_size, "array mangled name too long");
+            n = snprintf(out, out_size, "Arr_%s", inner_buf);
         }
+        CHECK_SNPRINTF(n, out_size, "array mangled name too long");
         return;
     }
 

@@ -226,7 +226,8 @@ static const char* compound_op_text(TokenKind k) {
 }
 
 static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
-    snprintf(buf, bufsz, "Weak%s", t->class_name);
+    int n = snprintf(buf, bufsz, "Weak%s", t->class_name);
+    CHECK_SNPRINTF(n, bufsz, "weak interface name too long");
 }
 
 /* Helpers for the value-type MyArray representation. */
@@ -240,36 +241,40 @@ static Type array_elem_type(const Type* arr_type) {
 
 static void c_array_elem_type_name(const Type* arr_type, char* buf, int bufsz) {
     Type et = array_elem_type(arr_type);
+    int n;
     if (et.is_weak && et.type_kind == TYPE_INTERFACE) {
         char winame[128];
         c_weak_interface_name(&et, winame, sizeof(winame));
-        snprintf(buf, bufsz, "%s", winame);
+        n = snprintf(buf, bufsz, "%s", winame);
     } else if (et.is_weak) {
         /* weak class arrays store WeakRef pointers */
-        snprintf(buf, bufsz, "WeakRef*");
+        n = snprintf(buf, bufsz, "WeakRef*");
     } else if (et.type_kind == TYPE_CLASS || et.type_kind == TYPE_OBJECT) {
         /* class/object arrays store pointers to objects */
-        snprintf(buf, bufsz, "%s*", c_base_name(&et));
+        n = snprintf(buf, bufsz, "%s*", c_base_name(&et));
     } else {
-        snprintf(buf, bufsz, "%s", c_base_name(&et));
+        n = snprintf(buf, bufsz, "%s", c_base_name(&et));
     }
+    CHECK_SNPRINTF(n, (size_t)bufsz, "array element type name too long");
 }
 
 static void array_elem_size_expr(const Type* arr_type, char* buf, int bufsz) {
     Type et = array_elem_type(arr_type);
+    int n;
     if ((et.type_kind == TYPE_CLASS || et.type_kind == TYPE_OBJECT) && !et.is_weak) {
-        snprintf(buf, bufsz, "sizeof(void*)");
+        n = snprintf(buf, bufsz, "sizeof(void*)");
     } else if (et.type_kind == TYPE_INTERFACE && !et.is_weak) {
-        snprintf(buf, bufsz, "sizeof(%s)", c_base_name(&et));
+        n = snprintf(buf, bufsz, "sizeof(%s)", c_base_name(&et));
     } else if (et.is_weak && et.type_kind == TYPE_INTERFACE) {
         char winame[128];
         c_weak_interface_name(&et, winame, sizeof(winame));
-        snprintf(buf, bufsz, "sizeof(%s)", winame);
+        n = snprintf(buf, bufsz, "sizeof(%s)", winame);
     } else if (et.is_weak) {
-        snprintf(buf, bufsz, "sizeof(WeakRef*)");
+        n = snprintf(buf, bufsz, "sizeof(WeakRef*)");
     } else {
-        snprintf(buf, bufsz, "sizeof(%s)", c_base_name(&et));
+        n = snprintf(buf, bufsz, "sizeof(%s)", c_base_name(&et));
     }
+    CHECK_SNPRINTF(n, (size_t)bufsz, "array element size expression too long");
 }
 
 static int array_elem_kind(const Type* arr_type) {
@@ -1491,13 +1496,15 @@ static void codegen_new(CodegenContext* ctx, AstNode* node) {
     } else {
         if (base.type_kind == TYPE_CLASS) {
             char dtor_name[128];
+            int n;
             ClassInfo* ci = symtab_find_class(base.class_name);
             if (!ci) ci = symtab_find_class_by_mangled(base.class_name);
             if (ci && ci->mangled_name[0]) {
-                snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", ci->mangled_name);
+                n = snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", ci->mangled_name);
             } else {
-                snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", c_base_name(&base));
+                n = snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", c_base_name(&base));
             }
+            CHECK_SNPRINTF(n, sizeof(dtor_name), "destructor name too long");
             fprintf(ctx->out, "mylang_new_object(sizeof(%s), %u, %s)", c_base_name(&base), (unsigned)base.type_id, dtor_name);
         } else {
             fprintf(ctx->out, "calloc(1, sizeof(%s))", c_base_name(&base));
@@ -4039,7 +4046,8 @@ static void emit_compound_lvalue_temp(CodegenContext* ctx, AstNode* expr, int in
     codegen_expr(ctx, target);
     fprintf(ctx->out, ";\n");
 
-    snprintf(target->ast_temp_name, sizeof(target->ast_temp_name), "(*_mylang_ca%d)", id);
+    int n = snprintf(target->ast_temp_name, sizeof(target->ast_temp_name), "(*_mylang_ca%d)", id);
+    CHECK_SNPRINTF(n, sizeof(target->ast_temp_name), "compound assignment temp name too long");
 }
 
 static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent) {
