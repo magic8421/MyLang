@@ -2340,6 +2340,10 @@ static int call_needs_guard(AstNode* arg) {
     if (arg->ast_kind == AST_REF_ARG) return 0;
     resolve_type(arg);
     TypeKind k = arg->ast_resolved_type.type_kind;
+    /* Owned struct call results with owning fields need a guard temporary so
+       their shares can be released once at scope exit. */
+    if (k == TYPE_STRUCT && struct_has_ref_fields(&arg->ast_resolved_type) &&
+        arg->ast_kind == AST_CALL) return 1;
     if (k != TYPE_CLASS && k != TYPE_INTERFACE && k != TYPE_OBJECT) return 0;
     /* unowned reads are borrowed and side-effect-free; they are checked
        inline at the use site and never need a guard temporary. */
@@ -2373,12 +2377,35 @@ static int subexpr_needs_temp(AstNode* node) {
     Type* t = &node->ast_resolved_type;
     if (t->is_weak || t->is_unowned) return 0;
     if (t->is_array) return 0;
+    /* Owned struct call results with owning fields must also be hoisted so
+       their shares can be released once at scope exit. */
+    if (t->type_kind == TYPE_STRUCT && struct_has_ref_fields(t)) {
+        return node->ast_kind == AST_CALL;
+    }
     if (t->type_kind != TYPE_CLASS && t->type_kind != TYPE_INTERFACE &&
         t->type_kind != TYPE_OBJECT) return 0;
     return node->ast_kind == AST_CALL;
 }
 
 static void cleanup_add(CodegenContext* ctx, const char* name, int is_weak, int is_interface);
+static void cleanup_add_struct_dtor(CodegenContext* ctx, const char* name, const char* struct_name);
+
+/* Returns 1 when the argument at arg_index of the call is pushed (owned) into
+   an array of structs with reference fields.  Push moves an owned value into
+   the slot (no retain), so the guard temporary must not release it. */
+static int call_arg_consumed_by_struct_push(AstNode* call, int arg_index) {
+    if (call->ast_children[0]->ast_kind != AST_MEMBER_ACCESS) return 0;
+    AstNode* mem = call->ast_children[0];
+    if (strcmp(mem->ast_token.text, "push") != 0) return 0;
+    AstNode* obj = mem->ast_children[0];
+    resolve_type(obj);
+    if (!type_is_ref_struct_array(&obj->ast_resolved_type)) return 0;
+    AstNode* a = call->ast_children[1];
+    int i = 0;
+    while (a && i < arg_index) { a = a->next; i++; }
+    if (!a) return 0;
+    return expr_is_owned(a);
+}
 
 /* Returns 1 when the argument at arg_index of the call is passed to a weak
    interface parameter.  An owned argument there is consumed by the
@@ -2454,7 +2481,8 @@ static void emit_guarded_temp_decls_impl(CodegenContext* ctx, AstNode* expr, int
                 AstNode* nxt = a->next;
                 a->next = NULL;
                 emit_guarded_temp_decls_impl(ctx, a, indent, 0,
-                                             call_arg_consumed_by_weak_iface(expr, idx));
+                                             call_arg_consumed_by_weak_iface(expr, idx) ||
+                                             call_arg_consumed_by_struct_push(expr, idx));
                 a->next = nxt;
                 a = nxt;
                 idx++;
@@ -2487,8 +2515,13 @@ static void emit_guarded_temp_decls_impl(CodegenContext* ctx, AstNode* expr, int
         fprintf(ctx->out, ";\n");
 
         if (!at_value_root && !owned_consumed && expr_is_owned(expr)) {
-            cleanup_add(ctx, expr->ast_temp_name, 0,
-                        expr->ast_resolved_type.type_kind == TYPE_INTERFACE);
+            if (expr->ast_resolved_type.type_kind == TYPE_STRUCT) {
+                cleanup_add_struct_dtor(ctx, expr->ast_temp_name,
+                                        expr->ast_resolved_type.class_name);
+            } else {
+                cleanup_add(ctx, expr->ast_temp_name, 0,
+                            expr->ast_resolved_type.type_kind == TYPE_INTERFACE);
+            }
         }
     }
 }
@@ -2525,6 +2558,8 @@ static void extract_owned_call_temp(CodegenContext* ctx, AstNode* node, int inde
 
     if (node->ast_resolved_type.type_kind == TYPE_INTERFACE) {
         cleanup_add(ctx, node->ast_temp_name, 0, 1);
+    } else if (node->ast_resolved_type.type_kind == TYPE_STRUCT) {
+        cleanup_add_struct_dtor(ctx, node->ast_temp_name, node->ast_resolved_type.class_name);
     } else {
         cleanup_add(ctx, node->ast_temp_name, 0, 0);
     }

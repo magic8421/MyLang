@@ -2015,6 +2015,61 @@ i32 main() {
 }
 """, 33),
 
+    ("struct_temp_arg_release", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+Box make_with(Node n) {
+    Box b;
+    b.n = n;
+    return b;
+}
+i32 take(Box b) {
+    return b.n.v;
+}
+i32 main() {
+    weak Node w;
+    i32 r;
+    {
+        Node n = new Node;
+        n.v = 5;
+        w = n;
+        r = take(make_with(n));
+    }
+    if (w.lock()) { return 96; }
+    return r;
+}
+""", 5),
+
+    ("struct_temp_member_release", """
+class Node {
+    i32 v;
+}
+struct Box {
+    Node n;
+}
+Box make_with(Node n) {
+    Box b;
+    b.n = n;
+    return b;
+}
+i32 main() {
+    weak Node w;
+    i32 r;
+    {
+        Node n = new Node;
+        n.v = 5;
+        w = n;
+        r = make_with(n).n.v;
+    }
+    if (w.lock()) { return 96; }
+    return r;
+}
+""", 5),
+
     ("weak_basic", """
 class Node {
     i32 v;
