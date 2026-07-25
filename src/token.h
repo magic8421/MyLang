@@ -94,9 +94,11 @@ typedef enum {
     TOK_COLON,
 } TokenKind;
 
+#define TOKEN_TEXT_SIZE 256
+
 typedef struct {
     TokenKind kind;
-    char text[256];
+    char text[TOKEN_TEXT_SIZE];
     int  line;
     int  col;
     int  int_val;

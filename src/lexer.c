@@ -123,7 +123,7 @@ static Token make_token(Lexer* lexer, TokenKind kind, const char* text, int leng
     tok.char_val = 0;
     tok.filename = lexer->filename;
     if (text && length > 0) {
-        int n = length < 255 ? length : 255;
+        int n = length < (int)(TOKEN_TEXT_SIZE - 1) ? length : (int)(TOKEN_TEXT_SIZE - 1);
         memcpy(tok.text, text, n);
         tok.text[n] = '\0';
     } else {
@@ -206,7 +206,7 @@ static Token read_number(Lexer* lexer) {
 static Token read_string_literal(Lexer* lexer) {
     lexer_advance(lexer); /* skip opening " */
 
-    char buf[256];
+    char buf[TOKEN_TEXT_SIZE];
     int len = 0;
     int start_line = lexer->line;
     int start_col  = lexer->col;
@@ -238,7 +238,7 @@ static Token read_string_literal(Lexer* lexer) {
                     break;
             }
         }
-        if (len < 255) {
+        if (len < (int)(sizeof(buf) - 1)) {
             buf[len++] = c;
         }
         lexer_advance(lexer);

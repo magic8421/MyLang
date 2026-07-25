@@ -31,7 +31,7 @@ typedef struct {
     int         weak_interface_array_size;
     int         is_array;
     int         array_elem_kind;
-    char        array_elem_size_expr[64];
+    char        array_elem_size_expr[NAME_BUF_SIZE];
 } CleanupEntry;
 
 #define MAX_LOOP 64
@@ -543,7 +543,7 @@ static void emit_header_destructor_prototypes(CodegenContext* ctx) {
 }
 
 static void emit_function_signature(FILE* out, const char* ret_cstr, const char* func_name,
-                                    int param_count, const char param_names[][64], const Type param_types[]) {
+                                    int param_count, const char param_names[][NAME_BUF_SIZE], const Type param_types[]) {
     fprintf(out, "%s %s(", ret_cstr, func_name);
     int i;
     for (i = 0; i < param_count; i++) {
@@ -2430,7 +2430,7 @@ static void emit_guarded_temp_decls_impl(CodegenContext* ctx, AstNode* expr, int
         fprintf(ctx->out, "%s %s = ", tbuf, expr->ast_temp_name);
 
         /* Evaluate the original expression without using its own temp name. */
-        char saved[64];
+        char saved[NAME_BUF_SIZE];
         CHECK_STRSCPY(strscpy(saved, expr->ast_temp_name, sizeof(saved)),
                       "guard temporary name too long");
         expr->ast_temp_name[0] = '\0';
@@ -2467,7 +2467,7 @@ static void extract_owned_call_temp(CodegenContext* ctx, AstNode* node, int inde
     fprintf(ctx->out, "%s %s = ", tbuf, node->ast_temp_name);
 
     /* Evaluate the original expression without using its own temp name. */
-    char saved[64];
+    char saved[NAME_BUF_SIZE];
     CHECK_STRSCPY(strscpy(saved, node->ast_temp_name, sizeof(saved)),
                   "subexpr temporary name too long");
     node->ast_temp_name[0] = '\0';

@@ -1192,8 +1192,8 @@ static AstNode* parse_struct_decl(Parser* p) {
 
             AstNode* mparams = NULL;
             int mc = 0;
-            char mpn[16][64];
-            Type mpt[16];
+            char mpn[MAX_PARAMS][NAME_BUF_SIZE];
+            Type mpt[MAX_PARAMS];
 
             if (!check(p, TOK_RPAREN)) {
                 do {
@@ -1219,7 +1219,7 @@ static AstNode* parse_struct_decl(Parser* p) {
                     pd->ast_resolved_type = pt;
                     symtab_insert(pn.text, pt);
                     mparams = ast_append_list(mparams, pd);
-                    if (mc < 16) {
+                    if (mc < MAX_PARAMS) {
                         CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                         mpt[mc] = pt;
                         mc++;
@@ -1461,8 +1461,8 @@ static AstNode* parse_class_decl(Parser* p) {
 
             AstNode* mparams = NULL;
             int mc = 0;
-            char mpn[16][64];
-            Type mpt[16];
+            char mpn[MAX_PARAMS][NAME_BUF_SIZE];
+            Type mpt[MAX_PARAMS];
 
             if (!check(p, TOK_RPAREN)) {
                 do {
@@ -1488,7 +1488,7 @@ static AstNode* parse_class_decl(Parser* p) {
                     pd->ast_resolved_type = pt;
                     symtab_insert(pn.text, pt);
                     mparams = ast_append_list(mparams, pd);
-                    if (mc < 16) {
+                    if (mc < MAX_PARAMS) {
                         CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                         mpt[mc] = pt;
                         mc++;
@@ -1644,8 +1644,8 @@ static AstNode* parse_interface_decl(Parser* p) {
         expect(p, TOK_LPAREN);
 
         int mc = 0;
-        char mpn[16][64];
-        Type mpt[16];
+        char mpn[MAX_PARAMS][NAME_BUF_SIZE];
+        Type mpt[MAX_PARAMS];
 
         if (!check(p, TOK_RPAREN)) {
             do {
@@ -1667,7 +1667,7 @@ static AstNode* parse_interface_decl(Parser* p) {
                     break;
                 }
                 Token pn = p->current; advance(p);
-                if (mc < 16) {
+                if (mc < MAX_PARAMS) {
                     CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                     mpt[mc] = pt;
                     mc++;
@@ -1736,8 +1736,8 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
 
     AstNode* params = NULL;
     int pc = 0;
-    char pn[16][64];
-    Type pt[16];
+    char pn[MAX_PARAMS][NAME_BUF_SIZE];
+    Type pt[MAX_PARAMS];
     if (!check(p, TOK_RPAREN)) {
         do {
             int is_ref = 0;
@@ -1762,7 +1762,7 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
             pd->ast_resolved_type = param_type;
             symtab_insert(pname.text, param_type);
             params = ast_append_list(params, pd);
-            if (pc < 16) {
+            if (pc < MAX_PARAMS) {
                 CHECK_STRSCPY(strscpy(pn[pc], pname.text, sizeof(pn[pc])), "parameter name too long");
                 pt[pc] = param_type;
                 pc++;

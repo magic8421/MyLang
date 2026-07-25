@@ -68,7 +68,7 @@ int type_equal(const Type* a, const Type* b) {
         if (strcmp(a->class_name, b->class_name) != 0) return 0;
     }
     int i;
-    for (i = 0; i < a->type_arg_count; i++) {
+    for (i = 0; i < a->type_arg_count && i < MAX_TYPE_ARGS; i++) {
         if (!a->type_args[i] || !b->type_args[i]) return 0;
         if (!type_equal(a->type_args[i], b->type_args[i])) return 0;
     }
@@ -190,7 +190,7 @@ AstNode* ast_clone(AstNode* node) {
     copy->ast_resolved_type = *type_new(&node->ast_resolved_type);
     copy->ast_child_count = node->ast_child_count;
     int i;
-    for (i = 0; i < node->ast_child_count && i < 4; i++) {
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         copy->ast_children[i] = ast_clone(node->ast_children[i]);
     }
     copy->next = ast_clone(node->next);

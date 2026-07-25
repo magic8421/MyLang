@@ -8,13 +8,14 @@
 #define HASH_SIZE  64
 #define MAX_GENERIC_PARAMS 8
 #define MAX_CONSTRAINTS_PER_PARAM 4
+#define MAX_PARAMS 16
 
 typedef struct MethodInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     Type return_type;
     int  param_count;
-    char param_names[16][64];
-    Type param_types[16];
+    char param_names[MAX_PARAMS][NAME_BUF_SIZE];
+    Type param_types[MAX_PARAMS];
     int  is_native;
     int  is_override;
     int  is_private;
@@ -22,11 +23,11 @@ typedef struct MethodInfo {
 } MethodInfo;
 
 typedef struct InterfaceMethodInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     Type return_type;
     int  param_count;
-    char param_names[16][64];
-    Type param_types[16];
+    char param_names[MAX_PARAMS][NAME_BUF_SIZE];
+    Type param_types[MAX_PARAMS];
     AstNode* interface_method_default_body;
     int  interface_method_line;
 } InterfaceMethodInfo;
@@ -34,7 +35,7 @@ typedef struct InterfaceMethodInfo {
 #define MAX_IFACE_METHODS 32
 
 typedef struct InterfaceInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     int  type_id;
     int  method_count;
     InterfaceMethodInfo methods[MAX_IFACE_METHODS];
@@ -42,22 +43,22 @@ typedef struct InterfaceInfo {
 } InterfaceInfo;
 
 typedef struct ClassInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     int  type_id;
     int  field_count;
-    char field_names[MAX_FIELDS][64];
+    char field_names[MAX_FIELDS][NAME_BUF_SIZE];
     Type field_types[MAX_FIELDS];
     int  field_private[MAX_FIELDS];
     MethodInfo* methods;
     int  impl_count;
-    char impl_names[MAX_IMPL][64];
+    char impl_names[MAX_IMPL][NAME_BUF_SIZE];
     InterfaceInfo* impl_infos[MAX_IMPL];
 
     int  is_generic;
     int  generic_param_count;
-    char generic_params[MAX_GENERIC_PARAMS][64];
+    char generic_params[MAX_GENERIC_PARAMS][NAME_BUF_SIZE];
     int  generic_constraint_count[MAX_GENERIC_PARAMS];
-    char generic_constraints[MAX_GENERIC_PARAMS][MAX_CONSTRAINTS_PER_PARAM][64];
+    char generic_constraints[MAX_GENERIC_PARAMS][MAX_CONSTRAINTS_PER_PARAM][NAME_BUF_SIZE];
     int  generic_has_new[MAX_GENERIC_PARAMS];
     AstNode* generic_ast;
 
@@ -71,10 +72,10 @@ typedef struct ClassInfo {
 } ClassInfo;
 
 typedef struct StructInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     int  type_id;
     int  field_count;
-    char field_names[MAX_FIELDS][64];
+    char field_names[MAX_FIELDS][NAME_BUF_SIZE];
     Type field_types[MAX_FIELDS];
     MethodInfo* methods;
     int  visit_state;        /* scratch marker for cycle detection */
@@ -83,7 +84,7 @@ typedef struct StructInfo {
 } StructInfo;
 
 typedef struct SymEntry {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     Type type;
     struct SymEntry* next;
 } SymEntry;
@@ -120,11 +121,11 @@ void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {
-    char name[64];
+    char name[NAME_BUF_SIZE];
     Type return_type;
     int  param_count;
-    char param_names[16][64];
-    Type param_types[16];
+    char param_names[MAX_PARAMS][NAME_BUF_SIZE];
+    Type param_types[MAX_PARAMS];
     int  is_builtin;
     struct FuncInfo* next;
 } FuncInfo;

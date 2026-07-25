@@ -46,10 +46,11 @@ typedef enum {
 
 #define MAX_TYPE_ARGS 4
 #define MAX_AST_CHILDREN 4
+#define NAME_BUF_SIZE 64
 
 typedef struct Type {
     TypeKind type_kind;
-    char     class_name[64];
+    char     class_name[NAME_BUF_SIZE];
     int      is_pointer;
     int      is_array;
     int      array_size;
@@ -110,8 +111,8 @@ struct AstNode {
     Token    ast_token;
     AstNode* ast_children[MAX_AST_CHILDREN];
     int      ast_child_count;
-    char     ast_temp_name[64];
-    char     ast_match_var[64];
+    char     ast_temp_name[NAME_BUF_SIZE];
+    char     ast_match_var[NAME_BUF_SIZE];
     int      ast_is_native;
     int      xor_str_id;
 

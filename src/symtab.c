@@ -264,7 +264,7 @@ void symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
     m->return_type = ret_type;
     m->param_count = pc;
     int i;
-    for (i = 0; i < pc && i < 16; i++) {
+    for (i = 0; i < pc && i < MAX_PARAMS; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
         m->param_types[i] = pt[i];
     }
@@ -291,7 +291,7 @@ void symtab_add_func(const char* name, Type ret_type,
     f->param_count = pc;
     f->is_builtin = is_builtin;
     int i;
-    for (i = 0; i < pc && i < 16; i++) {
+    for (i = 0; i < pc && i < MAX_PARAMS; i++) {
         CHECK_STRSCPY(strscpy(f->param_names[i], pn[i], sizeof(f->param_names[i])), "parameter name too long");
         f->param_types[i] = pt[i];
     }
@@ -323,7 +323,7 @@ void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
     m->is_override = is_override;
     m->is_private = is_private;
     int i;
-    for (i = 0; i < pc && i < 16; i++) {
+    for (i = 0; i < pc && i < MAX_PARAMS; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
         m->param_types[i] = pt[i];
     }
@@ -376,7 +376,7 @@ int symtab_add_interface_method(InterfaceInfo* iface, const char* name,
     m->return_type = ret_type;
     m->param_count = pc;
     int i;
-    for (i = 0; i < pc && i < 16; i++) {
+    for (i = 0; i < pc && i < MAX_PARAMS; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
         m->param_types[i] = pt[i];
     }
@@ -684,14 +684,16 @@ static int type_implements_interface(const Type* t, const char* iface_name) {
 /* Validate that method calls on type parameters inside a generic class are only
    allowed when the type parameter has a matching interface constraint. */
 
+#define MAX_LOCAL_SCOPE 32
+
 typedef struct {
-    char names[32][64];
-    Type types[32];
+    char names[MAX_LOCAL_SCOPE][NAME_BUF_SIZE];
+    Type types[MAX_LOCAL_SCOPE];
     int count;
 } LocalScope;
 
 static void local_scope_push(LocalScope* scope, const char* name, Type type) {
-    if (scope->count >= 32) return;
+    if (scope->count >= MAX_LOCAL_SCOPE) return;
     CHECK_STRSCPY(strscpy(scope->names[scope->count], name, sizeof(scope->names[0])),
                   "local scope name too long");
     scope->types[scope->count] = type;
@@ -743,6 +745,7 @@ static Type resolve_member_type(AstNode* node, ClassInfo* cls, LocalScope* scope
     if (!node) return void_t;
     if (node->ast_kind != AST_MEMBER_ACCESS) return void_t;
 
+    if (node->ast_child_count == 0) return void_t;
     AstNode* obj = node->ast_children[0];
     const char* field = node->ast_token.text;
 
@@ -791,6 +794,7 @@ static int validate_generic_call(AstNode* node, ClassInfo* cls, LocalScope* scop
     if (callee->ast_kind != AST_MEMBER_ACCESS) return 0;
 
     AstNode* mem = callee;
+    if (mem->ast_child_count == 0) return 0;
     AstNode* obj = mem->ast_children[0];
     const char* mname = mem->ast_token.text;
 
@@ -941,7 +945,7 @@ ClassInfo* symtab_instantiate_class_from_type(Type* t) {
             m->is_override = gm->is_override;
             m->is_private = gm->is_private;
             int mp;
-            for (mp = 0; mp < gm->param_count && mp < 16; mp++) {
+            for (mp = 0; mp < gm->param_count && mp < MAX_PARAMS; mp++) {
                 CHECK_STRSCPY(strscpy(m->param_names[mp], gm->param_names[mp], sizeof(m->param_names[mp])),
                               "parameter name too long");
                 Type* pt = type_substitute(&gm->param_types[mp], params, args, generic_def->generic_param_count);
