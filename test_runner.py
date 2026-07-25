@@ -134,7 +134,7 @@ def compile_pch_and_runtime():
         return False
 
     runtime_c = os.path.join(SCRIPT_DIR, "src", "runtime.c")
-    cmd2 = f'cl /nologo /std:c11 {flags} /Isrc /Yuruntime.h /Fp{pch_path} /Fo:"{build_dir}/" /c {runtime_c}'
+    cmd2 = f'cl /nologo /std:c11 {flags} /Isrc /Yuruntime.h /Fp{pch_path} /Fo{runtime_obj} /c {runtime_c}'
     r = msvc_cl(cmd2, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print("FAIL: runtime.c compilation with PCH failed")
