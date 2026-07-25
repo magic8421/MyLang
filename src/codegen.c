@@ -2607,7 +2607,7 @@ static const char* fstring_append_method(const Type* t) {
 }
 
 static const char* fstring_temp_name(const char* prefix, int id) {
-    char* buf = (char*)malloc(64);
+    char* buf = (char*)calloc(1, 64);
     int n = snprintf(buf, 64, "%s%d", prefix, id);
     CHECK_SNPRINTF(n, 64, "f-string temp name too long");
     return buf;

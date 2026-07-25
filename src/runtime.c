@@ -146,7 +146,7 @@ void mylang_string_append_cstr(String* thiz, const char* cstr) {
 
 void mylang_string_append_cstr_encrypted(String* thiz, const uint8_t* data, size_t len, uint8_t key) {
     if (len == 0 || !thiz) return;
-    char* buf = (char*)malloc(len);
+    char* buf = (char*)calloc(1, len);
     if (!buf) return;
     size_t i;
     for (i = 0; i < len; i++) {

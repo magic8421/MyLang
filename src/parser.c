@@ -399,7 +399,7 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
                         parser_filename(p), str_tok.line, str_tok.col);
                 p->had_error = 1;
             } else {
-                char* expr_text = (char*)malloc(expr_len + 1);
+                char* expr_text = (char*)calloc(1, expr_len + 1);
                 if (!expr_text) {
                     fprintf(stderr, "error: out of memory parsing f-string\n");
                     p->had_error = 1;
@@ -1994,7 +1994,7 @@ static char* import_read_file(const char* path) {
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
     fseek(f, 0, SEEK_SET);
-    char* buf = malloc(size + 1);
+    char* buf = calloc(1, size + 1);
     if (!buf) { fclose(f); return NULL; }
     fread(buf, 1, size, f);
     buf[size] = '\0';

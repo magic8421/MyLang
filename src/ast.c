@@ -110,7 +110,7 @@ Type type_make_param(const char* name) {
 }
 
 Type* type_new(const Type* src) {
-    Type* p = malloc(sizeof(Type));
+    Type* p = calloc(1, sizeof(Type));
     *p = *src;
     p->mangled_name[0] = '\0';
     int i;

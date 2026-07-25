@@ -171,7 +171,7 @@ Scope* symtab_current_scope(void) {
 
 void symtab_insert(const char* name, Type type) {
     unsigned idx = hash_string(name);
-    SymEntry* e  = malloc(sizeof(SymEntry));
+    SymEntry* e  = calloc(1, sizeof(SymEntry));
     CHECK_STRSCPY(strscpy(e->name, name, sizeof(e->name)), "symbol name too long");
     e->type = type;
     e->next = current_scope->table[idx];
