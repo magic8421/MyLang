@@ -28,6 +28,29 @@ for _vc_candidate in _VSPATH_CANDIDATES:
 if not VSPATH:
     raise RuntimeError("Cannot find vcvars64.bat")
 
+def _capture_msvc_env():
+    """Call vcvars64.bat once and capture the resulting environment variables."""
+    cmd = f'call "{VSPATH}" >nul 2>&1 && set'
+    r = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+    if r.returncode != 0:
+        raise RuntimeError("Failed to setup MSVC environment")
+    env = os.environ.copy()
+    for line in r.stdout.splitlines():
+        if '=' in line:
+            k, v = line.split('=', 1)
+            for existing in list(env.keys()):
+                if existing.lower() == k.lower() and existing != k:
+                    del env[existing]
+            env[k] = v
+    return env
+
+MSVC_ENV = _capture_msvc_env()
+
+def msvc_cl(args, cwd=None):
+    """Run a cl.exe command using the pre-captured MSVC environment."""
+    return subprocess.run(args, capture_output=True, text=True, shell=True,
+                          env=MSVC_ENV, cwd=cwd)
+
 def find_asan_dll():
     """Find the ASan runtime DLL and return its directory."""
     search_roots = [
@@ -74,13 +97,50 @@ def compile_mylang():
         flags = "/MDd /Zi"
     else:
         flags = "/fsanitize=address /Zi"
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 /W3 {flags} /Fe:build\\mylang.exe /Fo:build\\ {srcs}'
-    r = shell(cmd, cwd=SCRIPT_DIR)
+    cmd = f'cl /nologo /std:c11 /W3 {flags} /Fe:build\\mylang.exe /Fo:build\\ {srcs}'
+    r = msvc_cl(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print("FAIL: mylang compilation failed")
         print(r.stdout)
         print(r.stderr)
         return False
+    return True
+
+def compile_pch_and_runtime():
+    """Pre-compile runtime.h PCH and runtime.obj once per mode."""
+    if TEST_MODE == "debug":
+        pch_name = "runtime_debug"
+        flags = "/MDd /Zi"
+    else:
+        pch_name = "runtime"
+        flags = "/fsanitize=address /Zi"
+
+    pch_path = os.path.join(SCRIPT_DIR, "build", pch_name + ".pch")
+    runtime_obj = os.path.join(SCRIPT_DIR, "build", pch_name + ".obj")
+    pch_obj = os.path.join(SCRIPT_DIR, "build", pch_name + "_pch.obj")
+
+    if os.path.exists(pch_path) and os.path.exists(runtime_obj):
+        return True
+
+    build_dir = os.path.join(SCRIPT_DIR, "build")
+    os.makedirs(build_dir, exist_ok=True)
+
+    runtime_pch_c = os.path.join(SCRIPT_DIR, "src", "runtime_pch.c")
+    cmd1 = f'cl /nologo /std:c11 {flags} /Isrc /Ycruntime.h /Fp{pch_path} /Fo{pch_obj} /c {runtime_pch_c}'
+    r = msvc_cl(cmd1, cwd=SCRIPT_DIR)
+    if r.returncode != 0:
+        print("FAIL: PCH creation failed")
+        print(r.stdout[-500:])
+        return False
+
+    runtime_c = os.path.join(SCRIPT_DIR, "src", "runtime.c")
+    cmd2 = f'cl /nologo /std:c11 {flags} /Isrc /Yuruntime.h /Fp{pch_path} /Fo:"{build_dir}/" /c {runtime_c}'
+    r = msvc_cl(cmd2, cwd=SCRIPT_DIR)
+    if r.returncode != 0:
+        print("FAIL: runtime.c compilation with PCH failed")
+        print(r.stdout[-500:])
+        return False
+
     return True
 
 def compile_c(src, exe, extra_sources=None):
@@ -89,16 +149,20 @@ def compile_c(src, exe, extra_sources=None):
     exedir = os.path.dirname(exe)
     os.makedirs(exedir, exist_ok=True)
     if TEST_MODE == "debug":
+        pch_name = "runtime_debug"
         flags = "/MDd /Zi"
     else:
+        pch_name = "runtime"
         flags = "/fsanitize=address /Zi"
-    runtime_c = os.path.join(SCRIPT_DIR, "src", "runtime.c")
+    pch_path = os.path.join(SCRIPT_DIR, "build", pch_name + ".pch")
+    runtime_obj = os.path.join(SCRIPT_DIR, "build", pch_name + ".obj")
+    pch_obj = os.path.join(SCRIPT_DIR, "build", pch_name + "_pch.obj")
     testdir = os.path.join(SCRIPT_DIR, "test")
     extras = ""
     if extra_sources:
         extras = " " + " ".join(extra_sources)
-    cmd = f'call "{VSPATH}" >nul 2>&1 && cl /nologo /std:c11 {flags} /FS /Isrc /I"{testdir}" /Fo:"{exedir.replace(os.sep, "/")}/" /Fe:{exe} {src} {runtime_c}{extras}'
-    r = shell(cmd, cwd=SCRIPT_DIR)
+    cmd = f'cl /nologo /std:c11 {flags} /FS /Isrc /I"{testdir}" /Yuruntime.h /Fp{pch_path} /Fo:"{exedir.replace(os.sep, "/")}/" /Fe:{exe} {src} {pch_obj} {runtime_obj}{extras}'
+    r = msvc_cl(cmd, cwd=SCRIPT_DIR)
     if r.returncode != 0:
         print(f"  C compile error for {src}:")
         print(r.stdout[-500:] if len(r.stdout) > 500 else r.stdout)
@@ -4896,6 +4960,7 @@ def run_test(idx, name, source, expected, asan_dll_dir, leak_check=False, native
     if native_c:
         native_file = os.path.join(testdir, f"_t{idx}_native.c")
         with open(native_file, "w", encoding="utf-8") as f:
+            f.write('#include "runtime.h"\n')
             f.write(f'#include "_t{idx}.h"\n')
             f.write(native_c.strip() + "\n")
         extra_sources = [native_file]
@@ -5037,6 +5102,8 @@ def main():
         # The compiler flags differ per mode (ASan vs debug CRT), so rebuild.
         print(f"Building mylang.exe ({mode})...")
         if not compile_mylang():
+            sys.exit(1)
+        if not compile_pch_and_runtime():
             sys.exit(1)
         total_failed += run_suite(leak_check, filters)
     sys.exit(0 if total_failed == 0 else 1)

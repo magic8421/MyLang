@@ -4953,6 +4953,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
         fprintf(ctx.out, "#define MYLANG_LEAK_CHECK\n");
     }
     fprintf(ctx.out, "#define _CRTDBG_MAP_ALLOC\n");
+    fprintf(ctx.out, "#include \"runtime.h\"\n");
     fprintf(ctx.out, "#include \"%s\"\n\n", ctx.header_include_name);
     fprintf(ctx.out, "#include <stdio.h>\n");
     fprintf(ctx.out, "#include <stdlib.h>\n");
