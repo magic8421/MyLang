@@ -120,7 +120,13 @@ def compile_pch_and_runtime():
     pch_obj = os.path.join(SCRIPT_DIR, "build", pch_name + "_pch.obj")
 
     if os.path.exists(pch_path) and os.path.exists(runtime_obj):
-        return True
+        runtime_h = os.path.join(SCRIPT_DIR, "src", "runtime.h")
+        if os.path.getmtime(pch_path) >= os.path.getmtime(runtime_h):
+            return True
+        # runtime.h was modified since PCH was built, must rebuild
+        os.remove(pch_path)
+        os.remove(runtime_obj)
+        os.remove(pch_obj)
 
     build_dir = os.path.join(SCRIPT_DIR, "build")
     os.makedirs(build_dir, exist_ok=True)
