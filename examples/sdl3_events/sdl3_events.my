@@ -34,7 +34,7 @@ class SdlWindow {
     }
 }
 
-struct SdlApp {
+class SdlApp {
     SdlWindow[] windows;
     native i32 init();
     native SdlWindow createWindow(i32 w, i32 h);
