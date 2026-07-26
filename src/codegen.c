@@ -1581,7 +1581,9 @@ static void emit_xor_string_array_decl(CodegenContext* ctx, const char* s, int i
         if (i > 0) fprintf(ctx->out, ",");
         fprintf(ctx->out, "0x%02X", (unsigned char)(s[i] ^ key));
     }
-    fprintf(ctx->out, "};\n");
+    fprintf(ctx->out, "}; // \"");
+    emit_c_string_literal(ctx, s);
+    fprintf(ctx->out, "\"\n");
 }
 
 static void codegen_collect_xor_strings(CodegenContext* ctx, AstNode* node) {
