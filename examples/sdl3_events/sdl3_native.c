@@ -10,7 +10,6 @@
 
 #define MAX_LISTENERS 16
 
-static SDL_Window* g_window = NULL;
 static int g_quit = 0;
 
 static struct {
@@ -192,6 +191,13 @@ static bool SDLCALL sdl_event_filter(void* userdata, SDL_Event* event) {
                         l->vtable->onMouseButtonDown(l->data, &ev);
                     }
                     break;
+                case SDL_EVENT_KEY_DOWN:
+                    {
+                        SdlKeyboardEvent ev = {0};
+                        ev.key = event->key.key;
+                        l->vtable->onKeyDown(l->data, &ev);
+                    }
+                    break;
                 default:
                     break;
             }
@@ -209,9 +215,9 @@ int32_t SdlApp_init(SdlApp* thiz) {
 
 SdlWindow* SdlApp_createWindow(SdlApp* thiz, int32_t w, int32_t h) {
     (void)thiz;
-    g_window = SDL_CreateWindow("MyLang SDL3 events", w, h, 0);
+    SDL_Window* handle = SDL_CreateWindow("MyLang SDL3 events", w, h, 0);
     SdlWindow *win = mylang_new_object(sizeof(SdlWindow), MYLANG_TID_SdlWindow, _mylang_dtor_SdlWindow);
-    win->handle = (int64_t)g_window;
+    win->handle = (int64_t)handle;
     return win;
 }
 
@@ -284,9 +290,7 @@ void SdlApp_delay(SdlApp* thiz, int32_t ms) {
 
 void SdlApp_destroyWindow(SdlApp* thiz, SdlWindow* win) {
     (void)thiz;
-    (void)win;
-    SDL_DestroyWindow(g_window);
-    g_window = NULL;
+    SDL_DestroyWindow((SDL_Window *)win->handle);
 }
 
 void SdlApp_quit(SdlApp* thiz) {
