@@ -162,22 +162,6 @@ static bool SDLCALL sdl_event_filter(void* userdata, SDL_Event* event) {
     ev.type = (int32_t)event->type;
     ev.code = 0;
 
-    switch (event->type) {
-        case SDL_EVENT_KEY_DOWN:
-        case SDL_EVENT_KEY_UP:
-            ev.code = (int32_t)event->key.key;
-            break;
-        case SDL_EVENT_MOUSE_BUTTON_DOWN:
-        case SDL_EVENT_MOUSE_BUTTON_UP:
-            ev.code = (int32_t)event->button.button;
-            break;
-        case SDL_EVENT_WINDOW_RESIZED:
-            ev.code = (int32_t)event->window.data1;
-            break;
-        default:
-            break;
-    }
-
     if (event->type == SDL_EVENT_QUIT) {
         g_quit = 1;
     }
@@ -193,6 +177,16 @@ static bool SDLCALL sdl_event_filter(void* userdata, SDL_Event* event) {
                     {
                         SdlMouseButtonEvent ev = { 0 };
                         ev.button = event->button.button;
+                        ev.x = event->button.x;
+                        ev.y = event->button.y;
+                        l->vtable->onMouseButtonDown(l->data, &ev);
+                    }
+                    break;
+                case SDL_EVENT_MOUSE_WHEEL:
+                    {
+                        SdlMouseButtonEvent ev = { 0 };
+                        ev.wheel_x = event->wheel.integer_x;
+                        ev.wheel_y = event->wheel.integer_y;
                         ev.x = event->button.x;
                         ev.y = event->button.y;
                         l->vtable->onMouseButtonDown(l->data, &ev);

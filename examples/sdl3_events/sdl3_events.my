@@ -4,9 +4,17 @@ struct SdlEvent {
 }
 
 struct SdlMouseButtonEvent {
-    u8 button;
+    u32 button;
+    i32 wheel_x;
+    i32 wheel_y;
     f32 x;
     f32 y;
+}
+
+struct SdlKeyboardEvent {
+    u32 scancode;    // SDL physical key code
+    u32 key;         // SDL virtual key code
+    u32 mod;         // current key modifiers
 }
 
 interface SdlEventListener {
