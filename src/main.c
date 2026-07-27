@@ -52,9 +52,17 @@ static void derive_header_path(const char* out_path,
 }
 
 int main(int argc, char** argv) {
+    int exit_code = 0;
+    char* source = NULL;
+    FILE* out = NULL;
+    char* header_path = NULL;
+    char* header_name = NULL;
+    FILE* header = NULL;
+
     if (argc < 2) {
         fprintf(stderr, "usage: mylang [--leak-check] <source.my> [output.c]\n");
-        return 1;
+        exit_code = 1;
+        goto exit;
     }
 
     const char* src_path = NULL;
@@ -77,11 +85,12 @@ int main(int argc, char** argv) {
 
     if (!src_path) {
         fprintf(stderr, "usage: mylang [--leak-check] [--xor-strings] <source.my> [output.c]\n");
-        return 1;
+        exit_code = 1;
+        goto exit;
     }
 
-    char* source = read_file(src_path);
-    if (!source) return 1;
+    source = read_file(src_path);
+    if (!source) { exit_code = 1; goto exit; }
 
     Lexer lexer;
     lexer_init(&lexer, source);
@@ -92,42 +101,42 @@ int main(int argc, char** argv) {
 
     AstNode* ast = parser_parse_program(&parser);
 
-    if (parser_had_error(&parser)) {
-        free(source);
-        return 1;
-    }
+    if (parser_had_error(&parser)) { exit_code = 1; goto exit; }
 
-    FILE* out = fopen(out_path, "w");
+    out = fopen(out_path, "w");
     if (!out) {
         fprintf(stderr, "error: cannot write '%s'\n", out_path);
-        free(source);
-        return 1;
+        exit_code = 1;
+        goto exit;
     }
 
-    char header_path[1024];
-    char header_name[256];
-    derive_header_path(out_path, header_path, sizeof(header_path),
-                       header_name, sizeof(header_name));
+    header_path = calloc(1, 1024);
+    header_name = calloc(1, 256);
+    if (!header_path || !header_name) {
+        fprintf(stderr, "error: out of memory\n");
+        exit_code = 1;
+        goto exit;
+    }
+    derive_header_path(out_path, header_path, 1024, header_name, 256);
 
-    FILE* header = fopen(header_path, "w");
+    header = fopen(header_path, "w");
     if (!header) {
         fprintf(stderr, "error: cannot write header '%s'\n", header_path);
-        fclose(out);
-        free(source);
-        return 1;
+        exit_code = 1;
+        goto exit;
     }
 
     codegen_program(ast, out, header, src_path, leak_check, header_name, xor_strings);
-    fclose(out);
-    fclose(header);
 
-    if (codegen_had_error()) {
-        free(source);
-        return 1;
-    }
+    if (codegen_had_error()) { exit_code = 1; goto exit; }
 
     printf("compiled '%s' -> '%s', '%s'\n", src_path, out_path, header_path);
 
+exit:
     free(source);
-    return 0;
+    free(header_path);
+    free(header_name);
+    if (out) fclose(out);
+    if (header) fclose(header);
+    return exit_code;
 }
