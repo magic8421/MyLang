@@ -246,7 +246,10 @@ Source code lives under `src/`:
   plain assignment (retain new, release old, then copy — self-assign safe),
   by-value parameters (callee retains on entry, releases at scope exit via the
   cleanup list), `return` (borrowed values retain for the caller), discarded
-  call results, class destructors (struct fields), and local cleanup
+  call results, class destructors (struct fields), guard/hoisted temporaries
+  (owned struct call results used as call arguments or nested subexpressions
+  are evaluated into `_gN`/`_iN` temps registered via `cleanup_add_struct_dtor`
+  so their ref shares are released once at scope exit), and local cleanup
   (`CleanupEntry.is_struct_dtor`). Struct locals with reference fields are
   zero-initialized (`= {0}`) so the release hook is NULL-safe.
 - Arrays of such structs are rejected (`type_is_ref_struct_array`): MyArray is
@@ -294,7 +297,7 @@ Source code lives under `src/`:
 - **Callee retains at return**: class-valued returns go through `mylang_retain(expr)`. Caller receives +1.
 - **Caller does NOT retain call results**: `codegen_var_decl` and assignment skip retain when RHS is `AST_CALL` or `AST_NEW`.
 - **Caller retain/release for guarded args**: non-local class-valued arguments to calls are evaluated once into `_gN` temporaries. Owned guarded expressions (calls, `new`, string literals) are tracked on the cleanup list and released once at scope exit — this also covers if/while/for conditions and return paths where no post-call release could be emitted. Non-owned guarded expressions (e.g. field accesses) get a caller-side `mylang_retain` before and `mylang_release` after the call. Local variables and parameters are unguarded (optimization).
-- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Expressions whose value ownership is consumed by the surrounding statement (variable initializers, return expressions, expression-statement roots, assignment RHS) are never cleanup-tracked. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once.
+- **Guarded temp extraction**: guarded expressions are evaluated into `_gN` temporaries before the call to prevent double-evaluation. Expressions whose value ownership is consumed by the surrounding statement (variable initializers, return expressions, expression-statement roots, assignment RHS) are never cleanup-tracked. Nested owned subexpressions inside arguments (e.g. the object of an `as` cast or an interface method receiver like `w.lock()` / `make().area()`) are first hoisted into `_iN` temporaries so side-effecting calls are evaluated exactly once. The same guard/hoist treatment applies to owned struct call results whose struct has reference fields (`call_needs_guard` / `subexpr_needs_temp` check `struct_has_ref_fields`); their temps are cleanup-tracked through `cleanup_add_struct_dtor` instead of `mylang_release`.
 - **Class assignment**: RHS retained before LHS released to avoid UAF on self-assignment (`b = b.set(5)`).
 - **Class/interface fields own their values**: assigning a local or parameter to a class or interface field retains the source; the per-class destructor releases fields when the object is freed.
 - **Weak fields own their weak shares**: weak class and weak interface fields release their weak share (`mylang_weak_release`) in the class destructor.
@@ -382,7 +385,9 @@ Source code lives under `src/`:
 - Optional compiler flag: `mylang --xor-strings source.my out.c`.
 - When enabled, every source string literal is XOR-encrypted at compile time with
   a per-literal 8-bit key. The generated C file contains `static const uint8_t _xsN[]`
-  cipher arrays and no original source text.
+  cipher arrays; each declaration carries a trailing `// "..."` comment with the
+  original literal to keep the generated C reviewable (the cipher bytes are what
+  the program actually reads).
 - Codegen uses:
   - `mylang_string_new_encrypted(MYLANG_TID_String, _xsN, len, key)` for plain literals.
   - `mylang_string_append_cstr_encrypted(acc, _xsN, len, key)` for f-string literal segments.
