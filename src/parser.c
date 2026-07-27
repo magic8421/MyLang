@@ -1261,6 +1261,11 @@ static AstNode* parse_struct_decl(Parser* p) {
             expect(p, TOK_SEMI);
             continue;
         }
+        if (ft.is_const) {
+            fprintf(stderr, "%s(%d,%d): error: const fields are not supported\n",
+                    parser_filename(p), fname.line, fname.col);
+            p->had_error = 1;
+        }
         if (symtab_add_struct_field(info, fname.text, ft) != 0) {
             fprintf(stderr, "%s(%d,%d): error: too many fields in struct '%s' (max %d)\n",
                     parser_filename(p), fname.line, fname.col, name.text, MAX_FIELDS);
