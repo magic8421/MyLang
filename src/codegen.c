@@ -1546,6 +1546,11 @@ static void codegen_new(CodegenContext* ctx, AstNode* node) {
             int n;
             ClassInfo* ci = symtab_find_class(base.class_name);
             if (!ci) ci = symtab_find_class_by_mangled(base.class_name);
+            if (ci && ci->is_generic && base.type_arg_count == 0) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                     "generic class '%s' requires %d type argument(s)",
+                                     base.class_name, ci->generic_param_count);
+            }
             if (ci && ci->mangled_name[0]) {
                 n = snprintf(dtor_name, sizeof(dtor_name), "_mylang_dtor_%s", ci->mangled_name);
             } else {

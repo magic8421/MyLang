@@ -814,7 +814,9 @@ static int validate_generic_call(AstNode* node, ClassInfo* cls, LocalScope* scop
     const char* mname = mem->ast_token.text;
 
     Type ot = resolve_expr_type(obj, cls, scope);
-    if (ot.type_kind == TYPE_TYPE_PARAM) {
+    /* Arrays of a type parameter (K[]) use the builtin vector methods, which
+       are resolved after instantiation when the element type is concrete. */
+    if (ot.type_kind == TYPE_TYPE_PARAM && !ot.is_array) {
         if (!type_param_has_interface_method(cls, ot.class_name, mname)) {
             fprintf(stderr, "error at %d:%d: type parameter '%s' has no interface constraint providing '%s()'\n",
                     mem->ast_token.line, mem->ast_token.col, ot.class_name, mname);

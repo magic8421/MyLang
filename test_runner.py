@@ -3222,6 +3222,131 @@ i32 main() {
 }
 """, 5),
 
+    ("gen_array_field", """
+class Bag<T> {
+    T[] items;
+    void add(T v) { this.items.push(v); }
+    T at(i32 i) { return this.items[i]; }
+    i32 size() { return this.items.length; }
+}
+i32 main() {
+    Bag<i32> b = new Bag<i32>;
+    b.add(10);
+    b.add(20);
+    b.add(30);
+    return b.at(0) + b.at(2) + b.size();
+}
+""", 43),
+
+    ("gen_map_class", """
+class Map<K, V> {
+    K[] keys;
+    V[] vals;
+
+    i32 find(K k) {
+        i32 i = 0;
+        while (i < this.keys.length) {
+            if (this.keys[i] == k) {
+                return i;
+            }
+            i++;
+        }
+        return -1;
+    }
+
+    void set(K k, V v) {
+        i32 i = this.find(k);
+        if (i >= 0) {
+            this.vals[i] = v;
+            return;
+        }
+        this.keys.push(k);
+        this.vals.push(v);
+    }
+
+    bool get(K k, ref V out_v) {
+        i32 i = this.find(k);
+        if (i < 0) {
+            return false;
+        }
+        out_v = this.vals[i];
+        return true;
+    }
+
+    bool contains(K k) {
+        return this.find(k) >= 0;
+    }
+
+    bool remove(K k) {
+        i32 i = this.find(k);
+        if (i < 0) {
+            return false;
+        }
+        i32 last = this.keys.length - 1;
+        this.keys[i] = this.keys[last];
+        this.vals[i] = this.vals[last];
+        this.keys.pop();
+        this.vals.pop();
+        return true;
+    }
+
+    void clear() {
+        this.keys.clear();
+        this.vals.clear();
+    }
+
+    i32 count() {
+        return this.keys.length;
+    }
+}
+
+i32 main() {
+    Map<i32, i32> m = new Map<i32, i32>;
+    m.set(1, 100);
+    m.set(2, 200);
+    m.set(3, 300);
+    m.set(2, 222);
+    i32 v = 0;
+    if (m.get(2, ref v)) {
+        print(f"v={v}");
+    }
+    if (!m.get(9, ref v)) {
+        print("miss ok");
+    }
+    print(f"count={m.count()}");
+    if (m.remove(1)) {
+        print(f"after remove count={m.count()}");
+    }
+    if (!m.contains(1) && m.contains(3)) {
+        print("contains ok");
+    }
+    Map<i32, string> sm = new Map<i32, string>;
+    sm.set(1, "one");
+    sm.set(2, "two");
+    sm.set(2, "TWO");
+    string sv = "";
+    if (sm.get(2, ref sv)) {
+        print(sv);
+    }
+    m.clear();
+    print(f"cleared={m.count()}");
+    return 0;
+}
+""", (0, "v=222\nmiss ok\ncount=3\nafter remove count=2\ncontains ok\nTWO\ncleared=0\n")),
+
+    ("gen_new_infer", """
+class Box<T> {
+    T value;
+    void set(T v) { this.value = v; }
+    T get() { return this.value; }
+}
+i32 main() {
+    Box<i32> b = new Box;
+    b.set(42);
+    return b.get();
+}
+""", 42),
+
     ("gen_interface", """
 interface IPrintable {
     i32 get_value();
@@ -4507,6 +4632,17 @@ i32 main() {
     return 0;
 }
 """, "no interface constraint providing"),
+
+    ("gen_new_missing_args", """
+class Box<T> {
+    T value;
+}
+i32 main() {
+    Box<i32> b = new Box<i32>;
+    b = new Box;
+    return 0;
+}
+""", "requires 1 type argument(s)"),
 
     ("ref_missing_keyword", """
 void inc(ref i32 x) {

@@ -159,7 +159,19 @@ Type* type_substitute(const Type* t, const char* params[], const Type* args[], i
     int i;
     for (i = 0; i < count; i++) {
         if (t->type_kind == TYPE_TYPE_PARAM && strcmp(t->class_name, params[i]) == 0) {
-            return type_new(args[i]);
+            Type* r = type_new(args[i]);
+            /* Keep the declared wrappers of the type parameter: K[] stays an
+               array, ref K stays by-reference, and so on. */
+            r->is_array = t->is_array;
+            r->array_size = t->array_size;
+            r->is_ref = t->is_ref;
+            r->is_weak = t->is_weak;
+            r->is_unowned = t->is_unowned;
+            r->is_const = t->is_const;
+            /* The copied argument keeps its own cached mangled name, which no
+               longer describes the wrapped type; force a lazy re-mangle. */
+            r->mangled_name[0] = '\0';
+            return r;
         }
     }
     Type* r = type_new(t);

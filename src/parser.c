@@ -848,6 +848,17 @@ static AstNode* parse_var_decl(Parser* p) {
         }
         if (init && init->ast_kind == AST_NEW && type.type_kind == TYPE_CLASS) {
             type.is_pointer = 1;
+            /* Target-typed 'new': `Box<i32> b = new Box;` copies the type
+               arguments from the declared type onto the new expression. */
+            Type* nt = &init->ast_resolved_type;
+            if (nt->type_kind == TYPE_CLASS && nt->type_arg_count == 0 &&
+                type.type_arg_count > 0 && strcmp(nt->class_name, type.class_name) == 0) {
+                int i;
+                for (i = 0; i < type.type_arg_count && i < MAX_TYPE_ARGS; i++) {
+                    type_set_arg(nt, i, type.type_args[i]);
+                }
+                nt->mangled_name[0] = '\0';
+            }
         }
     }
 
