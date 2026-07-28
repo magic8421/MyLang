@@ -3334,6 +3334,83 @@ i32 main() {
 }
 """, (0, "v=222\nmiss ok\ncount=3\nafter remove count=2\ncontains ok\nTWO\ncleared=0\n")),
 
+    ("map_string_keys", """
+class Map<K, V> {
+    K[] keys;
+    V[] vals;
+
+    i32 find(K k) {
+        i32 i = 0;
+        while (i < this.keys.length) {
+            if (this.keys[i] == k) {
+                return i;
+            }
+            i++;
+        }
+        return -1;
+    }
+
+    void set(K k, V v) {
+        i32 i = this.find(k);
+        if (i >= 0) {
+            this.vals[i] = v;
+            return;
+        }
+        this.keys.push(k);
+        this.vals.push(v);
+    }
+
+    bool get(K k, ref V out_v) {
+        i32 i = this.find(k);
+        if (i < 0) {
+            return false;
+        }
+        out_v = this.vals[i];
+        return true;
+    }
+
+    bool contains(K k) {
+        return this.find(k) >= 0;
+    }
+
+    bool remove(K k) {
+        i32 i = this.find(k);
+        if (i < 0) {
+            return false;
+        }
+        i32 last = this.keys.length - 1;
+        this.keys[i] = this.keys[last];
+        this.vals[i] = this.vals[last];
+        this.keys.pop();
+        this.vals.pop();
+        return true;
+    }
+}
+
+i32 main() {
+    Map<string, i32> m = new Map<string, i32>;
+    m.set("one", 1);
+    m.set("two", 2);
+    string k = "tw";
+    k.append_string("o");
+    m.set(k, 22);
+    i32 v = 0;
+    if (m.get("two", ref v)) {
+        print(f"two={v}");
+    }
+    if (m.contains(k) && m.contains("one")) {
+        print("contains ok");
+    }
+    if (m.remove(k)) {
+        print("remove ok");
+    }
+    if (!m.contains("two") && m.contains("one")) {
+        print("post-remove ok");
+    }
+    return 0;
+}
+""", (0, "two=22\ncontains ok\nremove ok\npost-remove ok\n")),
+
     ("gen_new_infer", """
 class Box<T> {
     T value;
@@ -3706,6 +3783,147 @@ i32 main() {
     return 0;
 }
 """, "crash"),
+
+    ("hash_basic", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    u64 h1 = hash(42);
+    u64 h2 = hash(42);
+    if (h1 != h2) {
+        return 1;
+    }
+    if (h1 == hash(43)) {
+        return 2;
+    }
+    string a = "hello";
+    string b = "hel";
+    b.append_string("lo");
+    if (hash(a) != hash(b)) {
+        return 3;
+    }
+    if (hash("x") == hash("y")) {
+        return 4;
+    }
+    f64 f = 3.14;
+    if (hash(f) != hash(3.14)) {
+        return 5;
+    }
+    Node n = new Node;
+    if (hash(n) != hash(n)) {
+        return 6;
+    }
+    bool bo = true;
+    u64 hb = hash(bo);
+    i64 neg = -1;
+    u64 hn = hash(neg);
+    if (hb == hn) {
+        return 8;
+    }
+    return 7;
+}
+""", 7),
+
+    ("str_eq_value", """
+i32 main() {
+    string a = "hel";
+    a.append_string("lo");
+    string b = "hello";
+    if (a != b) {
+        return 1;
+    }
+    string e1 = "";
+    string e2 = "";
+    if (!(e1 == e2)) {
+        return 2;
+    }
+    string nn = null;
+    if (nn == b || b == nn) {
+        return 3;
+    }
+    if (!(nn == null) || !(b != null)) {
+        return 4;
+    }
+    return 5;
+}
+""", 5),
+
+    ("equals_builtin", """
+class Plain {
+    i32 v;
+}
+i32 main() {
+    if (!equals(42, 42) || equals(42, 43)) {
+        return 1;
+    }
+    if (!equals(1.5, 1.5) || equals(1.5, 2.5)) {
+        return 2;
+    }
+    string a = "hel";
+    a.append_string("lo");
+    if (!equals(a, "hello") || equals(a, "hellp")) {
+        return 3;
+    }
+    if (equals(a, null) || equals(null, a)) {
+        return 4;
+    }
+    if (!equals(null, null)) {
+        return 5;
+    }
+    Plain p1 = new Plain;
+    Plain p2 = new Plain;
+    if (!equals(p1, p1) || equals(p1, p2)) {
+        return 6;
+    }
+    return 7;
+}
+""", 7),
+
+    ("ihashable_dispatch", """
+class Point : IHashable {
+    i32 x;
+    i32 y;
+    void set(i32 a, i32 b) {
+        this.x = a;
+        this.y = b;
+    }
+    u64 hash() {
+        return hash(this.x) ^ hash(this.y);
+    }
+    bool equals(object other) {
+        Point p = other as Point;
+        if (p == null) {
+            return false;
+        }
+        return this.x == p.x && this.y == p.y;
+    }
+}
+i32 main() {
+    Point q1 = new Point;
+    q1.set(1, 2);
+    Point q2 = new Point;
+    q2.set(1, 2);
+    Point q3 = new Point;
+    q3.set(3, 4);
+    if (hash(q1) != hash(q2)) {
+        return 1;
+    }
+    if (hash(q1) == hash(q3)) {
+        return 2;
+    }
+    if (!equals(q1, q2) || equals(q1, q3)) {
+        return 3;
+    }
+    if (equals(q1, null)) {
+        return 4;
+    }
+    if (q1 == q2) {
+        return 5;
+    }
+    return 7;
+}
+""", 7),
 
 
     ("match_iface_type", """
@@ -4643,6 +4861,69 @@ i32 main() {
     return 0;
 }
 """, "requires 1 type argument(s)"),
+
+    ("hash_bad_struct", """
+struct P {
+    i32 x;
+}
+i32 main() {
+    P p;
+    u64 h = hash(p);
+    return 0;
+}
+""", "cannot hash values of this type"),
+
+    ("hash_bad_weak", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    weak Node w = n;
+    u64 h = hash(w);
+    return 0;
+}
+""", "cannot hash a weak/unowned reference"),
+
+    ("equals_bad_struct", """
+struct P {
+    i32 x;
+}
+i32 main() {
+    P a;
+    P b;
+    bool r = equals(a, b);
+    return 0;
+}
+""", "cannot compare values of this type with equals"),
+
+    ("equals_bad_weak", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node n = new Node;
+    weak Node w = n;
+    bool r = equals(w, w);
+    return 0;
+}
+""", "cannot compare weak/unowned references with equals"),
+
+    ("equals_bad_mixed", """
+i32 main() {
+    bool r = equals(42, "42");
+    return 0;
+}
+""", "cannot compare 'i32' with 'String'"),
+
+    ("ihashable_bad_impl", """
+class Lazy : IHashable {
+    i32 v;
+}
+i32 main() {
+    return 0;
+}
+""", "does not implement 'IHashable"),
 
     ("ref_missing_keyword", """
 void inc(ref i32 x) {

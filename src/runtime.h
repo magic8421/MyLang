@@ -93,6 +93,14 @@ void String_append_char(String* thiz, int8_t c);
 void String_append_bool(String* thiz, int v);
 int  String_equals(String* thiz, String* s);
 
+/* Builtin hash(x) helpers.  mylang_hash_u64 mixes integer bits (splitmix64
+   finalizer); mylang_hash_string is FNV-1a over the raw bytes; class and
+   interface values use identity (pointer) hashing. */
+uint64_t mylang_hash_u64(uint64_t v);
+uint64_t mylang_hash_f64(double v);
+uint64_t mylang_hash_string(String* s);
+uint64_t mylang_hash_ptr(void* p);
+
 /* Codegen-only helper: append a C string literal to a String without
    allocating a temporary String object. */
 void mylang_string_append_cstr(String* thiz, const char* cstr);

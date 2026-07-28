@@ -135,6 +135,31 @@ void symtab_init(void) {
         symtab_add_interface_method(ii, "toString", string_type, 0, NULL, NULL, NULL, 0);
     }
 
+    /* Builtin IHashable interface.  The builtin hash(x)/equals(a,b) dispatch
+       to these methods when the static class type implements the interface;
+       classes that do not implement it get identity (pointer) semantics. */
+    {
+        InterfaceInfo* ii = (InterfaceInfo*)calloc(1, sizeof(InterfaceInfo));
+        CHECK_STRSCPY(strscpy(ii->name, "IHashable", sizeof(ii->name)),
+                      "builtin interface name too long");
+        ii->type_id = symtab_next_type_id();
+        symtab_add_interface("IHashable", ii);
+
+        symtab_add_interface_method(ii, "hash", type_make_primitive(TYPE_U64), 0, NULL, NULL, NULL, 0);
+
+        Type bool_type = type_make_primitive(TYPE_BOOL);
+        Type object_type;
+        memset(&object_type, 0, sizeof(object_type));
+        object_type.type_kind = TYPE_OBJECT;
+        object_type.is_pointer = 1;
+        object_type.type_id = TYPE_ID_OBJECT;
+        char pn[1][64];
+        Type pt[1];
+        CHECK_STRSCPY(strscpy(pn[0], "other", sizeof(pn[0])), "parameter name too long");
+        pt[0] = object_type;
+        symtab_add_interface_method(ii, "equals", bool_type, 1, pn, pt, NULL, 0);
+    }
+
     /* Builtin print(string) function.  Implemented by the runtime as
        mylang_print_string; the compiler emits a direct call to it. */
     {

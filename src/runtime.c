@@ -208,6 +208,44 @@ int String_equals(String* thiz, String* s) {
     return memcmp(thiz->bytes.data, s->bytes.data, thiz->bytes.length) == 0;
 }
 
+/* --- Hash helpers (builtin hash(x)) --------------------------------------- */
+
+uint64_t mylang_hash_u64(uint64_t v) {
+    /* splitmix64 finalizer */
+    v ^= v >> 30;
+    v *= 0xbf58476d1ce4e5b9ULL;
+    v ^= v >> 27;
+    v *= 0x94d049bb133111ebULL;
+    v ^= v >> 31;
+    return v;
+}
+
+uint64_t mylang_hash_f64(double v) {
+    uint64_t bits;
+    if (v == 0.0) v = 0.0;  /* -0.0 hashes like +0.0 */
+    memcpy(&bits, &v, sizeof(bits));
+    return mylang_hash_u64(bits);
+}
+
+uint64_t mylang_hash_string(String* s) {
+    /* FNV-1a over the raw bytes; NULL and empty both hash to the offset basis. */
+    uint64_t h = 14695981039346656037ULL;
+    const uint8_t* p;
+    size_t n, i;
+    if (!s) return 0;
+    p = (const uint8_t*)s->bytes.data;
+    n = s->bytes.length;
+    for (i = 0; i < n; i++) {
+        h ^= p[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+uint64_t mylang_hash_ptr(void* p) {
+    return mylang_hash_u64((uint64_t)(uintptr_t)p);
+}
+
 /* --- Array helpers ------------------------------------------------------ */
 
 static void mylang_array_release_elements(void* data, size_t length, int elem_kind) {

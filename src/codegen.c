@@ -182,6 +182,27 @@ static int type_is_reference(const Type* t) {
            t->type_kind == TYPE_OBJECT;
 }
 
+/* Class lookup that also materialises generic instantiations. */
+static ClassInfo* class_info_for_type(Type* t) {
+    if (t->type_arg_count > 0) return symtab_instantiate_class_from_type(t);
+    return symtab_find_class(t->class_name);
+}
+
+static int class_implements(ClassInfo* ci, const char* iname) {
+    if (!ci) return 0;
+    int i;
+    for (i = 0; i < ci->impl_count && i < MAX_IMPL; i++) {
+        if (strcmp(ci->impl_names[i], iname) == 0) return 1;
+    }
+    return 0;
+}
+
+/* C identifier prefix for methods of the class: mangled for generic
+   instantiations, plain name otherwise. */
+static const char* class_c_prefix(ClassInfo* ci) {
+    return ci->mangled_name[0] ? ci->mangled_name : ci->name;
+}
+
 /* Structs that (transitively) own reference-counted shares get compiler-
    generated _mylang_retain_S / _mylang_release_S hooks: copies retain each
    reference field and scope exit releases them. */
@@ -834,6 +855,17 @@ static Type resolve_type(AstNode* node) {
             } else {
                 FuncInfo* fi = symtab_find_func(node->ast_children[0]->ast_token.text);
                 if (fi) { t = fi->return_type; }
+                else if (node->ast_children[0]->ast_kind == AST_IDENT &&
+                         strcmp(node->ast_children[0]->ast_token.text, "hash") == 0) {
+                    /* Builtin hash(x) yields u64. */
+                    t.type_kind = TYPE_U64;
+                    t.type_id = TYPE_ID_U64;
+                } else if (node->ast_children[0]->ast_kind == AST_IDENT &&
+                           strcmp(node->ast_children[0]->ast_token.text, "equals") == 0) {
+                    /* Builtin equals(a, b) yields bool. */
+                    t.type_kind = TYPE_BOOL;
+                    t.type_id = TYPE_ID_BOOL;
+                }
             }
             break;
         }
@@ -936,6 +968,20 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
     }
 
     if (op == TOK_EQ || op == TOK_NE) {
+        /* Strong string == / != is value comparison (C# style), backed by
+           String_equals.  Comparisons with null take the null path above and
+           never reach here; weak/unowned strings keep identity comparison. */
+        if (lt.type_kind == TYPE_CLASS && rt.type_kind == TYPE_CLASS &&
+            !lt.is_weak && !lt.is_unowned && !rt.is_weak && !rt.is_unowned &&
+            strcmp(lt.class_name, "String") == 0 && strcmp(rt.class_name, "String") == 0) {
+            if (op == TOK_NE) fprintf(ctx->out, "!");
+            fprintf(ctx->out, "String_equals(");
+            codegen_expr(ctx, node->ast_children[0]);
+            fprintf(ctx->out, ", ");
+            codegen_expr(ctx, node->ast_children[1]);
+            fprintf(ctx->out, ")");
+            return;
+        }
         if (lt.type_kind == TYPE_INTERFACE && rt.type_kind == TYPE_INTERFACE) {
             fprintf(ctx->out, "(");
             codegen_expr(ctx, node->ast_children[0]);
@@ -1397,6 +1443,174 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
         codegen_expr(ctx, args);
         fprintf(ctx->out, ") ? (void)0 : mylang_assert_failed(%d, \"assertion failed\"))",
                 callee->ast_token.line);
+        return;
+    }
+    /* Builtin hash(x): like assert, not registered in symtab; the helper is
+       picked from the argument's type.  A user-defined function named 'hash'
+       shadows it. */
+    if (callee->ast_kind == AST_IDENT && !fi &&
+        strcmp(callee->ast_token.text, "hash") == 0) {
+        AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        if (!args || args->next) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "hash expects 1 argument");
+            fprintf(ctx->out, "0ULL");
+            return;
+        }
+        Type at = resolve_type(args);
+        if (at.is_weak || at.is_unowned) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "cannot hash a weak/unowned reference; lock() it first");
+            fprintf(ctx->out, "0ULL");
+            return;
+        }
+        if (at.is_array || at.type_kind == TYPE_STRUCT) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "cannot hash values of this type");
+            fprintf(ctx->out, "0ULL");
+            return;
+        }
+        /* A class implementing IHashable hashes through its own hash(). */
+        if (at.type_kind == TYPE_CLASS) {
+            ClassInfo* ci = class_info_for_type(&at);
+            if (class_implements(ci, "IHashable")) {
+                MethodInfo* mi = symtab_find_method_in_class(ci, "hash");
+                if (mi && mi->is_private) {
+                    codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                         "hash() method of '%s' is private", ci->name);
+                    fprintf(ctx->out, "0ULL");
+                    return;
+                }
+                fprintf(ctx->out, "%s_hash(", class_c_prefix(ci));
+                codegen_expr(ctx, args);
+                fprintf(ctx->out, ")");
+                return;
+            }
+        }
+        if (at.type_kind == TYPE_BOOL || type_is_integer(&at)) {
+            fprintf(ctx->out, "mylang_hash_u64((uint64_t)(");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, "))");
+        } else if (at.type_kind == TYPE_F32 || at.type_kind == TYPE_F64) {
+            fprintf(ctx->out, "mylang_hash_f64((double)(");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, "))");
+        } else if (at.type_kind == TYPE_CLASS && strcmp(at.class_name, "String") == 0) {
+            fprintf(ctx->out, "mylang_hash_string(");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, ")");
+        } else if (at.type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "mylang_hash_ptr((");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, ").data)");
+        } else {
+            /* Other class types, object, and null: identity hash. */
+            fprintf(ctx->out, "mylang_hash_ptr(");
+            codegen_expr(ctx, args);
+            fprintf(ctx->out, ")");
+        }
+        return;
+    }
+    /* Builtin equals(a, b): dispatches on the first argument's type, mirroring
+       hash(x).  A user-defined function named 'equals' shadows it. */
+    if (callee->ast_kind == AST_IDENT && !fi &&
+        strcmp(callee->ast_token.text, "equals") == 0) {
+        AstNode* a = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        AstNode* b = a ? a->next : NULL;
+        if (!a || !b || b->next) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "equals expects 2 arguments");
+            fprintf(ctx->out, "0");
+            return;
+        }
+        Type at = resolve_type(a);
+        Type bt = resolve_type(b);
+        if (at.is_weak || at.is_unowned || bt.is_weak || bt.is_unowned) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "cannot compare weak/unowned references with equals; lock() them first");
+            fprintf(ctx->out, "0");
+            return;
+        }
+        if (at.is_array || bt.is_array || at.type_kind == TYPE_STRUCT || bt.type_kind == TYPE_STRUCT) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "cannot compare values of this type with equals");
+            fprintf(ctx->out, "0");
+            return;
+        }
+        int a_ref = type_is_reference(&at) || type_is_null(&at);
+        int b_ref = type_is_reference(&bt) || type_is_null(&bt);
+        if (a_ref != b_ref) {
+            codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 "cannot compare '%s' with '%s'", type_name(&at), type_name(&bt));
+            fprintf(ctx->out, "0");
+            return;
+        }
+        if (!a_ref) {
+            /* bool, integer, and float values compare directly. */
+            fprintf(ctx->out, "(");
+            codegen_expr(ctx, a);
+            fprintf(ctx->out, " == ");
+            codegen_expr(ctx, b);
+            fprintf(ctx->out, ")");
+            return;
+        }
+        if (type_is_null(&at) && type_is_null(&bt)) {
+            fprintf(ctx->out, "1");
+            return;
+        }
+        if (at.type_kind == TYPE_CLASS && strcmp(at.class_name, "String") == 0) {
+            if (!type_is_null(&bt) &&
+                !(bt.type_kind == TYPE_CLASS && strcmp(bt.class_name, "String") == 0)) {
+                codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                     "cannot compare 'string' with '%s'", type_name(&bt));
+                fprintf(ctx->out, "0");
+                return;
+            }
+            fprintf(ctx->out, "String_equals(");
+            codegen_expr(ctx, a);
+            fprintf(ctx->out, ", ");
+            codegen_expr(ctx, b);
+            fprintf(ctx->out, ")");
+            return;
+        }
+        if (at.type_kind == TYPE_INTERFACE) {
+            fprintf(ctx->out, "(");
+            codegen_expr(ctx, a);
+            fprintf(ctx->out, ").data == ");
+            if (bt.type_kind == TYPE_INTERFACE) {
+                fprintf(ctx->out, "(");
+                codegen_expr(ctx, b);
+                fprintf(ctx->out, ").data)");
+            } else {
+                codegen_expr(ctx, b);
+                fprintf(ctx->out, ")");
+            }
+            return;
+        }
+        if (at.type_kind == TYPE_CLASS && !type_is_null(&at)) {
+            ClassInfo* ci = class_info_for_type(&at);
+            if (class_implements(ci, "IHashable")) {
+                MethodInfo* mi = symtab_find_method_in_class(ci, "equals");
+                if (mi && mi->is_private) {
+                    codegen_report_error(ctx, callee->ast_token.line, callee->ast_token.col,
+                                         "equals(object) method of '%s' is private", ci->name);
+                    fprintf(ctx->out, "0");
+                    return;
+                }
+                fprintf(ctx->out, "%s_equals(", class_c_prefix(ci));
+                codegen_expr(ctx, a);
+                fprintf(ctx->out, ", ");
+                codegen_expr(ctx, b);
+                fprintf(ctx->out, ")");
+                return;
+            }
+        }
+        /* object, other class types, and null: identity comparison. */
+        fprintf(ctx->out, "(");
+        codegen_expr(ctx, a);
+        fprintf(ctx->out, " == ");
+        codegen_expr(ctx, b);
+        fprintf(ctx->out, ")");
         return;
     }
     if (fi && fi->is_builtin) {

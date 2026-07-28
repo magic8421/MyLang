@@ -210,6 +210,13 @@ Source code lives under `src/`:
 - Empty classes/structs emit `char _pad;` placeholder for MSVC compatibility (C requires at least one struct member).
 - `ctx->return_type` tracks the enclosing function's return type so `codegen_return_stmt` can emit implicit class-to-interface conversion.
 - Interface parameters pass by value (struct copy). Caller-side guard extraction handles complex expressions.
+- `IHashable` is a builtin interface (`u64 hash()`, `bool equals(object other)`)
+  registered in `symtab_init`. The builtin `hash(x)` / `equals(a, b)` dispatch
+  to these methods (direct calls, no vtable) when the static class type
+  declares `: IHashable`; classes that do not implement it get the default —
+  identity (pointer) hashing and identity comparison, the C#/Java `Object`
+  fallback. Interface-typed values always fall back to identity (there is no
+  interface inheritance to route through a vtable).
 - `as` keyword is parsed in `parse_postfix` as a postfix operator.
 
 ## Weak Interface Types
@@ -275,6 +282,10 @@ Source code lives under `src/`:
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
 - `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`, and `equals`. There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
+- `==`/`!=` on strong `string` operands is value comparison via `String_equals`
+  (C# style), so two strings with equal contents compare equal even as distinct
+  objects. Comparisons against `null` keep the pointer-vs-NULL shape, and
+  weak/unowned strings keep identity comparison.
 - f-strings `f"...{expr}..."` are lowered by the parser into an `AST_FSTRING` node containing ordered parts (string literals and expression nodes).
 - Codegen emits a temporary `String` accumulator (`_fsN`), appends each part, and uses the accumulator itself as the expression value; literal segments go through `mylang_string_append_cstr` without allocating a temporary `String`. Each interpolated expression is evaluated exactly once and in source order.
 - The accumulator is owned (+1) through the cleanup list, and caller-side
@@ -369,6 +380,8 @@ Source code lives under `src/`:
 - `mylang_retain(ptr)` / `mylang_release(ptr)` — atomic inc/dec on refcount for class/interface objects.
 - `mylang_print_string(String* s)` — writes the string to stdout plus one trailing newline (println semantics; a bare LF, the CRT text mode turns it into CRLF).  Exposed to MyLang as the builtin `print(string)` function.
 - `mylang_assert_failed(line, msg)` — backs the builtin `assert(cond)`: sets `__my_line` to the assert's source line and calls `my_panic`. `assert` is special-cased in `codegen_call` (not registered in symtab), accepts any truthy expression as its single argument, and emits `((cond) ? (void)0 : mylang_assert_failed(line, "assertion failed"))`. It is always on (no release-mode elision), and a user-defined function named `assert` shadows the builtin.
+- `mylang_hash_u64/f64/string/ptr` — back the builtin `hash(x)`, which yields `u64` and is special-cased in `codegen_call` like `assert` (a user-defined `hash` shadows it). Dispatch is by the argument's type: a class implementing `IHashable` is hashed through its own `hash()` method; bool and integer types mix bits via a splitmix64 finalizer, `f32`/`f64` mix their bit pattern (`-0.0` hashes like `+0.0`), `string` uses FNV-1a over the raw bytes (content hash, so two equal literals hash equal), and other class/interface/object values use identity (pointer) hashing. Structs and arrays are compile errors; weak/unowned references must be `lock()`ed first.
+- The builtin `equals(a, b)` (also special-cased, yields `bool`) mirrors the dispatch: primitives compare with `==`, strong strings use `String_equals`, a class implementing `IHashable` calls its `equals(object)`, and other class/interface/object values use identity comparison. Structs, arrays, and weak/unowned references are compile errors; a value/reference category mismatch between the two arguments is rejected ("cannot compare 'x' with 'y'").
 - Platform atomics: `Interlocked*` (MSVC) or `atomic_fetch_*` (GCC/Clang). CAS macro provided for weak ref lock.
 
 ## Memory Leak Debugging
