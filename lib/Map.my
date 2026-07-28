@@ -1,0 +1,144 @@
+// Generic hash map with O(1) average lookup.
+//
+// Layout: separate chaining over parallel arrays (no pointers).
+//   buckets[i]  index of the first entry in bucket i, -1 = empty
+//   keys/vals   entry storage
+//   nexts[e]    next entry index in the same bucket chain, -1 = end
+// Starts empty; the first set() allocates 16 buckets and the table doubles
+// when the load factor exceeds 3/4.
+//
+// Keys may be any type supported by the builtin hash(x)/equals(a,b):
+// primitives, string, and classes implementing IHashable.
+
+class Map<K, V> {
+    i32[] buckets;
+    K[] keys;
+    V[] vals;
+    i32[] nexts;
+    i32 cap;
+
+    void rehash(i32 newcap) {
+        this.buckets.resize(newcap);
+        i32 i = 0;
+        while (i < newcap) {
+            this.buckets[i] = -1;
+            i++;
+        }
+        i32 e = 0;
+        while (e < this.keys.length) {
+            i32 b = hash(this.keys[e]) % newcap;
+            this.nexts[e] = this.buckets[b];
+            this.buckets[b] = e;
+            e++;
+        }
+        this.cap = newcap;
+    }
+
+    void ensure() {
+        if (this.cap == 0) {
+            this.rehash(16);
+            return;
+        }
+        if (this.keys.length + 1 > (this.cap * 3) / 4) {
+            this.rehash(this.cap * 2);
+        }
+    }
+
+    i32 find(K k) {
+        if (this.cap == 0) {
+            return -1;
+        }
+        i32 b = hash(k) % this.cap;
+        i32 e = this.buckets[b];
+        while (e >= 0) {
+            if (equals(this.keys[e], k)) {
+                return e;
+            }
+            e = this.nexts[e];
+        }
+        return -1;
+    }
+
+    void set(K k, V v) {
+        this.ensure();
+        i32 e = this.find(k);
+        if (e >= 0) {
+            this.vals[e] = v;
+            return;
+        }
+        i32 b = hash(k) % this.cap;
+        i32 ne = this.keys.length;
+        this.keys.push(k);
+        this.vals.push(v);
+        this.nexts.push(this.buckets[b]);
+        this.buckets[b] = ne;
+    }
+
+    bool get(K k, ref V out_v) {
+        i32 e = this.find(k);
+        if (e < 0) {
+            return false;
+        }
+        out_v = this.vals[e];
+        return true;
+    }
+
+    bool contains(K k) {
+        return this.find(k) >= 0;
+    }
+
+    bool remove(K k) {
+        if (this.cap == 0) {
+            return false;
+        }
+        i32 b = hash(k) % this.cap;
+        i32 e = this.buckets[b];
+        i32 prev = -1;
+        while (e >= 0) {
+            if (equals(this.keys[e], k)) {
+                if (prev >= 0) {
+                    this.nexts[prev] = this.nexts[e];
+                } else {
+                    this.buckets[b] = this.nexts[e];
+                }
+                // Swap-remove the entry with the last one, then repair the
+                // link that pointed at the moved entry.
+                i32 last = this.keys.length - 1;
+                if (e != last) {
+                    this.keys[e] = this.keys[last];
+                    this.vals[e] = this.vals[last];
+                    this.nexts[e] = this.nexts[last];
+                    i32 lb = hash(this.keys[e]) % this.cap;
+                    if (this.buckets[lb] == last) {
+                        this.buckets[lb] = e;
+                    } else {
+                        i32 x = this.buckets[lb];
+                        while (this.nexts[x] != last) {
+                            x = this.nexts[x];
+                        }
+                        this.nexts[x] = e;
+                    }
+                }
+                this.keys.pop();
+                this.vals.pop();
+                this.nexts.pop();
+                return true;
+            }
+            prev = e;
+            e = this.nexts[e];
+        }
+        return false;
+    }
+
+    void clear() {
+        this.keys.clear();
+        this.vals.clear();
+        this.nexts.clear();
+        this.buckets.clear();
+        this.cap = 0;
+    }
+
+    i32 count() {
+        return this.keys.length;
+    }
+}

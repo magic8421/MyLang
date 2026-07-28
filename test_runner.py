@@ -3239,66 +3239,7 @@ i32 main() {
 """, 43),
 
     ("gen_map_class", """
-class Map<K, V> {
-    K[] keys;
-    V[] vals;
-
-    i32 find(K k) {
-        i32 i = 0;
-        while (i < this.keys.length) {
-            if (this.keys[i] == k) {
-                return i;
-            }
-            i++;
-        }
-        return -1;
-    }
-
-    void set(K k, V v) {
-        i32 i = this.find(k);
-        if (i >= 0) {
-            this.vals[i] = v;
-            return;
-        }
-        this.keys.push(k);
-        this.vals.push(v);
-    }
-
-    bool get(K k, ref V out_v) {
-        i32 i = this.find(k);
-        if (i < 0) {
-            return false;
-        }
-        out_v = this.vals[i];
-        return true;
-    }
-
-    bool contains(K k) {
-        return this.find(k) >= 0;
-    }
-
-    bool remove(K k) {
-        i32 i = this.find(k);
-        if (i < 0) {
-            return false;
-        }
-        i32 last = this.keys.length - 1;
-        this.keys[i] = this.keys[last];
-        this.vals[i] = this.vals[last];
-        this.keys.pop();
-        this.vals.pop();
-        return true;
-    }
-
-    void clear() {
-        this.keys.clear();
-        this.vals.clear();
-    }
-
-    i32 count() {
-        return this.keys.length;
-    }
-}
+import("../lib/Map.my");
 
 i32 main() {
     Map<i32, i32> m = new Map<i32, i32>;
@@ -3335,57 +3276,7 @@ i32 main() {
 """, (0, "v=222\nmiss ok\ncount=3\nafter remove count=2\ncontains ok\nTWO\ncleared=0\n")),
 
     ("map_string_keys", """
-class Map<K, V> {
-    K[] keys;
-    V[] vals;
-
-    i32 find(K k) {
-        i32 i = 0;
-        while (i < this.keys.length) {
-            if (this.keys[i] == k) {
-                return i;
-            }
-            i++;
-        }
-        return -1;
-    }
-
-    void set(K k, V v) {
-        i32 i = this.find(k);
-        if (i >= 0) {
-            this.vals[i] = v;
-            return;
-        }
-        this.keys.push(k);
-        this.vals.push(v);
-    }
-
-    bool get(K k, ref V out_v) {
-        i32 i = this.find(k);
-        if (i < 0) {
-            return false;
-        }
-        out_v = this.vals[i];
-        return true;
-    }
-
-    bool contains(K k) {
-        return this.find(k) >= 0;
-    }
-
-    bool remove(K k) {
-        i32 i = this.find(k);
-        if (i < 0) {
-            return false;
-        }
-        i32 last = this.keys.length - 1;
-        this.keys[i] = this.keys[last];
-        this.vals[i] = this.vals[last];
-        this.keys.pop();
-        this.vals.pop();
-        return true;
-    }
-}
+import("../lib/Map.my");
 
 i32 main() {
     Map<string, i32> m = new Map<string, i32>;
@@ -3410,6 +3301,104 @@ i32 main() {
     return 0;
 }
 """, (0, "two=22\ncontains ok\nremove ok\npost-remove ok\n")),
+
+    ("map_ihashable_keys", """
+class Point : IHashable {
+    i32 x;
+    i32 y;
+    void set(i32 a, i32 b) {
+        this.x = a;
+        this.y = b;
+    }
+    u64 hash() {
+        return hash(this.x) ^ hash(this.y);
+    }
+    bool equals(object other) {
+        Point p = other as Point;
+        if (p == null) {
+            return false;
+        }
+        return this.x == p.x && this.y == p.y;
+    }
+}
+import("../lib/Map.my");
+i32 main() {
+    Map<Point, i32> pm = new Map<Point, i32>;
+    Point p1 = new Point;
+    p1.set(1, 2);
+    pm.set(p1, 100);
+    Point p2 = new Point;
+    p2.set(1, 2);
+    pm.set(p2, 200);
+    if (pm.count() != 1) {
+        return 1;
+    }
+    Point q = new Point;
+    q.set(1, 2);
+    i32 v = 0;
+    if (!pm.get(q, ref v) || v != 200) {
+        return 2;
+    }
+    Point r = new Point;
+    r.set(9, 9);
+    if (pm.contains(r)) {
+        return 3;
+    }
+    return 7;
+}
+""", 7),
+
+    ("map_rehash", """
+import("../lib/Map.my");
+i32 main() {
+    Map<i32, i32> m = new Map<i32, i32>;
+    i32 i = 0;
+    while (i < 200) {
+        m.set(i, i * 10);
+        i++;
+    }
+    if (m.count() != 200) {
+        return 1;
+    }
+    i32 v = 0;
+    i = 0;
+    while (i < 200) {
+        if (!m.get(i, ref v) || v != i * 10) {
+            return 2;
+        }
+        i++;
+    }
+    m.set(50, 999);
+    if (!m.get(50, ref v) || v != 999 || m.count() != 200) {
+        return 3;
+    }
+    i = 0;
+    while (i < 100) {
+        if (!m.remove(i * 2)) {
+            return 4;
+        }
+        i++;
+    }
+    if (m.count() != 100) {
+        return 5;
+    }
+    i = 0;
+    while (i < 100) {
+        i32 k = i * 2 + 1;
+        if (!m.get(k, ref v) || v != k * 10) {
+            return 6;
+        }
+        if (m.contains(i * 2)) {
+            return 7;
+        }
+        i++;
+    }
+    if (m.remove(12345)) {
+        return 8;
+    }
+    return 9;
+}
+""", 9),
 
     ("gen_new_infer", """
 class Box<T> {

@@ -31,6 +31,12 @@ Source code lives under `src/`:
 - `symtab.c/h`, `codegen.c/h`
 - `main.c`, `util.h`
 
+Library code written in MyLang lives under `lib/`:
+- `lib/Map.my` — generic hash map (`class Map<K, V>`), separate chaining over
+  parallel arrays; keys work with any type the builtin `hash(x)`/`equals(a, b)`
+  support (primitives, string, classes implementing `IHashable`). Tests import
+  it via `import("../lib/Map.my")`.
+
 ## Error Message Format
 - All compiler diagnostics are emitted as `path(line,col): error: message`
   (MSVC / VS Code problem-matcher style). The printed path is the input path
