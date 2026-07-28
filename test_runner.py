@@ -4727,6 +4727,72 @@ i32 main() {
 }
 """, 42),
 
+    ("static_method_factory", """
+class Point {
+    i32 x;
+    i32 y;
+    static Point create(i32 x, i32 y) {
+        Point p = new Point;
+        p.x = x;
+        p.y = y;
+        return p;
+    }
+    i32 sum() { return this.x + this.y; }
+}
+i32 main() {
+    Point p = Point.create(1, 2);
+    if (p.x != 1) { return 1; }
+    if (p.y != 2) { return 2; }
+    if (p.sum() != 3) { return 3; }
+    return p.sum() + 39;
+}
+""", 42),
+
+    ("static_method_default_params", """
+class Math {
+    static i32 add(i32 a, i32 b = 10, i32 c = 100) {
+        return a + b + c;
+    }
+}
+i32 main() {
+    i32 full = Math.add(1, 2, 3);   // 6
+    i32 partial = Math.add(1, 2);   // 103
+    i32 minimal = Math.add(1);      // 111
+    if (full != 6) { return 1; }
+    if (partial != 103) { return 2; }
+    if (minimal != 111) { return 3; }
+    return full + partial + minimal;
+}
+""", 220),
+
+    ("static_method_access_modifiers", """
+class Counter {
+    static i32 make(i32 v) { return v * 2; }
+    public static i32 pub(i32 v) { return v + 1; }
+    private static i32 priv(i32 v) { return v - 1; }
+    static i32 use_priv(i32 v) { return Counter.priv(v); }
+}
+i32 main() {
+    i32 a = Counter.make(10);     // 20
+    i32 b = Counter.pub(10);      // 11
+    i32 c = Counter.use_priv(11); // 10
+    if (a != 20) { return 1; }
+    if (b != 11) { return 2; }
+    if (c != 10) { return 3; }
+    return a + b + c;
+}
+""", 41),
+
+    ("static_method_calls_static", """
+class A {
+    static i32 one() { return 1; }
+    static i32 two() { return A.one() + 1; }
+}
+i32 main() {
+    return A.two() + 40;
+}
+""", 42),
+
 
 ]
 
@@ -5917,6 +5983,82 @@ i32 main() {
     return 0;
 }
 """, "default parameter value must be a literal"),
+
+    ("bad_static_this", """
+class C {
+    i32 v;
+    static i32 f() { return this.v; }
+}
+i32 main() {
+    return 0;
+}
+""", "'this' cannot be used in a static method"),
+
+    ("bad_static_field_access", """
+class C {
+    i32 v;
+    static i32 f() { return v; }
+}
+i32 main() {
+    return 0;
+}
+""", "unknown identifier 'v'"),
+
+    ("bad_static_via_instance", """
+class C {
+    static i32 f() { return 1; }
+}
+i32 main() {
+    C c = new C;
+    return c.f();
+}
+""", "cannot call static method 'C.f' via an instance; use the class name"),
+
+    ("bad_instance_via_class", """
+class C {
+    i32 v;
+    i32 get() { return this.v; }
+}
+i32 main() {
+    return C.get();
+}
+""", "cannot call instance method 'C.get' via the class name; use an instance"),
+
+    ("bad_static_method_missing", """
+class C {
+    static i32 f() { return 1; }
+}
+i32 main() {
+    return C.nope();
+}
+""", "method 'C.nope' does not exist"),
+
+    ("bad_static_field", """
+class C {
+    static i32 v;
+}
+i32 main() {
+    return 0;
+}
+""", "static fields are not supported"),
+
+    ("bad_static_private_outside", """
+class C {
+    private static i32 f() { return 1; }
+}
+i32 main() {
+    return C.f();
+}
+""", "cannot call private method 'C.f'"),
+
+    ("bad_static_native", """
+class C {
+    native static i32 f();
+}
+i32 main() {
+    return 0;
+}
+""", "cannot be both static and native"),
 
 ]
 

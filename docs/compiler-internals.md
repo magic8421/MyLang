@@ -34,6 +34,7 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Methods name-mangled: `ClassName_method(ClassName* thiz, ...)`.
 - `this` in MyLang source emits as `thiz` in C to avoid C++ keyword conflict.
 - `p.foo(args)` emits as `ClassName_foo(p, args)`.
+- Static methods (`static` modifier) omit the `thiz` parameter: `ClassName.create(args)` emits as `ClassName_create(args)`. `static_call_method()` in codegen resolves the class-name callee; see "Static Methods" in docs/language.md.
 - Class name registered early in symtab for self-referential method return types.
 
 ## Native Methods

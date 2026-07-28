@@ -201,6 +201,7 @@ AstNode* ast_clone(AstNode* node) {
     AstNode* copy = ast_new_node(node->ast_kind, node->ast_token);
     copy->ast_resolved_type = *type_new(&node->ast_resolved_type);
     copy->ast_child_count = node->ast_child_count;
+    copy->ast_is_static = node->ast_is_static;
     int i;
     for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         copy->ast_children[i] = ast_clone(node->ast_children[i]);

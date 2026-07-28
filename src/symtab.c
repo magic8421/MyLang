@@ -52,63 +52,63 @@ void symtab_init(void) {
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "param name too long");
             pt[0] = string_type;
-            symtab_add_method(str_info, "append_string", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_string", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I32);
-            symtab_add_method(str_info, "append_i32", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_i32", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I64);
-            symtab_add_method(str_info, "append_i64", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_i64", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_U32);
-            symtab_add_method(str_info, "append_u32", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_u32", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_U64);
-            symtab_add_method(str_info, "append_u64", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_u64", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_F32);
-            symtab_add_method(str_info, "append_f32", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_f32", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_F64);
-            symtab_add_method(str_info, "append_f64", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_f64", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "c", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_I8);
-            symtab_add_method(str_info, "append_char", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_char", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
             Type pt[1];
             CHECK_STRSCPY(strscpy(pn[0], "v", sizeof(pn[0])), "param name too long");
             pt[0] = type_make_primitive(TYPE_BOOL);
-            symtab_add_method(str_info, "append_bool", void_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "append_bool", void_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
         {
             char pn[1][64];
@@ -116,7 +116,7 @@ void symtab_init(void) {
             Type bool_type = type_make_primitive(TYPE_BOOL);
             CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "param name too long");
             pt[0] = string_type;
-            symtab_add_method(str_info, "equals", bool_type, 1, pn, pt, NULL, 1, 0, 0);
+            symtab_add_method(str_info, "equals", bool_type, 1, pn, pt, NULL, 1, 0, 0, 0);
         }
     }
 
@@ -343,7 +343,8 @@ FuncInfo* symtab_first_func(void) {
 void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                        int pc, const char pn[][64], const Type pt[],
                        AstNode* const pd[],
-                       int is_native, int is_override, int is_private) {
+                       int is_native, int is_override, int is_private,
+                       int is_static) {
     MethodInfo* m = calloc(1, sizeof(MethodInfo));
     CHECK_STRSCPY(strscpy(m->name, name, sizeof(m->name)), "method name too long");
     m->return_type = ret_type;
@@ -351,6 +352,7 @@ void symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
     m->is_native = is_native;
     m->is_override = is_override;
     m->is_private = is_private;
+    m->method_is_static = is_static;
     int i;
     for (i = 0; i < pc && i < MAX_PARAMS; i++) {
         CHECK_STRSCPY(strscpy(m->param_names[i], pn[i], sizeof(m->param_names[i])), "parameter name too long");
@@ -527,7 +529,9 @@ int symtab_validate_impls(void) {
                 MethodInfo* cls_m = ci->methods;
                 int found = 0;
                 while (cls_m) {
-                    if (strcmp(cls_m->name, im->name) == 0) {
+                    /* A static method has no 'this' and cannot satisfy an
+                       interface method. */
+                    if (strcmp(cls_m->name, im->name) == 0 && !cls_m->method_is_static) {
                         if (signature_matches(cls_m, im)) {
                             if (cls_m->is_private) {
                                 fprintf(stderr, "error: method '%s' in class '%s' implements interface '%s' but is private\n",
@@ -993,6 +997,7 @@ ClassInfo* symtab_instantiate_class_from_type(Type* t) {
             m->is_native = gm->is_native;
             m->is_override = gm->is_override;
             m->is_private = gm->is_private;
+            m->method_is_static = gm->method_is_static;
             int mp;
             for (mp = 0; mp < gm->param_count && mp < MAX_PARAMS; mp++) {
                 CHECK_STRSCPY(strscpy(m->param_names[mp], gm->param_names[mp], sizeof(m->param_names[mp])),

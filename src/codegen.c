@@ -64,6 +64,7 @@ struct CodegenContext {
     int          is_interface_default_method;
     int          no_unowned_check;
     ClassInfo*   current_class;   /* class whose method body is being emitted, NULL outside methods */
+    int          current_method_is_static;   /* emitting a static method body (no 'this') */
     int          loop_depth;
     int          loop_entry_cleanup_count[MAX_LOOP];
     int          loop_break_label_id[MAX_LOOP];
@@ -681,6 +682,22 @@ static void emit_header_method_prototypes(CodegenContext* ctx) {
 
 static Type resolve_type(AstNode* node);
 
+/* Resolves the static method targeted by a class-name call 'ClassName.m(...)'.
+   Returns NULL when the callee is not a member access on a bare identifier,
+   the identifier names an in-scope variable (instance call), the class does
+   not exist, or the class has no such method.  Generic class definitions are
+   rejected: static calls on generic classes are not supported. */
+static MethodInfo* static_call_method(AstNode* callee, ClassInfo** out_ci) {
+    if (!callee || callee->ast_kind != AST_MEMBER_ACCESS) return NULL;
+    AstNode* obj = callee->ast_children[0];
+    if (!obj || obj->ast_kind != AST_IDENT) return NULL;
+    if (symtab_lookup(obj->ast_token.text)) return NULL;
+    ClassInfo* ci = symtab_find_class(obj->ast_token.text);
+    if (!ci || ci->is_generic) return NULL;
+    if (out_ci) *out_ci = ci;
+    return symtab_find_method_in_class(ci, callee->ast_token.text);
+}
+
 static Type resolve_type(AstNode* node) {
     Type t;
     memset(&t, 0, sizeof(t));
@@ -821,6 +838,13 @@ static Type resolve_type(AstNode* node) {
             if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
                 AstNode* mem = node->ast_children[0];
                 AstNode* obj = mem->ast_children[0];
+                MethodInfo* smi = static_call_method(mem, NULL);
+                if (smi && smi->method_is_static) {
+                    /* Static call via the class name: return type comes from
+                       the method signature. */
+                    t = smi->return_type;
+                    break;
+                }
                 resolve_type(obj);
                 if (strcmp(mem->ast_token.text, "lock") == 0 && obj->ast_resolved_type.is_weak) {
                     t = obj->ast_resolved_type;
@@ -1205,6 +1229,12 @@ static void materialize_call_defaults(AstNode* node) {
     if (callee->ast_kind == AST_MEMBER_ACCESS) {
         AstNode* obj = callee->ast_children[0];
         const char* mname = callee->ast_token.text;
+        MethodInfo* smi = static_call_method(callee, NULL);
+        if (smi && smi->method_is_static) {
+            /* Static call via the class name. */
+            param_count = smi->param_count;
+            param_defaults = smi->param_defaults;
+        } else {
         resolve_type(obj);
         Type* ot = &obj->ast_resolved_type;
         if (ot->is_array) return;   /* array methods have fixed signatures */
@@ -1232,6 +1262,7 @@ static void materialize_call_defaults(AstNode* node) {
                 param_count = im->param_count;
                 param_defaults = im->param_defaults;
             }
+        }
         }
     } else if (callee->ast_kind == AST_IDENT) {
         FuncInfo* fi = symtab_find_func(callee->ast_token.text);
@@ -1434,6 +1465,50 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
         AstNode* mem = node->ast_children[0];
         AstNode* obj = mem->ast_children[0];
         const char* mname = mem->ast_token.text;
+
+        /* Static method call via the class name: ClassName.m(args). */
+        {
+            ClassInfo* sci = NULL;
+            MethodInfo* smi = static_call_method(mem, &sci);
+            if (sci) {
+                if (!smi) {
+                    codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", sci->name, mname);
+                    fprintf(ctx->out, "0 /* unknown static method */");
+                    return;
+                }
+                if (!smi->method_is_static) {
+                    codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call instance method '%s.%s' via the class name; use an instance", sci->name, mname);
+                    fprintf(ctx->out, "0 /* instance method via class name */");
+                    return;
+                }
+                if (!member_visible(ctx, sci->name, smi->is_private)) {
+                    codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call private method '%s.%s'", sci->name, mname);
+                }
+                {
+                    char dbuf[160];
+                    int dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", sci->name, mname);
+                    CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                    codegen_check_call_arity(ctx, mem->ast_token.line, mem->ast_token.col,
+                                             dbuf, count_call_args(node),
+                                             smi->param_count, smi->param_defaults);
+                }
+                AstNode* sargs = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+                fprintf(ctx->out, "%s_%s(", class_c_name(sci), mname);
+                int sidx = 0;
+                while (sargs) {
+                    if (sidx > 0) fprintf(ctx->out, ", ");
+                    Type expected;
+                    memset(&expected, 0, sizeof(expected));
+                    if (sidx < smi->param_count) expected = smi->param_types[sidx];
+                    codegen_call_arg(ctx, sargs, &expected);
+                    sidx++;
+                    sargs = sargs->next;
+                }
+                fprintf(ctx->out, ")");
+                return;
+            }
+        }
+
         resolve_type(obj);
         AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
 
@@ -1471,6 +1546,9 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             MethodInfo* mi = symtab_find_method_in_class(ci, mname);
             if (ci && !mi) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", ci->name, mname);
+            }
+            if (mi && mi->method_is_static) {
+                codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call static method '%s.%s' via an instance; use the class name", ci->name, mname);
             }
             if (mi && ci && !member_visible(ctx, ci->name, mi->is_private)) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call private method '%s.%s'", ci->name, mname);
@@ -2121,6 +2199,11 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
             break;
         case AST_IDENT: {
             if (strcmp(node->ast_token.text, "this") == 0) {
+                if (ctx->current_method_is_static) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'this' cannot be used in a static method");
+                    fprintf(ctx->out, "0 /* this in static method */");
+                    break;
+                }
                 if (ctx->is_interface_default_method) {
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'this' is not allowed in interface default method");
                 }
@@ -2835,6 +2918,10 @@ static int call_arg_consumed_by_weak_iface(AstNode* call, int arg_index) {
     if (callee->ast_kind == AST_MEMBER_ACCESS) {
         AstNode* obj = callee->ast_children[0];
         const char* mname = callee->ast_token.text;
+        MethodInfo* smi = static_call_method(callee, NULL);
+        if (smi && smi->method_is_static) {
+            if (arg_index < smi->param_count) pt = &smi->param_types[arg_index];
+        } else {
         resolve_type(obj);
         if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
             ClassInfo* ci = obj->ast_resolved_type.type_arg_count > 0
@@ -2846,6 +2933,7 @@ static int call_arg_consumed_by_weak_iface(AstNode* call, int arg_index) {
             InterfaceInfo* ii = symtab_find_interface(obj->ast_resolved_type.class_name);
             InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, mname) : NULL;
             if (im && arg_index < im->param_count) pt = &im->param_types[arg_index];
+        }
         }
     } else if (callee->ast_kind == AST_IDENT) {
         FuncInfo* fi = symtab_find_func(callee->ast_token.text);
@@ -5119,6 +5207,9 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci) 
         for (j = 0; j < ii->method_count; j++) {
             InterfaceMethodInfo* im = &ii->methods[j];
             MethodInfo* cls_m = symtab_find_method_in_class(ci, im->name);
+            /* A static method has no receiver and cannot implement an
+               interface method (symtab_validate_impls rejects this). */
+            if (cls_m && cls_m->method_is_static) cls_m = NULL;
             if (cls_m) {
                 char rbuf[128];
                 c_type_str(&im->return_type, rbuf, sizeof(rbuf));
@@ -5157,6 +5248,7 @@ static void codegen_class_interface_vtables(CodegenContext* ctx, ClassInfo* ci) 
         for (j = 0; j < ii->method_count; j++) {
             InterfaceMethodInfo* im = &ii->methods[j];
             MethodInfo* cls_m = symtab_find_method_in_class(ci, im->name);
+            if (cls_m && cls_m->method_is_static) cls_m = NULL;
             fprintf(ctx->out, "    .%s = ", im->name);
             if (cls_m) {
                 fprintf(ctx->out, "%s_%s_%s", class_c, iface_name, im->name);
@@ -5386,11 +5478,18 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     }
     char ret_buf[128];
     c_type_str(&node->ast_resolved_type, ret_buf, sizeof(ret_buf));
-    fprintf(ctx->out, "%s %s_%s(%s* thiz", ret_buf, class_name, node->ast_token.text, class_name);
+    int is_static = node->ast_is_static;
+    if (is_static) {
+        /* Static methods have no receiver parameter. */
+        fprintf(ctx->out, "%s %s_%s(", ret_buf, class_name, node->ast_token.text);
+    } else {
+        fprintf(ctx->out, "%s %s_%s(%s* thiz", ret_buf, class_name, node->ast_token.text, class_name);
+    }
     AstNode* params = NULL; AstNode* body = NULL;
     if (node->ast_child_count == 2) { params = node->ast_children[0]; body = node->ast_children[1]; }
     else { body = node->ast_children[0]; }
-    { AstNode* p = params; while (p) { fprintf(ctx->out, ", ");
+    if (is_static && !params) fprintf(ctx->out, "void");
+    { AstNode* p = params; int pfirst = is_static; while (p) { if (!pfirst) fprintf(ctx->out, ", "); pfirst = 0;
         if (p->ast_resolved_type.is_array && !type_is_ref(&p->ast_resolved_type)) {
             codegen_report_error(ctx, p->ast_token.line, p->ast_token.col, "array parameter '%s' must be ref", p->ast_token.text);
         }
@@ -5410,10 +5509,14 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     ctx->return_type = node->ast_resolved_type;
     ClassInfo* prev_class = ctx->current_class;
     ctx->current_class = symtab_find_class(class_name);
-    Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
-    thiz_type.type_kind = TYPE_CLASS;
-    CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
-    thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
+    int prev_static = ctx->current_method_is_static;
+    ctx->current_method_is_static = is_static;
+    if (!is_static) {
+        Type thiz_type; memset(&thiz_type, 0, sizeof(thiz_type));
+        thiz_type.type_kind = TYPE_CLASS;
+        CHECK_STRSCPY(strscpy(thiz_type.class_name, class_name, sizeof(thiz_type.class_name)), "class name too long");
+        thiz_type.is_pointer = 1; symtab_insert("this", thiz_type);
+    }
     { AstNode* p = params; while (p) { symtab_insert(p->ast_token.text, p->ast_resolved_type);
         if (p->ast_resolved_type.is_weak && p->ast_resolved_type.type_kind == TYPE_INTERFACE) {
             cleanup_add_weak_interface(ctx, p->ast_token.text);
@@ -5449,6 +5552,7 @@ static void codegen_method_decl(CodegenContext* ctx, AstNode* node, const char* 
     fprintf(ctx->out, "}\n\n");
     ctx->return_type = prev_ret;
     ctx->current_class = prev_class;
+    ctx->current_method_is_static = prev_static;
 }
 static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     const char* func_name = node->ast_token.text;

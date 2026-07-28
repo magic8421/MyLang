@@ -58,6 +58,15 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Enforcement is compile-time only: `codegen_member_access` (fields) and `codegen_call` (methods) check against `CodegenContext.current_class`, which `codegen_method_decl` sets while emitting a method body (NULL in free functions and interface default methods). f-string interpolation rejects a private `toString`.
 - Generated C is unchanged: visibility is not enforced at the C level, and compiler-generated code (vtables, thunks, destructors) is exempt.
 
+## Static Methods
+- `static` on a class method (parsed in the same modifier loop as `native`/`override`/`public`/`private`): the method has no `this` receiver and is called only via the class name, `ClassName.method(args)`.
+- Calling a static method via an instance, or an instance method via the class name, is a compile error. Using `this` inside a static method is a compile error (instance fields are unreachable because they require `this.`).
+- Not supported: static fields, `static` + `native`/`override` (compile errors), static methods on interfaces, and static calls on generic classes (no call syntax; the flag is still cloned into instantiations).
+- Storage: `MethodInfo.method_is_static`; the parser also tags the `AST_FUNC_DECL` node (`ast_is_static`, copied by `ast_clone`). Generic instantiations clone the flag.
+- Dispatch: `static_call_method()` in codegen resolves a `ClassName.m(...)` callee (a member access on a bare identifier that is not an in-scope variable) to the class method; `resolve_type`, `materialize_call_defaults`, `codegen_call`, and `call_arg_consumed_by_weak_iface` all route through it. A local variable shadows a same-named class and reverts to instance dispatch.
+- Emission: `codegen_method_decl` omits the implicit `ClassName* thiz` parameter for static methods and does not register `this` in the method scope; `CodegenContext.current_method_is_static` drives the `'this' cannot be used in a static method` error. `current_class` is still set so private static members are visible inside the class.
+- Static methods never implement interface methods: `symtab_validate_impls` and the vtable/thunk emission skip them.
+
 ## Compound Assignment Operators
 - Supported: `+=`, `-=`, `*=`, `/=`, and the bitwise forms `&=`, `|=`, `^=`, `<<=`, `>>=`.
 - Arithmetic forms accept primitive numeric types (`i8/i16/i32/i64`, `u8/u16/u32/u64`, `f32/f64`); bitwise forms require integer types (no floats, no bool).

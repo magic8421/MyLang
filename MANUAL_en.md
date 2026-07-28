@@ -88,7 +88,7 @@ class struct interface object
 ref weak unowned const
 if else while for return break continue match
 new this as native override
-public private
+public private static
 true false null
 ```
 
@@ -664,6 +664,41 @@ Rules (C++ style):
 - A method implementing an interface method must be `public`; `private` + `override`
   is a compile error.
 - Enforcement is compile-time only and costs nothing at runtime.
+
+### 7.4 Static Methods
+
+A class method can be marked `static`. Static methods belong to the class itself
+rather than to an instance, which makes them a good fit for factory methods:
+
+```mylang
+class Point {
+    i32 x;
+    i32 y;
+
+    static Point create(i32 x, i32 y) {
+        Point p = new Point;
+        p.x = x;
+        p.y = y;
+        return p;
+    }
+}
+
+Point p = Point.create(1, 2);   // called via the class name
+```
+
+Rules:
+
+- A static method is called only via the class name: `ClassName.method(args)`.
+  Calling it via an instance (`p.create(...)`) is a compile error, and calling an
+  instance method via the class name is a compile error too.
+- There is no `this` inside a static method; using `this` or an instance field
+  is a compile error.
+- `static` combines with access modifiers (`public static`, `private static`);
+  a `private static` method is callable only inside the class.
+- `static` cannot be combined with `native` or `override`, static fields are not
+  supported, and interfaces cannot declare static methods.
+- Default parameter values work the same as on instance methods. Static methods
+  on generic classes are not supported.
 
 ---
 

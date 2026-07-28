@@ -1496,10 +1496,14 @@ static AstNode* parse_class_decl(Parser* p) {
         int is_override = 0;
         int is_private = 0;
         int is_public = 0;
+        int is_static = 0;
         while (check(p, TOK_KW_NATIVE) || check(p, TOK_KW_OVERRIDE) ||
-               check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE)) {
+               check(p, TOK_KW_PUBLIC) || check(p, TOK_KW_PRIVATE) ||
+               check(p, TOK_KW_STATIC)) {
             if (check(p, TOK_KW_NATIVE)) {
                 is_native = 1; advance(p);
+            } else if (check(p, TOK_KW_STATIC)) {
+                is_static = 1; advance(p);
             } else if (check(p, TOK_KW_OVERRIDE)) {
                 is_override = 1; advance(p);
             } else {
@@ -1532,19 +1536,32 @@ static AstNode* parse_class_decl(Parser* p) {
                 p->had_error = 1;
             }
 
+            if (is_static && is_native) {
+                fprintf(stderr, "%s(%d,%d): error: method '%s' cannot be both static and native\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+            if (is_static && is_override) {
+                fprintf(stderr, "%s(%d,%d): error: method '%s' cannot be both static and override\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+
             symtab_enter_scope();
 
-            /* register implicit this */
-            Type this_type = type_make_user(TYPE_CLASS, name.text);
-            this_type.is_pointer = 1;
-            if (info->is_generic) {
-                int k;
-                for (k = 0; k < info->generic_param_count && k < MAX_TYPE_ARGS; k++) {
-                    Type param = type_make_param(info->generic_params[k]);
-                    type_set_arg(&this_type, k, &param);
+            /* register implicit this (static methods have no receiver) */
+            if (!is_static) {
+                Type this_type = type_make_user(TYPE_CLASS, name.text);
+                this_type.is_pointer = 1;
+                if (info->is_generic) {
+                    int k;
+                    for (k = 0; k < info->generic_param_count && k < MAX_TYPE_ARGS; k++) {
+                        Type param = type_make_param(info->generic_params[k]);
+                        type_set_arg(&this_type, k, &param);
+                    }
                 }
+                symtab_insert("this", this_type);
             }
-            symtab_insert("this", this_type);
 
             AstNode* mparams = NULL;
             int mc = 0;
@@ -1628,11 +1645,12 @@ static AstNode* parse_class_decl(Parser* p) {
                 p->had_error = 1;
             }
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, mpd, is_native, is_override, is_private);
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, mpd, is_native, is_override, is_private, is_static);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
             mnode->ast_is_native = is_native;
+            mnode->ast_is_static = is_static;
             if (mparams) { ast_add_child(mnode, mparams); }
             ast_add_child(mnode, mbody);
             methods = ast_append_list(methods, mnode);
@@ -1641,6 +1659,11 @@ static AstNode* parse_class_decl(Parser* p) {
             /* FIELD */
             if (ft.is_const) {
                 fprintf(stderr, "%s(%d,%d): error: const fields are not supported\n",
+                        parser_filename(p), fname.line, fname.col);
+                p->had_error = 1;
+            }
+            if (is_static) {
+                fprintf(stderr, "%s(%d,%d): error: static fields are not supported\n",
                         parser_filename(p), fname.line, fname.col);
                 p->had_error = 1;
             }

@@ -114,6 +114,7 @@ struct AstNode {
     char     ast_temp_name[NAME_BUF_SIZE];
     char     ast_match_var[NAME_BUF_SIZE];
     int      ast_is_native;
+    int      ast_is_static;
     int      xor_str_id;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */

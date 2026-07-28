@@ -23,6 +23,7 @@ typedef struct MethodInfo {
     int  is_native;
     int  is_override;
     int  is_private;
+    int  method_is_static;
     struct MethodInfo* next;
 } MethodInfo;
 
@@ -126,7 +127,8 @@ MethodInfo* symtab_find_struct_method(StructInfo* st, const char* method_name);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
                               AstNode* const pd[],
-                              int is_native, int is_override, int is_private);
+                              int is_native, int is_override, int is_private,
+                              int is_static);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {
