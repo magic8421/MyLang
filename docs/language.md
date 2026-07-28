@@ -148,6 +148,38 @@ Detailed reference; the rules in AGENTS.md still apply.
 - At the call site the argument must be a local variable and the `ref` keyword is **required** (e.g. `inc(ref a)`, `fill(ref arr)`).
 - Codegen emits `&var` for normal locals and bare `var` when the argument itself is already a `ref` parameter.
 
+## Default Parameter Values
+- Trailing parameters of free functions, class methods, struct methods, and
+  interface methods may declare a default: `void greet(string name, string greeting = "hello")`.
+- Defaults are **literals only**: integer, float, char, string, `true`/`false`,
+  `null`. Anything else (identifiers, `this`, expressions) is a parse error.
+  The literal must be compatible with the parameter type: bool literals only
+  for `bool`, numeric literals only for numeric types, string literals only
+  for `string`, and `null` only for reference types (class/interface/object,
+  weak included; never unowned or value types).
+- Trailing rule: once a parameter has a default, every following parameter
+  must have one. `ref` parameters cannot have defaults.
+- The parser stores the literal AST node on the signature
+  (`MethodInfo`/`InterfaceMethodInfo`/`FuncInfo.param_defaults`, NULL = no
+  default); generic class instantiations share the nodes (literals contain no
+  generic type references, so no substitution is needed).
+- Calls may omit trailing arguments that have defaults. Defaults bind to the
+  **static type** at the call site (C# semantics): an interface-typed call
+  uses the interface method's defaults, a class-typed call the class
+  method's. `symtab_validate_impls` does not compare defaults.
+- Codegen clones the stored literal into the call's argument list
+  (`materialize_call_defaults`, per call site) before the f-string/subexpr/
+  guard lowering passes, so filled arguments flow through the normal
+  argument paths; owned string defaults get a guarded `_gN` temporary and a
+  cleanup entry exactly like source-written literals. Under `--xor-strings`
+  the shared nodes are registered with the encryption table up front
+  (`codegen_collect_xor_defaults`) and clones reuse the encrypted array.
+- The same count logic enforces arity: too few or too many arguments for a
+  user function or method is now a compile error
+  (`codegen_check_call_arity`); previously only the MSVC compile of the
+  generated C failed.
+- Named arguments (`greet(times: 3)`) are planned but not implemented.
+
 ## Struct Value Types
 - Structs are stack-allocated value types; assignment copies the whole struct.
 - `new StructName` is illegal.

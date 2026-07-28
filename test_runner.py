@@ -4594,6 +4594,139 @@ i32 main() {
 }
 """, 4321),
 
+    ("default_params_func", """
+i32 add3(i32 a, i32 b = 10, i32 c = 100) {
+    return a + b + c;
+}
+i32 main() {
+    i32 full = add3(1, 2, 3);      // 6
+    i32 partial = add3(1, 2);      // 103
+    i32 minimal = add3(1);         // 111
+    if (full != 6) { return 1; }
+    if (partial != 103) { return 2; }
+    if (minimal != 111) { return 3; }
+    return full + partial + minimal;
+}
+""", 220),
+
+    ("default_params_class_method", """
+class Acc {
+    i32 total;
+    void add(i32 v, i32 mul = 2) { this.total = this.total + v * mul; }
+    i32 get() { return this.total; }
+}
+i32 main() {
+    Acc a = new Acc;
+    a.add(5);        // +10
+    a.add(5, 3);     // +15
+    return a.get();
+}
+""", 25),
+
+    ("default_params_struct_method", """
+struct Counter {
+    i32 n;
+    void bump(i32 by = 1) { this.n = this.n + by; }
+}
+i32 main() {
+    Counter c;
+    c.n = 0;
+    c.bump();
+    c.bump();
+    c.bump(10);
+    return c.n;
+}
+""", 12),
+
+    ("default_params_string", """
+void greet(string name, string greeting = "hello") {
+    print(f"{greeting} {name}");
+}
+i32 main() {
+    greet("bob");
+    greet("bob", "hi");
+    greet("ann");
+    return 0;
+}
+""", (0, "hello bob\nhi bob\nhello ann\n")),
+
+    ("default_params_null", """
+class Node {
+    i32 v;
+}
+i32 unwrap(Node n = null, i32 fallback = 42) {
+    if (n == null) { return fallback; }
+    return n.v;
+}
+i32 main() {
+    Node x = new Node;
+    x.v = 7;
+    i32 a = unwrap();          // 42 (null default)
+    i32 b = unwrap(x);         // 7
+    i32 c = unwrap(null, 5);   // 5
+    if (a != 42) { return 1; }
+    if (b != 7) { return 2; }
+    if (c != 5) { return 3; }
+    return a + b + c;
+}
+""", 54),
+
+    ("default_params_all_optional", """
+i32 defaults(i32 a = 1, bool b = true, i32 c = 3) {
+    if (!b) { return 0; }
+    return a + c;
+}
+i32 main() {
+    return defaults();
+}
+""", 4),
+
+    ("default_params_generic", """
+class Box<T> {
+    T value;
+    void set(T v, i32 tag = 7) {
+        this.value = v;
+    }
+    T get() { return this.value; }
+    i32 label(i32 suffix = 3) { return suffix; }
+}
+i32 main() {
+    Box<i32> b = new Box<i32>;
+    b.set(10);
+    Box<string> s = new Box<string>;
+    s.set("x", 1);
+    return b.get() + b.label() + b.label(1);
+}
+""", 14),
+
+    ("default_params_interface", """
+interface IGreeter {
+    string name(i32 id = 5);
+}
+class Greeter : IGreeter {
+    string name(i32 id = 9) {
+        return f"g{id}";
+    }
+}
+i32 main() {
+    Greeter g = new Greeter;
+    IGreeter ig = g;
+    print(ig.name());
+    print(g.name());
+    print(ig.name(1));
+    return 0;
+}
+""", (0, "g5\ng9\ng1\n")),
+
+    ("default_params_arity_still_works", """
+i32 f(i32 a, i32 b = 2) {
+    return a + b;
+}
+i32 main() {
+    return f(40);
+}
+""", 42),
+
 
 ]
 
@@ -5683,6 +5816,107 @@ i32 main() {
     return s;
 }
 """, "expected '{' for for body"),
+
+    ("bad_default_not_literal", """
+i32 f(i32 x = y) {
+    return x;
+}
+i32 main() {
+    return 0;
+}
+""", "default parameter value must be a literal"),
+
+    ("bad_default_trailing", """
+i32 f(i32 a = 1, i32 b) {
+    return a + b;
+}
+i32 main() {
+    return 0;
+}
+""", "parameter 'b' must have a default value because a previous parameter has one"),
+
+    ("bad_default_ref_param", """
+void f(ref i32 x = 1) {
+}
+i32 main() {
+    return 0;
+}
+""", "ref parameters cannot have default values"),
+
+    ("bad_default_bool_for_int", """
+i32 f(i32 x = true) {
+    return x;
+}
+i32 main() {
+    return 0;
+}
+""", "default value for parameter 'x' does not match the parameter type"),
+
+    ("bad_default_string_for_int", """
+i32 f(i32 x = "s") {
+    return x;
+}
+i32 main() {
+    return 0;
+}
+""", "default value for parameter 'x' does not match the parameter type"),
+
+    ("bad_default_null_for_int", """
+i32 f(i32 x = null) {
+    return x;
+}
+i32 main() {
+    return 0;
+}
+""", "default value for parameter 'x' does not match the parameter type"),
+
+    ("bad_default_int_for_bool", """
+bool f(bool x = 1) {
+    return x;
+}
+i32 main() {
+    return 0;
+}
+""", "default value for parameter 'x' does not match the parameter type"),
+
+    ("bad_call_too_few_args", """
+i32 f(i32 a, i32 b) {
+    return a + b;
+}
+i32 main() {
+    return f(1);
+}
+""", "too few arguments for 'f' (expected at least 2, got 1)"),
+
+    ("bad_call_too_many_args", """
+i32 f(i32 a, i32 b = 2) {
+    return a + b;
+}
+i32 main() {
+    return f(1, 2, 3);
+}
+""", "too many arguments for 'f' (expected 2, got 3)"),
+
+    ("bad_method_call_too_few_args", """
+class C {
+    i32 v;
+    i32 sum(i32 a, i32 b) { return a + b; }
+}
+i32 main() {
+    C c = new C;
+    return c.sum(1);
+}
+""", "too few arguments for 'C.sum' (expected at least 2, got 1)"),
+
+    ("bad_default_method_not_literal", """
+class C {
+    i32 v;
+    i32 f(i32 x = this.v) { return x; }
+}
+i32 main() {
+    return 0;
+}
+""", "default parameter value must be a literal"),
 
 ]
 

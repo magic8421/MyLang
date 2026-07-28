@@ -16,6 +16,10 @@ typedef struct MethodInfo {
     int  param_count;
     char param_names[MAX_PARAMS][NAME_BUF_SIZE];
     Type param_types[MAX_PARAMS];
+    /* Literal AST node for each parameter's default value, NULL when the
+       parameter has none.  Nodes are shared with the declaring AST and are
+       never freed (one-shot compiler). */
+    AstNode* param_defaults[MAX_PARAMS];
     int  is_native;
     int  is_override;
     int  is_private;
@@ -28,6 +32,8 @@ typedef struct InterfaceMethodInfo {
     int  param_count;
     char param_names[MAX_PARAMS][NAME_BUF_SIZE];
     Type param_types[MAX_PARAMS];
+    /* Literal AST node for each parameter's default value, NULL when none. */
+    AstNode* param_defaults[MAX_PARAMS];
     AstNode* interface_method_default_body;
     int  interface_method_line;
 } InterfaceMethodInfo;
@@ -114,10 +120,12 @@ StructInfo* symtab_find_struct(const char* name);
 StructInfo* symtab_first_struct(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
-                                     int pc, const char pn[][64], const Type pt[]);
+                                     int pc, const char pn[][64], const Type pt[],
+                                     AstNode* const pd[]);
 MethodInfo* symtab_find_struct_method(StructInfo* st, const char* method_name);
 void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
+                              AstNode* const pd[],
                               int is_native, int is_override, int is_private);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
@@ -127,13 +135,15 @@ typedef struct FuncInfo {
     int  param_count;
     char param_names[MAX_PARAMS][NAME_BUF_SIZE];
     Type param_types[MAX_PARAMS];
+    /* Literal AST node for each parameter's default value, NULL when none. */
+    AstNode* param_defaults[MAX_PARAMS];
     int  is_builtin;
     struct FuncInfo* next;
 } FuncInfo;
 
 void       symtab_add_func(const char* name, Type ret_type,
                            int pc, const char pn[][64], const Type pt[],
-                           int is_builtin);
+                           AstNode* const pd[], int is_builtin);
 FuncInfo*  symtab_find_func(const char* name);
 FuncInfo*  symtab_first_func(void);
 
@@ -142,6 +152,7 @@ InterfaceInfo* symtab_find_interface(const char* name);
 int  symtab_add_interface_method(InterfaceInfo* iface, const char* name,
                                  Type ret_type, int pc,
                                  const char pn[][64], const Type pt[],
+                                 AstNode* const pd[],
                                  AstNode* default_body, int line);
 InterfaceMethodInfo* symtab_find_interface_method(InterfaceInfo* iface,
                                                    const char* method_name);

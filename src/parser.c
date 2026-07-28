@@ -1121,6 +1121,66 @@ static AstNode* parse_stmt(Parser* p) {
 }
 
 
+/* Parses and validates a default parameter value; the current token must be
+   the '=' after the parameter name.  Defaults are literals only (integer,
+   float, char, string, true/false, null) so they can be re-emitted at any
+   call site without scope or side-effect concerns.  Returns the literal
+   node, or NULL after reporting an error. */
+static AstNode* parse_param_default(Parser* p, const Type* pt, const char* param_name, int is_ref) {
+    Token eq = p->current;
+    advance(p); /* consume = */
+    if (is_ref) {
+        fprintf(stderr, "%s(%d,%d): error: ref parameters cannot have default values\n",
+                parser_filename(p), eq.line, eq.col);
+        p->had_error = 1;
+    }
+    AstNode* lit = parse_primary(p);
+    if (!lit) return NULL;
+    int is_literal = lit->ast_kind == AST_INT_LIT || lit->ast_kind == AST_FLOAT_LIT ||
+                     lit->ast_kind == AST_CHAR_LIT || lit->ast_kind == AST_STRING_LIT ||
+                     lit->ast_kind == AST_BOOL_LIT || lit->ast_kind == AST_NULL;
+    if (!is_literal) {
+        fprintf(stderr, "%s(%d,%d): error: default parameter value must be a literal\n",
+                parser_filename(p), lit->ast_token.line, lit->ast_token.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    int ok = 1;
+    switch (lit->ast_kind) {
+        case AST_BOOL_LIT:
+            /* bool and numeric types do not implicitly convert. */
+            ok = !pt->is_array && pt->type_kind == TYPE_BOOL;
+            break;
+        case AST_INT_LIT:
+        case AST_FLOAT_LIT:
+        case AST_CHAR_LIT:
+            /* Numeric literals default to numeric parameters only. */
+            ok = !pt->is_array && pt->type_kind >= TYPE_I8 && pt->type_kind <= TYPE_F64;
+            break;
+        case AST_STRING_LIT:
+            ok = !pt->is_array && pt->type_kind == TYPE_CLASS &&
+                 strcmp(pt->class_name, "String") == 0;
+            break;
+        case AST_NULL:
+            /* Same categories as a null argument at the call site: class,
+               interface, and object references (weak included); unowned
+               references and value types cannot be null. */
+            ok = !pt->is_array && !pt->is_unowned &&
+                 (pt->type_kind == TYPE_CLASS || pt->type_kind == TYPE_INTERFACE ||
+                  pt->type_kind == TYPE_OBJECT);
+            break;
+        default:
+            break;
+    }
+    if (!ok) {
+        fprintf(stderr, "%s(%d,%d): error: default value for parameter '%s' does not match the parameter type\n",
+                parser_filename(p), lit->ast_token.line, lit->ast_token.col, param_name);
+        p->had_error = 1;
+        return NULL;
+    }
+    return lit;
+}
+
 static AstNode* parse_struct_decl(Parser* p) {
     advance(p); /* struct */
 
@@ -1205,6 +1265,8 @@ static AstNode* parse_struct_decl(Parser* p) {
             int mc = 0;
             char mpn[MAX_PARAMS][NAME_BUF_SIZE];
             Type mpt[MAX_PARAMS];
+            AstNode* mpd[MAX_PARAMS];
+            int seen_default = 0;
 
             if (!check(p, TOK_RPAREN)) {
                 do {
@@ -1226,6 +1288,15 @@ static AstNode* parse_struct_decl(Parser* p) {
                         break;
                     }
                     Token pn = p->current; advance(p);
+                    AstNode* pdefault = NULL;
+                    if (check(p, TOK_ASSIGN)) {
+                        pdefault = parse_param_default(p, &pt, pn.text, is_ref);
+                        seen_default = 1;
+                    } else if (seen_default) {
+                        fprintf(stderr, "%s(%d,%d): error: parameter '%s' must have a default value because a previous parameter has one\n",
+                                parser_filename(p), pn.line, pn.col, pn.text);
+                        p->had_error = 1;
+                    }
                     AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
                     pd->ast_resolved_type = pt;
                     symtab_insert(pn.text, pt);
@@ -1233,6 +1304,7 @@ static AstNode* parse_struct_decl(Parser* p) {
                     if (mc < MAX_PARAMS) {
                         CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                         mpt[mc] = pt;
+                        mpd[mc] = pdefault;
                         mc++;
                     }
                 } while (check(p, TOK_COMMA) && (advance(p), 1));
@@ -1253,7 +1325,7 @@ static AstNode* parse_struct_decl(Parser* p) {
             AstNode* mbody = parse_stmt(p);
             symtab_exit_scope();
 
-            symtab_add_struct_method(info, fname.text, ft, mc, mpn, mpt);
+            symtab_add_struct_method(info, fname.text, ft, mc, mpn, mpt, mpd);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
@@ -1478,6 +1550,8 @@ static AstNode* parse_class_decl(Parser* p) {
             int mc = 0;
             char mpn[MAX_PARAMS][NAME_BUF_SIZE];
             Type mpt[MAX_PARAMS];
+            AstNode* mpd[MAX_PARAMS];
+            int seen_default = 0;
 
             if (!check(p, TOK_RPAREN)) {
                 do {
@@ -1499,6 +1573,15 @@ static AstNode* parse_class_decl(Parser* p) {
                         break;
                     }
                     Token pn = p->current; advance(p);
+                    AstNode* pdefault = NULL;
+                    if (check(p, TOK_ASSIGN)) {
+                        pdefault = parse_param_default(p, &pt, pn.text, is_ref);
+                        seen_default = 1;
+                    } else if (seen_default) {
+                        fprintf(stderr, "%s(%d,%d): error: parameter '%s' must have a default value because a previous parameter has one\n",
+                                parser_filename(p), pn.line, pn.col, pn.text);
+                        p->had_error = 1;
+                    }
                     AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
                     pd->ast_resolved_type = pt;
                     symtab_insert(pn.text, pt);
@@ -1506,6 +1589,7 @@ static AstNode* parse_class_decl(Parser* p) {
                     if (mc < MAX_PARAMS) {
                         CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                         mpt[mc] = pt;
+                        mpd[mc] = pdefault;
                         mc++;
                     }
                 } while (check(p, TOK_COMMA) && (advance(p), 1));
@@ -1544,7 +1628,7 @@ static AstNode* parse_class_decl(Parser* p) {
                 p->had_error = 1;
             }
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, is_native, is_override, is_private);
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, mpd, is_native, is_override, is_private);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;
@@ -1661,6 +1745,8 @@ static AstNode* parse_interface_decl(Parser* p) {
         int mc = 0;
         char mpn[MAX_PARAMS][NAME_BUF_SIZE];
         Type mpt[MAX_PARAMS];
+        AstNode* mpd[MAX_PARAMS];
+        int seen_default = 0;
 
         if (!check(p, TOK_RPAREN)) {
             do {
@@ -1682,9 +1768,19 @@ static AstNode* parse_interface_decl(Parser* p) {
                     break;
                 }
                 Token pn = p->current; advance(p);
+                AstNode* pdefault = NULL;
+                if (check(p, TOK_ASSIGN)) {
+                    pdefault = parse_param_default(p, &pt, pn.text, is_ref);
+                    seen_default = 1;
+                } else if (seen_default) {
+                    fprintf(stderr, "%s(%d,%d): error: parameter '%s' must have a default value because a previous parameter has one\n",
+                            parser_filename(p), pn.line, pn.col, pn.text);
+                    p->had_error = 1;
+                }
                 if (mc < MAX_PARAMS) {
                     CHECK_STRSCPY(strscpy(mpn[mc], pn.text, sizeof(mpn[mc])), "parameter name too long");
                     mpt[mc] = pt;
+                    mpd[mc] = pdefault;
                     mc++;
                 }
             } while (check(p, TOK_COMMA) && (advance(p), 1));
@@ -1726,7 +1822,7 @@ static AstNode* parse_interface_decl(Parser* p) {
             break;
         }
 
-        if (symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt, default_body, mname.line) != 0) {
+        if (symtab_add_interface_method(info, mname.text, ret_type, mc, mpn, mpt, mpd, default_body, mname.line) != 0) {
             fprintf(stderr, "%s(%d,%d): error: too many methods in interface '%s' (max %d)\n",
                     parser_filename(p), mname.line, mname.col, name.text, MAX_IFACE_METHODS);
             p->had_error = 1;
@@ -1753,6 +1849,8 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     int pc = 0;
     char pn[MAX_PARAMS][NAME_BUF_SIZE];
     Type pt[MAX_PARAMS];
+    AstNode* pd[MAX_PARAMS];
+    int seen_default = 0;
     if (!check(p, TOK_RPAREN)) {
         do {
             int is_ref = 0;
@@ -1773,13 +1871,23 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
                 break;
             }
             Token pname = p->current; advance(p);
-            AstNode* pd = ast_new_node(AST_VAR_DECL, pname);
-            pd->ast_resolved_type = param_type;
+            AstNode* pdefault = NULL;
+            if (check(p, TOK_ASSIGN)) {
+                pdefault = parse_param_default(p, &param_type, pname.text, is_ref);
+                seen_default = 1;
+            } else if (seen_default) {
+                fprintf(stderr, "%s(%d,%d): error: parameter '%s' must have a default value because a previous parameter has one\n",
+                        parser_filename(p), pname.line, pname.col, pname.text);
+                p->had_error = 1;
+            }
+            AstNode* pdecl = ast_new_node(AST_VAR_DECL, pname);
+            pdecl->ast_resolved_type = param_type;
             symtab_insert(pname.text, param_type);
-            params = ast_append_list(params, pd);
+            params = ast_append_list(params, pdecl);
             if (pc < MAX_PARAMS) {
                 CHECK_STRSCPY(strscpy(pn[pc], pname.text, sizeof(pn[pc])), "parameter name too long");
                 pt[pc] = param_type;
+                pd[pc] = pdefault;
                 pc++;
             }
         } while (check(p, TOK_COMMA) && (advance(p), 1));
@@ -1805,7 +1913,7 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     AstNode* body = parse_stmt(p);
     symtab_exit_scope();
 
-    symtab_add_func(name.text, ret_type, pc, pn, pt, 0);
+    symtab_add_func(name.text, ret_type, pc, pn, pt, pd, 0);
 
     AstNode* node = ast_new_node(AST_FUNC_DECL, name);
     node->ast_resolved_type = ret_type;

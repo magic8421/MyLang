@@ -1180,6 +1180,130 @@ static int is_array_method_name(const char* s) {
            strcmp(s, "move_to") == 0 || strcmp(s, "copy_to") == 0;
 }
 
+/* Counts the arguments of a call node (the children[1] next-chain). */
+static int count_call_args(AstNode* node) {
+    int count = 0;
+    AstNode* a = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    while (a) {
+        count++;
+        a = a->next;
+    }
+    return count;
+}
+
+/* Appends clones of the stored default-value literals for any missing
+   trailing arguments of a user call (free function, class/struct/interface
+   method).  Filled arguments then flow through the normal argument paths
+   (guarded temporaries for owned strings, per-argument conversions) exactly
+   like source-written arguments.  Idempotent: a call that already supplies
+   all parameters is left unchanged. */
+static void materialize_call_defaults(AstNode* node) {
+    if (!node || node->ast_kind != AST_CALL || node->ast_child_count < 1) return;
+    AstNode* callee = node->ast_children[0];
+    int param_count = 0;
+    AstNode* const* param_defaults = NULL;
+    if (callee->ast_kind == AST_MEMBER_ACCESS) {
+        AstNode* obj = callee->ast_children[0];
+        const char* mname = callee->ast_token.text;
+        resolve_type(obj);
+        Type* ot = &obj->ast_resolved_type;
+        if (ot->is_array) return;   /* array methods have fixed signatures */
+        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;
+        if (ot->type_kind == TYPE_CLASS) {
+            ClassInfo* ci = ot->type_arg_count > 0
+                ? symtab_instantiate_class_from_type(ot)
+                : symtab_find_class(ot->class_name);
+            MethodInfo* mi = ci ? symtab_find_method_in_class(ci, mname) : NULL;
+            if (mi) {
+                param_count = mi->param_count;
+                param_defaults = mi->param_defaults;
+            }
+        } else if (ot->type_kind == TYPE_STRUCT) {
+            StructInfo* si = symtab_find_struct(ot->class_name);
+            MethodInfo* mi = si ? symtab_find_struct_method(si, mname) : NULL;
+            if (mi) {
+                param_count = mi->param_count;
+                param_defaults = mi->param_defaults;
+            }
+        } else if (ot->type_kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(ot->class_name);
+            InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, mname) : NULL;
+            if (im) {
+                param_count = im->param_count;
+                param_defaults = im->param_defaults;
+            }
+        }
+    } else if (callee->ast_kind == AST_IDENT) {
+        FuncInfo* fi = symtab_find_func(callee->ast_token.text);
+        if (fi && !fi->is_builtin) {
+            param_count = fi->param_count;
+            param_defaults = fi->param_defaults;
+        }
+    }
+    if (!param_defaults) return;
+
+    int actual = 0;
+    AstNode* tail = NULL;
+    if (node->ast_child_count > 1) {
+        AstNode* a = node->ast_children[1];
+        while (a) {
+            tail = a;
+            actual++;
+            a = a->next;
+        }
+    }
+    if (actual >= param_count) return;
+    int i;
+    for (i = actual; i < param_count; i++) {
+        AstNode* def = param_defaults[i];
+        /* Missing required parameter: reported by codegen_check_call_arity. */
+        if (!def) break;
+        /* Each call site gets its own clone so guard temporaries (assigned
+           per call site) never alias the shared signature node. */
+        AstNode* clone = ast_clone(def);
+        clone->xor_str_id = def->xor_str_id;
+        if (tail) {
+            tail->next = clone;
+        } else {
+            node->ast_children[1] = clone;
+            node->ast_child_count = 2;
+        }
+        tail = clone;
+    }
+}
+
+/* Fills default arguments for every user call in an expression tree.  Runs
+   before the f-string/subexpression/guard lowering passes so filled string
+   literals get a guarded temporary and cleanup entry like written ones. */
+static void materialize_call_defaults_walk(AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_CALL) materialize_call_defaults(node);
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        materialize_call_defaults_walk(node->ast_children[i]);
+    }
+    materialize_call_defaults_walk(node->next);
+}
+
+/* Validates the argument count of a user call against its signature and
+   reports an error on mismatch.  Default values make trailing parameters
+   optional, so 'required' counts the leading parameters without one. */
+static void codegen_check_call_arity(CodegenContext* ctx, int line, int col,
+                                     const char* display_name, int actual,
+                                     int param_count, AstNode* const* param_defaults) {
+    int required = 0;
+    while (required < param_count && !param_defaults[required]) required++;
+    if (actual < required) {
+        codegen_report_error(ctx, line, col,
+                             "too few arguments for '%s' (expected at least %d, got %d)",
+                             display_name, required, actual);
+    } else if (actual > param_count) {
+        codegen_report_error(ctx, line, col,
+                             "too many arguments for '%s' (expected %d, got %d)",
+                             display_name, param_count, actual);
+    }
+}
+
 static void emit_array_ref_arg(CodegenContext* ctx, AstNode* arg) {
     if (!arg || arg->ast_kind != AST_IDENT) {
         codegen_report_error(ctx, arg ? arg->ast_token.line : 0, arg ? arg->ast_token.col : 0, "array move/copy destination must be a local variable");
@@ -1302,6 +1426,9 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
 }
 
 static void codegen_call(CodegenContext* ctx, AstNode* node) {
+    /* Safety net: fill default arguments for call nodes that did not pass
+       through prepare_expression (all statement expressions do). */
+    materialize_call_defaults(node);
     /* method call: p.foo(...) ClassName_foo(p, ...) */
     if (node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
         AstNode* mem = node->ast_children[0];
@@ -1348,6 +1475,14 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             if (mi && ci && !member_visible(ctx, ci->name, mi->is_private)) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "cannot call private method '%s.%s'", ci->name, mname);
             }
+            if (mi && ci) {
+                char dbuf[160];
+                int dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", ci->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                codegen_check_call_arity(ctx, mem->ast_token.line, mem->ast_token.col,
+                                         dbuf, count_call_args(node),
+                                         mi->param_count, mi->param_defaults);
+            }
             const char* class_c = ci ? class_c_name(ci) : obj->ast_resolved_type.class_name;
             fprintf(ctx->out, "%s_%s(", class_c, mname);
             codegen_expr(ctx, obj);
@@ -1373,6 +1508,14 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             MethodInfo* mi = si ? symtab_find_struct_method(si, mname) : NULL;
             if (si && !mi) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", si->name, mname);
+            }
+            if (mi && si) {
+                char dbuf[160];
+                int dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", si->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                codegen_check_call_arity(ctx, mem->ast_token.line, mem->ast_token.col,
+                                         dbuf, count_call_args(node),
+                                         mi->param_count, mi->param_defaults);
             }
             if (obj->ast_kind != AST_IDENT && obj->ast_kind != AST_MEMBER_ACCESS &&
                 obj->ast_kind != AST_ARRAY_ACCESS) {
@@ -1400,6 +1543,14 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
             if (ii) im = symtab_find_interface_method(ii, mname);
             if (ii && !im) {
                 codegen_report_error(ctx, mem->ast_token.line, mem->ast_token.col, "method '%s.%s' does not exist", ii->name, mname);
+            }
+            if (im && ii) {
+                char dbuf[160];
+                int dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", ii->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                codegen_check_call_arity(ctx, mem->ast_token.line, mem->ast_token.col,
+                                         dbuf, count_call_args(node),
+                                         im->param_count, im->param_defaults);
             }
 
             fprintf(ctx->out, "(");
@@ -1641,6 +1792,11 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
     }
     fprintf(ctx->out, "(");
     AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    if (fi && !fi->is_builtin) {
+        codegen_check_call_arity(ctx, callee->ast_token.line, callee->ast_token.col,
+                                 callee->ast_token.text, count_call_args(node),
+                                 fi->param_count, fi->param_defaults);
+    }
     int first = 1;
     int idx = 0;
     while (args) {
@@ -1843,6 +1999,49 @@ static void codegen_collect_xor_strings(CodegenContext* ctx, AstNode* node) {
         codegen_collect_xor_strings(ctx, node->ast_children[i]);
     }
     codegen_collect_xor_strings(ctx, node->next);
+}
+
+/* Registers string literals stored as parameter default values with the
+   string-encryption table.  Defaults live in the symbol table, outside the
+   program AST, so codegen_collect_xor_strings never visits them; each
+   call-site clone copies the id from the shared node. */
+static void codegen_collect_xor_defaults(CodegenContext* ctx) {
+    extern ClassInfo* class_list;
+    extern InterfaceInfo* interface_list;
+    int i;
+    FuncInfo* fi;
+    for (fi = symtab_first_func(); fi; fi = fi->next) {
+        for (i = 0; i < fi->param_count && i < MAX_PARAMS; i++) {
+            codegen_collect_xor_strings(ctx, fi->param_defaults[i]);
+        }
+    }
+    ClassInfo* ci;
+    for (ci = class_list; ci; ci = ci->next) {
+        MethodInfo* mi;
+        for (mi = ci->methods; mi; mi = mi->next) {
+            for (i = 0; i < mi->param_count && i < MAX_PARAMS; i++) {
+                codegen_collect_xor_strings(ctx, mi->param_defaults[i]);
+            }
+        }
+    }
+    StructInfo* si;
+    for (si = symtab_first_struct(); si; si = si->next) {
+        MethodInfo* mi;
+        for (mi = si->methods; mi; mi = mi->next) {
+            for (i = 0; i < mi->param_count && i < MAX_PARAMS; i++) {
+                codegen_collect_xor_strings(ctx, mi->param_defaults[i]);
+            }
+        }
+    }
+    InterfaceInfo* ii;
+    for (ii = interface_list; ii; ii = ii->next) {
+        int j;
+        for (j = 0; j < ii->method_count; j++) {
+            for (i = 0; i < ii->methods[j].param_count && i < MAX_PARAMS; i++) {
+                codegen_collect_xor_strings(ctx, ii->methods[j].param_defaults[i]);
+            }
+        }
+    }
 }
 
 static void codegen_string_lit(CodegenContext* ctx, AstNode* node) {
@@ -3430,9 +3629,11 @@ static void indent_line(CodegenContext* ctx, int indent) {
     for (i = 0; i < indent; i++) fprintf(ctx->out, "    ");
 }
 
-/* Prepare an expression for codegen: lower any f-strings, then extract owned
-   subexpression temporaries and caller-side guarded temporaries. */
+/* Prepare an expression for codegen: fill default call arguments, lower any
+   f-strings, then extract owned subexpression temporaries and caller-side
+   guarded temporaries. */
 static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
+    materialize_call_defaults_walk(expr);
     emit_fstring_preambles(ctx, expr, indent);
     emit_subexpr_temps(ctx, expr, indent);
     emit_guarded_temp_decls(ctx, expr, indent);
@@ -3444,6 +3645,7 @@ static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
    not by an enclosing statement, so it must be released at the end of each
    iteration. */
 static void prepare_condition(CodegenContext* ctx, AstNode* cond, int indent) {
+    materialize_call_defaults_walk(cond);
     emit_fstring_preambles(ctx, cond, indent);
     emit_subexpr_temps(ctx, cond, indent);
     emit_guarded_temp_decls_impl(ctx, cond, indent, 0, 0);
@@ -5457,6 +5659,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
 
     if (ctx.xor_strings) {
         codegen_collect_xor_strings(&ctx, program);
+        codegen_collect_xor_defaults(&ctx);
         fprintf(ctx.out, "\n");
     }
 

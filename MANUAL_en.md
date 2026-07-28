@@ -492,14 +492,48 @@ Rules:
   itself be const.
 - Arrays are passed via `ref T[]` (see Section 11).
 
-### 6.3 Return-Value Conventions (from the user's side)
+### 6.3 Default Parameter Values
+
+Trailing parameters may declare a default value, and callers may omit them:
+
+```mylang
+void greet(string name, string greeting = "hello", i32 times = 1) {
+    for (i32 i = 0; i < times; i = i + 1) {
+        print(f"{greeting} {name}");
+    }
+}
+
+greet("bob");              // greeting = "hello", times = 1
+greet("bob", "hi");        // times = 1
+greet("bob", "hi", 3);     // all explicit
+```
+
+Rules:
+
+- Defaults work on free functions, class methods, struct methods, and
+  interface methods.
+- Default values are **literals only**: integer, float, char, string,
+  `true`/`false`, or `null`. The literal must match the parameter type
+  (e.g. no bool literal for an `i32` parameter, no `null` for value types;
+  `null` is allowed for class, interface, object, and weak parameters).
+- Once a parameter has a default, every parameter after it must have one too.
+- `ref` parameters cannot have defaults.
+- Omitting a non-defaulted argument, or passing more arguments than there are
+  parameters, is a compile error.
+- Defaults bind to the **static type** at the call site: calling through an
+  interface-typed variable uses the interface method's defaults, not the
+  implementing class's.
+- Named arguments (`greet(times: 3)`) are planned but not implemented yet;
+  arguments are always positional.
+
+### 6.4 Return-Value Conventions (from the user's side)
 
 - For class / interface return values, the callee handles reference counting; the caller
   receives a ready-to-use reference that can be stored, reassigned, and returned safely.
 - Arrays `T[]` **cannot** be returned by value or passed by value; use `ref T[]`
   parameters or `move_to` / `copy_to` instead.
 
-### 6.4 Multi-file Modules: import
+### 6.5 Multi-file Modules: import
 
 `import("path")` merges another source file's top-level declarations (classes,
 structs, interfaces, functions) into the current compilation unit:
