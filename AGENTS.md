@@ -11,6 +11,10 @@ file when working on that area:
   dispatch, native methods, cleanup, lexer/string safety, leak debugging,
   string encryption, known limitations.
 
+`MANUAL_en.md` is the user-facing language manual (syntax and usage from a
+language user's perspective); consult it for the intended surface syntax, and
+keep it in sync when language features change.
+
 ## Communication
 - During long-running tasks, occasionally give a brief progress update on what you are currently doing and any issues encountered.
 
