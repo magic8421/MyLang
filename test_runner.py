@@ -6060,6 +6060,31 @@ i32 main() {
 }
 """, "cannot be both static and native"),
 
+    ("bad_array_member", """
+i32 main() {
+    i32[] arr;
+    arr.push(1);
+    u64 n = arr.lenght;
+    return 0;
+}
+""", "array has no member 'lenght'"),
+
+    ("bad_class_field", """
+class Foo { i32 x; }
+i32 main() {
+    Foo f = new Foo;
+    return f.xyzzy;
+}
+""", "class 'Foo' has no field 'xyzzy'"),
+
+    ("bad_struct_field", """
+struct Pt { i32 x; i32 y; }
+i32 main() {
+    Pt p;
+    return p.zzz;
+}
+""", "struct 'Pt' has no field 'zzz'"),
+
 ]
 
 # ============================================================

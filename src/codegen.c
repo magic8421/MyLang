@@ -1932,7 +1932,14 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
         return;
     }
     if (obj->ast_resolved_type.is_array) {
-        /* Arrays are value-type MyArray structs; member access always uses '.'. */
+        /* Arrays are value-type MyArray structs; member access always uses '.'.
+           length and capacity are the only valid members (array operations
+           like push are dispatched as calls, not member access). */
+        if (strcmp(node->ast_token.text, "length") != 0 &&
+            strcmp(node->ast_token.text, "capacity") != 0) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                 "array has no member '%s'", node->ast_token.text);
+        }
         codegen_expr(ctx, obj);
         fprintf(ctx->out, ".%s", node->ast_token.text);
     } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
@@ -1944,7 +1951,8 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
         ct.is_unowned = 0;
 
         /* Access control: a private field is visible only inside methods of
-           the same class. */
+           the same class.  An unknown member name is an error here instead of
+           falling through to the C compiler. */
         {
             Type ot = obj->ast_resolved_type;
             ClassInfo* ci = NULL;
@@ -1954,14 +1962,20 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
                 ci = symtab_find_class(ot.class_name);
             }
             if (ci) {
+                int found = 0;
                 int i;
                 for (i = 0; i < ci->field_count; i++) {
                     if (strcmp(ci->field_names[i], node->ast_token.text) == 0) {
+                        found = 1;
                         if (!member_visible(ctx, ci->name, ci->field_private[i])) {
                             codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access private field '%s.%s'", ci->name, node->ast_token.text);
                         }
                         break;
                     }
+                }
+                if (!found) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                         "class '%s' has no field '%s'", ci->name, node->ast_token.text);
                 }
             }
         }
@@ -1969,12 +1983,33 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
         fprintf(ctx->out, "((%s*)", c_base_name(&ct));
         codegen_expr(ctx, obj);
         fprintf(ctx->out, ")->%s", node->ast_token.text);
-    } else if (obj->ast_resolved_type.is_pointer) {
-        codegen_expr(ctx, obj);
-        fprintf(ctx->out, "->%s", node->ast_token.text);
     } else {
-        codegen_expr(ctx, obj);
-        fprintf(ctx->out, ".%s", node->ast_token.text);
+        /* Structs (by value or via a ref parameter): validate the field name
+           so a typo is caught here instead of by the C compiler. */
+        if (obj->ast_resolved_type.type_kind == TYPE_STRUCT) {
+            StructInfo* si = symtab_find_struct(obj->ast_resolved_type.class_name);
+            if (si) {
+                int found = 0;
+                int i;
+                for (i = 0; i < si->field_count; i++) {
+                    if (strcmp(si->field_names[i], node->ast_token.text) == 0) {
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                         "struct '%s' has no field '%s'", si->name, node->ast_token.text);
+                }
+            }
+        }
+        if (obj->ast_resolved_type.is_pointer) {
+            codegen_expr(ctx, obj);
+            fprintf(ctx->out, "->%s", node->ast_token.text);
+        } else {
+            codegen_expr(ctx, obj);
+            fprintf(ctx->out, ".%s", node->ast_token.text);
+        }
     }
 }
 
