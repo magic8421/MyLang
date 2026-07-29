@@ -208,6 +208,15 @@ int String_equals(String* thiz, String* s) {
     return memcmp(thiz->bytes.data, s->bytes.data, thiz->bytes.length) == 0;
 }
 
+uint64_t String_length(String* thiz) {
+    return thiz ? (uint64_t)thiz->bytes.length : 0;
+}
+
+int8_t String_char_at(String* thiz, uint64_t i) {
+    if (!thiz) my_panic("char_at on null string");
+    return *(const int8_t*)mylang_array_at(&thiz->bytes, (size_t)i, 1);
+}
+
 /* --- Hash helpers (builtin hash(x)) --------------------------------------- */
 
 uint64_t mylang_hash_u64(uint64_t v) {

@@ -4120,9 +4120,26 @@ i32 main() {
 i32 main() {
     bool t = true;
     string s = f"{t}-{false}-{(1 < 2)}";
-    return s.bytes.length();
+    return s.length();
 }
 """, 15),
+
+    ("string_length_char_at", """
+i32 main() {
+    string s = "abc";
+    if (s.length() != 3) { return 1; }
+    if (s.char_at(0) != 'a') { return 2; }
+    if (s.char_at(2) != 'c') { return 3; }
+    s.append_char('d');
+    if (s.length() != 4) { return 4; }
+    if (s.char_at(3) != 'd') { return 5; }
+    string e = "";
+    if (e.length() != 0) { return 6; }
+    u64 i = 1;
+    if (s.char_at(i) != 'b') { return 7; }
+    return 0;
+}
+""", 0),
 
     ("null_class", """
 class Node {
@@ -4144,7 +4161,7 @@ i32 main() {
 i32 main() {
     string s = null;
     if (s == null) { s = "abc"; }
-    if (s != null) { return s.bytes.length(); }
+    if (s != null) { return s.length(); }
     return 0;
 }
 """, 3),
@@ -4378,7 +4395,7 @@ i32 main() {
     object o = s;
     String back = o as String;
     if (back == null) { return 0; }
-    return back.bytes.length();
+    return back.length();
 }
 """, 3),
 
@@ -6108,6 +6125,13 @@ i32 main() {
     return p.zzz;
 }
 """, "struct 'Pt' has no field 'zzz'"),
+
+    ("bad_string_bytes", """
+i32 main() {
+    string s = "abc";
+    return s.bytes.length();
+}
+""", "cannot access private field 'String.bytes'"),
 
 ]
 

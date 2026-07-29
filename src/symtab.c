@@ -40,7 +40,7 @@ void symtab_init(void) {
 
         Type bytes_type = type_make_primitive(TYPE_U8);
         bytes_type.is_array = 1;
-        symtab_add_field(str_info, "bytes", bytes_type, 0);
+        symtab_add_field(str_info, "bytes", bytes_type, 1);
 
         Type void_type = type_make_primitive(TYPE_VOID);
         /* Builtin methods have no declaration site; a zeroed token keeps
@@ -121,6 +121,21 @@ void symtab_init(void) {
             CHECK_STRSCPY(strscpy(pn[0], "s", sizeof(pn[0])), "param name too long");
             pt[0] = string_type;
             symtab_add_method(str_info, "equals", bool_type, 1, pn, pt, NULL, 1, 0, 0, 0, no_tok);
+        }
+        {
+            /* length() / char_at(i) are the public read API; the raw bytes
+               field stays private so string content cannot be corrupted
+               through array operations. */
+            Type u64_type = type_make_primitive(TYPE_U64);
+            symtab_add_method(str_info, "length", u64_type, 0, NULL, NULL, NULL, 1, 0, 0, 0, no_tok);
+        }
+        {
+            char pn[1][64];
+            Type pt[1];
+            Type i8_type = type_make_primitive(TYPE_I8);
+            CHECK_STRSCPY(strscpy(pn[0], "i", sizeof(pn[0])), "param name too long");
+            pt[0] = type_make_primitive(TYPE_U64);
+            symtab_add_method(str_info, "char_at", i8_type, 1, pn, pt, NULL, 1, 0, 0, 0, no_tok);
         }
     }
 

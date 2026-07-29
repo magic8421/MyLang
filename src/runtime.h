@@ -92,6 +92,8 @@ void String_append_f64(String* thiz, double v);
 void String_append_char(String* thiz, int8_t c);
 void String_append_bool(String* thiz, int v);
 int  String_equals(String* thiz, String* s);
+uint64_t String_length(String* thiz);
+int8_t   String_char_at(String* thiz, uint64_t i);
 
 /* Builtin hash(x) helpers.  mylang_hash_u64 mixes integer bits (splitmix64
    finalizer); mylang_hash_string is FNV-1a over the raw bytes; class and

@@ -889,7 +889,13 @@ s.append_char('X');
 s.append_bool(true);     // appends "true"
 
 bool same = s.equals("abcd12Xtrue");   // content comparison
+
+u64 n = s.length();        // byte length: 10
+i8 c = s.char_at(0);       // 'a' (bounds-checked)
 ```
+
+The backing byte array is private: `s.bytes` is a compile error. Use
+`length()` / `char_at(i)` for read access.
 
 Note: string is a **mutable** reference type — appending through one alias is visible
 through every alias to the same object (same as any other class):
