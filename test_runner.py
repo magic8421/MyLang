@@ -6311,7 +6311,7 @@ def run_suite(leak_check, filters):
         print(f"\n{passed}/{total} passed, {failed} failed  (filtered from {all_tests} tests)")
     else:
         print(f"\n{passed}/{total} passed, {failed} failed")
-    return failed
+    return passed, total, failed
 
 
 def main():
@@ -6330,6 +6330,7 @@ def main():
 
     modes = [args.mode] if args.mode else ["release", "debug"]
     total_failed = 0
+    results = []
     for mode in modes:
         TEST_MODE = mode
         if len(modes) > 1:
@@ -6340,7 +6341,13 @@ def main():
             sys.exit(1)
         if not compile_pch_and_runtime():
             sys.exit(1)
-        total_failed += run_suite(leak_check, filters)
+        passed, total, failed = run_suite(leak_check, filters)
+        results.append((mode, passed, total, failed))
+        total_failed += failed
+    if len(results) > 1:
+        print("\n===== summary =====")
+        for mode, passed, total, failed in results:
+            print(f"{mode:8s} {passed}/{total} passed, {failed} failed")
     sys.exit(0 if total_failed == 0 else 1)
 
 if __name__ == "__main__":
