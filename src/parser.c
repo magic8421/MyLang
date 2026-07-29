@@ -868,6 +868,45 @@ static AstNode* parse_var_decl(Parser* p) {
     return node;
 }
 
+/* foreach (T x in arr) { body } - array iteration, C# style.  The loop
+   variable is bound only inside the body; the collection expression is
+   parsed before the binding so it cannot see the loop variable. */
+static AstNode* parse_foreach_stmt(Parser* p) {
+    Token kw = p->current;
+    advance(p);
+    expect(p, TOK_LPAREN);
+
+    Type type = parse_type(p);
+    Token name = kw;
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected foreach variable name after the element type\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+    } else {
+        name = p->current;
+        advance(p);
+    }
+    expect(p, TOK_KW_IN);
+    AstNode* arr = parse_expr(p);
+    expect(p, TOK_RPAREN);
+
+    AstNode* decl = ast_new_node(AST_VAR_DECL, name);
+    decl->ast_resolved_type = type;
+
+    symtab_enter_scope();
+    if (name.kind == TOK_IDENT) {
+        symtab_insert(name.text, type);
+    }
+    AstNode* body = parse_required_block(p, "foreach", 0);
+    symtab_exit_scope();
+
+    AstNode* node = ast_new_node(AST_FOREACH_STMT, kw);
+    ast_add_child(node, decl);
+    ast_add_child(node, arr);
+    ast_add_child(node, body);
+    return node;
+}
+
 static AstNode* parse_for_stmt(Parser* p) {
     Token kw = p->current;
     advance(p);
@@ -1018,6 +1057,10 @@ static AstNode* parse_stmt(Parser* p) {
 
     if (check(p, TOK_KW_FOR)) {
         return parse_for_stmt(p);
+    }
+
+    if (check(p, TOK_KW_FOREACH)) {
+        return parse_foreach_stmt(p);
     }
 
     if (check(p, TOK_KW_IF)) {

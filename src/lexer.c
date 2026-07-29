@@ -28,6 +28,8 @@ static const KeywordEntry keywords[] = {
     {"else",   TOK_KW_ELSE},
     {"while",  TOK_KW_WHILE},
     {"for",    TOK_KW_FOR},
+    {"foreach", TOK_KW_FOREACH},
+    {"in",     TOK_KW_IN},
     {"return", TOK_KW_RETURN},
     {"new",    TOK_KW_NEW},
     {"class",     TOK_KW_CLASS},

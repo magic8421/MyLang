@@ -104,6 +104,14 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Assignment and increment/decrement are not allowed in the `condition` expression.
 - `break` exits the innermost loop; `continue` skips to the next iteration. Both correctly run cleanup for local variables.
 
+## Foreach Loops
+- Syntax: `foreach (T x in arr) { body }` (C# style; `foreach` and `in` are keywords).
+- Arrays only: anything else is a compile error (`foreach requires an array, got '...'`). `string` is deliberately not iterable.
+- Lowered by `codegen_foreach_stmt` to an index loop over a synthetic `u64` counter: the condition is a synthesized `_feN < arr.length()` AST (routed through the same prepare/cleanup path as `for` conditions), and the loop variable is declared per iteration as `T x = arr[_feN]` via `codegen_var_decl`, so retain/release and per-iteration cleanup come from the normal local-variable machinery.
+- The loop variable is a per-iteration copy scoped to the body (bound in its own symtab scope at both parse and codegen time).
+- Live length: `arr.length()` is re-evaluated every iteration, so mutating the array in the body affects iteration; `mylang_array_at` bounds checks keep that memory-safe.
+- `break`/`continue` use the same label bookkeeping as `for`/`while`.
+
 ## Match Statement
 - Syntax: `match (expr) { ClassName var => { body } ... else => { body } }`.
 - Arms are evaluated in order; the first matching arm runs and the rest are skipped.

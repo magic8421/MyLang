@@ -1885,7 +1885,7 @@ struct Inner {
     Node n;
 }
 struct Outer {
-    Inner in;
+    Inner inner;
 }
 i32 main() {
     weak Node w;
@@ -1896,7 +1896,7 @@ i32 main() {
             Node n = new Node;
             n.v = 17;
             w = n;
-            o1.in.n = n;
+            o1.inner.n = n;
         }
         Outer o2 = o1;
         Node s = w.lock();
@@ -4116,6 +4116,95 @@ i32 main() {
 }
 """, 0),
 
+    ("foreach_basic", """
+i32 main() {
+    i32[] a;
+    a.push(10);
+    a.push(20);
+    a.push(30);
+    i32 sum = 0;
+    foreach (i32 x in a) {
+        sum = sum + x;
+    }
+    if (sum != 60) { return 1; }
+    return 0;
+}
+""", 0),
+
+    ("foreach_class", """
+class Node {
+    i32 v;
+}
+i32 main() {
+    Node[] arr;
+    Node a = new Node;
+    a.v = 5;
+    Node b = new Node;
+    b.v = 7;
+    arr.push(a);
+    arr.push(b);
+    i32 sum = 0;
+    foreach (Node n in arr) {
+        sum = sum + n.v;
+    }
+    return sum;
+}
+""", 12),
+
+    ("foreach_break_continue", """
+i32 main() {
+    i32[] a;
+    a.push(1);
+    a.push(2);
+    a.push(3);
+    a.push(4);
+    i32 sum = 0;
+    foreach (i32 x in a) {
+        if (x == 2) { continue; }
+        if (x == 4) { break; }
+        sum = sum + x;
+    }
+    return sum;
+}
+""", 4),
+
+    ("foreach_struct", """
+struct Pt { i32 x; i32 y; }
+i32 main() {
+    Pt[] pts;
+    Pt p;
+    p.x = 1; p.y = 2;
+    pts.push(p);
+    p.x = 3; p.y = 4;
+    pts.push(p);
+    i32 sum = 0;
+    foreach (Pt q in pts) {
+        sum = sum + q.x + q.y;
+    }
+    return sum;
+}
+""", 10),
+
+    ("foreach_nested_field", """
+class Bag {
+    i32[] items;
+}
+i32 main() {
+    Bag b = new Bag;
+    b.items.push(1);
+    b.items.push(2);
+    i32[] c;
+    c.push(10);
+    i32 total = 0;
+    foreach (i32 x in b.items) {
+        foreach (i32 y in c) {
+            total = total + x * y;
+        }
+    }
+    return total;
+}
+""", 30),
+
     ("bool_fstring", """
 i32 main() {
     bool t = true;
@@ -6132,6 +6221,24 @@ i32 main() {
     return s.bytes.length();
 }
 """, "cannot access private field 'String.bytes'"),
+
+    ("bad_foreach_non_array", """
+i32 main() {
+    foreach (i32 x in 42) {
+    }
+    return 0;
+}
+""", "foreach requires an array"),
+
+    ("bad_foreach_type_mismatch", """
+i32 main() {
+    i32[] a;
+    a.push(1);
+    foreach (string s in a) {
+    }
+    return 0;
+}
+""", "cannot initialize 'String' with 'i32'"),
 
 ]
 

@@ -78,6 +78,7 @@ typedef enum {
     AST_IF_STMT,
     AST_WHILE_STMT,
     AST_FOR_STMT,
+    AST_FOREACH_STMT,
     AST_RETURN_STMT,
     AST_BREAK,
     AST_CONTINUE,

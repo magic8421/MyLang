@@ -405,6 +405,28 @@ for (i32 i = 0; i < n; i = i + 1) {
   are not allowed in the condition.
 - `step` is an expression and may be omitted; `i++` is allowed in the step.
 
+### 5.3.1 foreach
+
+Arrays can be iterated directly (the body must be braced):
+
+```mylang
+i32[] a;
+a.push(10);
+a.push(20);
+foreach (i32 x in a) {
+    print(x);
+}
+```
+
+- The loop variable is a per-iteration **copy** of the element and is scoped to
+  the loop body. For class elements it is a normal strong reference.
+- The collection must be an array; anything else is a compile error. `string`
+  is not iterable (byte-wise vs UTF-8 semantics differ; use `char_at(i)` in a
+  plain loop).
+- The array length is re-read on every iteration: mutating the array inside
+  the loop body affects iteration (bounds checks keep this memory-safe).
+- `break` / `continue` work as in `for`.
+
 ### 5.4 break / continue
 
 ```mylang

@@ -4342,6 +4342,194 @@ static void codegen_for_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     fprintf(ctx->out, "}\n");
 }
 
+/* foreach (T x in arr) { body } - lowered to an index loop:
+     {
+         u64 _feN = 0;
+         while (1) {
+             if (!(_feN < arr.length())) goto _my_breakB;
+             T x = arr[_feN];
+             ... body ...
+             _my_continueC:;
+             _feN = _feN + 1;
+         }
+         _my_breakB:;
+     }
+   The loop variable is a per-iteration copy (a normal local, so class
+   elements are retained/released by the usual cleanup).  The length is
+   re-read on every iteration ("live" length): mutating the array inside
+   the body affects iteration, and the bounds check in mylang_array_at
+   keeps that memory-safe. */
+static void codegen_foreach_stmt(CodegenContext* ctx, AstNode* node, int indent) {
+    AstNode* decl = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    AstNode* arr  = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    AstNode* body = (node->ast_child_count > 2) ? node->ast_children[2] : NULL;
+    if (!decl || !arr) return;
+
+    resolve_type(arr);
+    if (!arr->ast_resolved_type.is_array) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "foreach requires an array, got '%s'",
+                             type_name(&arr->ast_resolved_type));
+        return;
+    }
+    if (ctx->loop_depth >= MAX_LOOP) {
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "too many nested loops (max %d)", MAX_LOOP);
+        return;
+    }
+
+    int break_lbl = ctx->assign_tmp_id++;
+    int continue_lbl = ctx->assign_tmp_id++;
+    char idx_name[32];
+    int n = snprintf(idx_name, sizeof(idx_name), "_fe%d", ctx->assign_tmp_id++);
+    CHECK_SNPRINTF(n, sizeof(idx_name), "foreach index name too long");
+
+    /* Synthetic token shared by all generated nodes; it points at the
+       'foreach' keyword for diagnostics. */
+    Token fe_tok;
+    memset(&fe_tok, 0, sizeof(fe_tok));
+    fe_tok.kind = TOK_IDENT;
+    strscpy(fe_tok.text, idx_name, sizeof(fe_tok.text));
+    fe_tok.line = node->ast_token.line;
+    fe_tok.col = node->ast_token.col;
+    fe_tok.filename = node->ast_token.filename;
+
+    /* u64 _feN = 0; - a real local so the identifier resolves everywhere. */
+    AstNode idx_init;
+    memset(&idx_init, 0, sizeof(idx_init));
+    idx_init.ast_kind = AST_INT_LIT;
+    idx_init.ast_token = fe_tok;
+    idx_init.ast_token.kind = TOK_INT_LIT;
+    strscpy(idx_init.ast_token.text, "0", sizeof(idx_init.ast_token.text));
+
+    AstNode idx_decl;
+    memset(&idx_decl, 0, sizeof(idx_decl));
+    idx_decl.ast_kind = AST_VAR_DECL;
+    idx_decl.ast_token = fe_tok;
+    idx_decl.ast_resolved_type = type_make_primitive(TYPE_U64);
+    idx_decl.ast_children[0] = &idx_init;
+    idx_decl.ast_child_count = 1;
+
+    AstNode idx_ident;
+    memset(&idx_ident, 0, sizeof(idx_ident));
+    idx_ident.ast_kind = AST_IDENT;
+    idx_ident.ast_token = fe_tok;
+
+    /* _feN < arr.length() */
+    Token len_tok = fe_tok;
+    strscpy(len_tok.text, "length", sizeof(len_tok.text));
+
+    AstNode len_mem;
+    memset(&len_mem, 0, sizeof(len_mem));
+    len_mem.ast_kind = AST_MEMBER_ACCESS;
+    len_mem.ast_token = len_tok;
+    len_mem.ast_children[0] = arr;
+    len_mem.ast_child_count = 1;
+
+    AstNode len_call;
+    memset(&len_call, 0, sizeof(len_call));
+    len_call.ast_kind = AST_CALL;
+    len_call.ast_token = len_tok;
+    len_call.ast_children[0] = &len_mem;
+    len_call.ast_child_count = 1;
+
+    Token lt_tok = fe_tok;
+    lt_tok.kind = TOK_LT;
+    strscpy(lt_tok.text, "<", sizeof(lt_tok.text));
+
+    AstNode cond;
+    memset(&cond, 0, sizeof(cond));
+    cond.ast_kind = AST_BINARY;
+    cond.ast_token = lt_tok;
+    cond.ast_children[0] = &idx_ident;
+    cond.ast_children[1] = &len_call;
+    cond.ast_child_count = 2;
+
+    /* T x = arr[_feN]; - clone the collection expression so the element
+       access has its own node state (temps, resolved type). */
+    AstNode access;
+    memset(&access, 0, sizeof(access));
+    access.ast_kind = AST_ARRAY_ACCESS;
+    access.ast_token = arr->ast_token;
+    access.ast_children[0] = ast_clone(arr);
+    access.ast_children[1] = &idx_ident;
+    access.ast_child_count = 2;
+
+    AstNode elem_decl = *decl;
+    elem_decl.ast_children[0] = &access;
+    elem_decl.ast_child_count = 1;
+    elem_decl.next = NULL;
+
+    ctx->loop_entry_cleanup_count[ctx->loop_depth] = ctx->cleanup_count;
+    ctx->loop_break_label_id[ctx->loop_depth] = break_lbl;
+    ctx->loop_continue_label_id[ctx->loop_depth] = continue_lbl;
+    ctx->loop_depth++;
+
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "{\n");
+    cleanup_push_scope(ctx);
+    symtab_enter_scope();
+
+    codegen_var_decl(ctx, &idx_decl, indent + 1);
+
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "while (1)\n");
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "{\n");
+    cleanup_push_scope(ctx);
+
+    /* Same pattern as codegen_for_stmt: prepare per-iteration, release the
+       condition's temporaries on the exit path. */
+    int cond_cleanup_base = ctx->cleanup_count;
+    emit_line_loc(ctx, &cond, indent + 2);
+    prepare_condition(ctx, &cond, indent + 2);
+    emit_bounds_checks(ctx, &cond, indent + 2);
+
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "if (!(");
+    codegen_expr(ctx, &cond);
+    fprintf(ctx->out, "))\n");
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "{\n");
+    cleanup_emit_to(ctx, cond_cleanup_base, indent + 3);
+    indent_line(ctx, indent + 3);
+    fprintf(ctx->out, "goto _my_break%d;\n", break_lbl);
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "}\n");
+
+    codegen_var_decl(ctx, &elem_decl, indent + 2);
+
+    if (body) {
+        if (body->ast_kind == AST_BLOCK) {
+            AstNode* s = body->ast_children[0];
+            while (s) {
+                codegen_stmt(ctx, s, indent + 2);
+                s = s->next;
+            }
+        } else {
+            codegen_stmt(ctx, body, indent + 2);
+        }
+    }
+
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "_my_continue%d:;\n", continue_lbl);
+    indent_line(ctx, indent + 2);
+    fprintf(ctx->out, "%s = %s + 1;\n", idx_name, idx_name);
+
+    cleanup_pop_scope(ctx, indent + 2);
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "}\n");
+
+    ctx->loop_depth--;
+    indent_line(ctx, indent + 1);
+    fprintf(ctx->out, "_my_break%d:;\n", break_lbl);
+
+    symtab_exit_scope();
+    cleanup_pop_scope(ctx, indent + 1);
+    indent_line(ctx, indent);
+    fprintf(ctx->out, "}\n");
+}
+
 static void codegen_break_stmt(CodegenContext* ctx, AstNode* node, int indent) {
     (void)node;
     if (ctx->loop_depth == 0) {
@@ -5040,6 +5228,9 @@ static void codegen_stmt(CodegenContext* ctx, AstNode* node, int indent) {
             break;
         case AST_FOR_STMT:
             codegen_for_stmt(ctx, node, indent);
+            break;
+        case AST_FOREACH_STMT:
+            codegen_foreach_stmt(ctx, node, indent);
             break;
         case AST_MATCH:
             codegen_match_stmt(ctx, node, indent);
