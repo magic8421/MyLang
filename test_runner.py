@@ -988,7 +988,7 @@ i32 main() {
     a.resize(5);
     a.clear();
     a.push(5);
-    return a[0] + a.length;
+    return a[0] + a.length();
 }
 """, 6),
 
@@ -1019,7 +1019,7 @@ i32 main() {
     a.copy_to(ref b);
     i32[] c;
     a.move_to(ref c);
-    return b[0] + b[1] + c.length;
+    return b[0] + b[1] + c.length();
 }
 """, 32),
 
@@ -1114,7 +1114,7 @@ i32 main() {
     arr.push(wb);
     arr.push(wb);
     IBox s = arr[4].lock();
-    return s.get() + arr.length;
+    return s.get() + arr.length();
 }
 """, 11),
 
@@ -3227,7 +3227,7 @@ class Bag<T> {
     T[] items;
     void add(T v) { this.items.push(v); }
     T at(i32 i) { return this.items[i]; }
-    i32 size() { return this.items.length; }
+    i32 size() { return this.items.length(); }
 }
 i32 main() {
     Bag<i32> b = new Bag<i32>;
@@ -4096,16 +4096,31 @@ i32 main() {
     a.push(true);
     a.push(false);
     a.push(1 < 2);
-    if (a[0] && !a[1] && a[2]) { return a.length; }
+    if (a[0] && !a[1] && a[2]) { return a.length(); }
     return 0;
 }
 """, 3),
+
+    ("array_length_capacity", """
+i32 main() {
+    i32[] a;
+    if (a.length() != 0 || a.capacity() != 0) { return 1; }
+    a.push(1);
+    a.push(2);
+    a.push(3);
+    if (a.length() != 3) { return 2; }
+    a.reserve(10);
+    if (a.capacity() < 10) { return 3; }
+    if (a.length() != 3) { return 4; }
+    return 0;
+}
+""", 0),
 
     ("bool_fstring", """
 i32 main() {
     bool t = true;
     string s = f"{t}-{false}-{(1 < 2)}";
-    return s.bytes.length;
+    return s.bytes.length();
 }
 """, 15),
 
@@ -4129,7 +4144,7 @@ i32 main() {
 i32 main() {
     string s = null;
     if (s == null) { s = "abc"; }
-    if (s != null) { return s.bytes.length; }
+    if (s != null) { return s.bytes.length(); }
     return 0;
 }
 """, 3),
@@ -4363,7 +4378,7 @@ i32 main() {
     object o = s;
     String back = o as String;
     if (back == null) { return 0; }
-    return back.bytes.length;
+    return back.bytes.length();
 }
 """, 3),
 
@@ -4433,7 +4448,7 @@ i32 main() {
     if (arr[2] != null) { return 0; }
     arr[0] = null;
     if (arr[0] != null) { return 0; }
-    return r.v + rb.get() + arr.length;
+    return r.v + rb.get() + arr.length();
 }
 """, 13),
 
@@ -6068,6 +6083,15 @@ i32 main() {
     return 0;
 }
 """, "array has no member 'lenght'"),
+
+    ("bad_array_length_assign", """
+i32 main() {
+    i32[] arr;
+    arr.push(1);
+    arr.length = 0;
+    return 0;
+}
+""", "array has no member 'length'"),
 
     ("bad_class_field", """
 class Foo { i32 x; }

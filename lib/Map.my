@@ -25,7 +25,7 @@ class Map<K, V> {
             i++;
         }
         i32 e = 0;
-        while (e < this.keys.length) {
+        while (e < this.keys.length()) {
             i32 b = hash(this.keys[e]) % newcap;
             this.nexts[e] = this.buckets[b];
             this.buckets[b] = e;
@@ -39,7 +39,7 @@ class Map<K, V> {
             this.rehash(16);
             return;
         }
-        if (this.keys.length + 1 > (this.cap * 3) / 4) {
+        if (this.keys.length() + 1 > (this.cap * 3) / 4) {
             this.rehash(this.cap * 2);
         }
     }
@@ -67,7 +67,7 @@ class Map<K, V> {
             return;
         }
         i32 b = hash(k) % this.cap;
-        i32 ne = this.keys.length;
+        i32 ne = this.keys.length();
         this.keys.push(k);
         this.vals.push(v);
         this.nexts.push(this.buckets[b]);
@@ -103,7 +103,7 @@ class Map<K, V> {
                 }
                 // Swap-remove the entry with the last one, then repair the
                 // link that pointed at the moved entry.
-                i32 last = this.keys.length - 1;
+                i32 last = this.keys.length() - 1;
                 if (e != last) {
                     this.keys[e] = this.keys[last];
                     this.vals[e] = this.vals[last];
@@ -139,6 +139,6 @@ class Map<K, V> {
     }
 
     i32 count() {
-        return this.keys.length;
+        return this.keys.length();
     }
 }

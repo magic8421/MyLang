@@ -258,5 +258,5 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Arrays are created empty: `T[] a;` initializes `capacity = length = 0` and `data = NULL`; `a.push(x)` auto-grows from capacity 0. There is no `new T[N]` syntax.
 - To preallocate capacity use `a.reserve(n)`; to set the initial length use `a.resize(n)`.
 - Arrays cannot be returned by value, passed by value, or assigned with `=`. Use `ref T[]` parameters for mutation and `move_to(ref dst)` / `copy_to(ref dst)` for transfer or duplication.
-- Builtin vector methods: `.push(v)`, `.pop()`, `.reserve(n)`, `.resize(n)`, `.clear()`, `.compact()`, `.move_to(ref dst)`, `.copy_to(ref dst)`.
+- Builtin vector methods: `.length()`, `.capacity()`, `.push(v)`, `.pop()`, `.reserve(n)`, `.resize(n)`, `.clear()`, `.compact()`, `.move_to(ref dst)`, `.copy_to(ref dst)`. `.length()` / `.capacity()` return `u64` reads of the `MyArray` struct members; arrays have no member fields, so `arr.length` (member access, including assignment) is a compile error.
 - Element access uses `arr[i]` and is bounds-checked at runtime via `mylang_array_at()`; out-of-bounds triggers `my_panic` which calls `abort()`.

@@ -797,14 +797,6 @@ static Type resolve_type(AstNode* node) {
 
         case AST_MEMBER_ACCESS: {
             Type obj = resolve_type(node->ast_children[0]);
-            if (obj.is_array &&
-                (strcmp(node->ast_token.text, "length") == 0 ||
-                 strcmp(node->ast_token.text, "capacity") == 0)) {
-                /* MyArray value members are size_t. */
-                t.type_kind = TYPE_U64;
-                t.type_id = TYPE_ID_U64;
-                break;
-            }
             ClassInfo* ci = NULL;
             if (obj.type_kind == TYPE_CLASS && obj.type_arg_count > 0) {
                 ci = symtab_instantiate_class_from_type(&obj);
@@ -846,7 +838,13 @@ static Type resolve_type(AstNode* node) {
                     break;
                 }
                 resolve_type(obj);
-                if (strcmp(mem->ast_token.text, "lock") == 0 && obj->ast_resolved_type.is_weak) {
+                if (obj->ast_resolved_type.is_array &&
+                    (strcmp(mem->ast_token.text, "length") == 0 ||
+                     strcmp(mem->ast_token.text, "capacity") == 0)) {
+                    /* Array length()/capacity() yield u64 (MyArray size_t members). */
+                    t.type_kind = TYPE_U64;
+                    t.type_id = TYPE_ID_U64;
+                } else if (strcmp(mem->ast_token.text, "lock") == 0 && obj->ast_resolved_type.is_weak) {
                     t = obj->ast_resolved_type;
                     t.is_weak = 0;
                     if (t.type_kind == TYPE_INTERFACE) {
@@ -1201,6 +1199,7 @@ static int is_array_method_name(const char* s) {
     return strcmp(s, "push") == 0 || strcmp(s, "pop") == 0 ||
            strcmp(s, "reserve") == 0 || strcmp(s, "resize") == 0 ||
            strcmp(s, "clear") == 0 || strcmp(s, "compact") == 0 ||
+           strcmp(s, "length") == 0 || strcmp(s, "capacity") == 0 ||
            strcmp(s, "move_to") == 0 || strcmp(s, "copy_to") == 0;
 }
 
@@ -1363,7 +1362,12 @@ static void codegen_array_method_call(CodegenContext* ctx, AstNode* arr,
     c_array_elem_type_name(&arr_type, elem_type, sizeof(elem_type));
     int kind = array_elem_kind(&arr_type);
 
-    if (strcmp(mname, "push") == 0) {
+    if (strcmp(mname, "length") == 0 || strcmp(mname, "capacity") == 0) {
+        /* Value-returning reads of the MyArray struct members. */
+        fprintf(ctx->out, "(");
+        codegen_expr(ctx, arr);
+        fprintf(ctx->out, ").%s", mname);
+    } else if (strcmp(mname, "push") == 0) {
         if (!args) {
             codegen_report_error(ctx, arr->ast_token.line, arr->ast_token.col, "push() requires a value argument");
             fprintf(ctx->out, "0 /* missing push value */");
@@ -1513,6 +1517,10 @@ static void codegen_call(CodegenContext* ctx, AstNode* node) {
         AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
 
         if (obj->ast_resolved_type.is_array && is_array_method_name(mname)) {
+            if (strcmp(mname, "length") == 0 || strcmp(mname, "capacity") == 0) {
+                codegen_check_call_arity(ctx, mem->ast_token.line, mem->ast_token.col,
+                                         mname, count_call_args(node), 0, NULL);
+            }
             codegen_array_method_call(ctx, obj, mname, args);
             return;
         }
@@ -1932,16 +1940,12 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
         return;
     }
     if (obj->ast_resolved_type.is_array) {
-        /* Arrays are value-type MyArray structs; member access always uses '.'.
-           length and capacity are the only valid members (array operations
-           like push are dispatched as calls, not member access). */
-        if (strcmp(node->ast_token.text, "length") != 0 &&
-            strcmp(node->ast_token.text, "capacity") != 0) {
-            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
-                                 "array has no member '%s'", node->ast_token.text);
-        }
-        codegen_expr(ctx, obj);
-        fprintf(ctx->out, ".%s", node->ast_token.text);
+        /* Arrays have no member fields; all operations (length(), capacity(),
+           push(), ...) are builtin methods dispatched as calls. */
+        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                             "array has no member '%s'", node->ast_token.text);
+        fprintf(ctx->out, "0 /* invalid array member access */");
+        return;
     } else if (obj->ast_resolved_type.type_kind == TYPE_CLASS) {
         /* Class references may come from void* getters (e.g. dynamic arrays),
            so cast to the concrete struct pointer before using ->.  An unowned

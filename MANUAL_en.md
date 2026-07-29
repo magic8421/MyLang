@@ -967,7 +967,7 @@ a.reserve(100);       // reserve capacity only, length unchanged
 
 i32 x = a[0];         // indexed access (bounds-checked at runtime)
 a[1] = 5;
-i32 n = a.length;     // current length
+i32 n = a.length();   // current length
 ```
 
 Element types may be primitives, bool, class, interface, object, struct, or `weak T`.
@@ -976,6 +976,8 @@ Element types may be primitives, bool, class, interface, object, struct, or `wea
 
 | Method | Effect |
 |--------|--------|
+| `a.length()` | current element count (u64) |
+| `a.capacity()` | current reserved capacity (u64) |
 | `a.push(v)` | append at the end, growing capacity as needed |
 | `a.pop()` | remove the last element |
 | `a.reserve(n)` | reserve capacity (length unchanged) |
@@ -984,7 +986,9 @@ Element types may be primitives, bool, class, interface, object, struct, or `wea
 | `a.compact()` | release excess capacity |
 | `a.move_to(ref dst)` | **move** the contents into dst; a becomes empty |
 | `a.copy_to(ref dst)` | **deep-copy** the contents into dst; a is unchanged |
-| `a.length` | current element count (a property, not a method) |
+
+Arrays have no member fields: `a.length` / `a.capacity` (without parentheses)
+are compile errors; use the methods `a.length()` / `a.capacity()` instead.
 
 ### Important Restrictions
 
