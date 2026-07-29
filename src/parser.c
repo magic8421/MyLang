@@ -1645,7 +1645,7 @@ static AstNode* parse_class_decl(Parser* p) {
                 p->had_error = 1;
             }
 
-            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, mpd, is_native, is_override, is_private, is_static);
+            symtab_add_method(info, fname.text, ft, mc, mpn, mpt, mpd, is_native, is_override, is_private, is_static, fname);
 
             AstNode* mnode = ast_new_node(AST_FUNC_DECL, fname);
             mnode->ast_resolved_type = ft;

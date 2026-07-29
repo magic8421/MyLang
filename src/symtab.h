@@ -24,6 +24,9 @@ typedef struct MethodInfo {
     int  is_override;
     int  is_private;
     int  method_is_static;
+    /* Declaration site of the method, used by diagnostics.  Zeroed for
+       builtin registrations. */
+    Token method_token;
     struct MethodInfo* next;
 } MethodInfo;
 
@@ -128,7 +131,7 @@ void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int pc, const char pn[][64], const Type pt[],
                               AstNode* const pd[],
                               int is_native, int is_override, int is_private,
-                              int is_static);
+                              int is_static, Token tok);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
 
 typedef struct FuncInfo {
