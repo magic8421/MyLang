@@ -306,16 +306,12 @@ static void emit_array_length_expr(CodegenContext* ctx, AstNode* arr_node) {
     fprintf(ctx->out, ".length");
 }
 
+/* (preinstantiate_generic_types moved to sema.c as
+   sema_preinstantiate_generic_types; sema_check runs it on the whole program
+   before codegen starts.  This wrapper keeps the call below as an idempotent
+   backstop for nodes sema did not resolve.) */
 static void preinstantiate_generic_types(AstNode* node) {
-    if (!node) return;
-    if (node->ast_resolved_type.type_kind == TYPE_CLASS && node->ast_resolved_type.type_arg_count > 0) {
-        symtab_instantiate_class_from_type(&node->ast_resolved_type);
-    }
-    int i;
-    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
-        preinstantiate_generic_types(node->ast_children[i]);
-    }
-    preinstantiate_generic_types(node->next);
+    sema_preinstantiate_generic_types(node);
 }
 
 static void c_type_str(const Type* t, char* buf, int bufsz) {

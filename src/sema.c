@@ -81,6 +81,21 @@ ClassInfo* class_info_for_type(Type* t) {
     return symtab_find_class(t->class_name);
 }
 
+/* Instantiates every generic-typed node in an AST subtree (moved from
+   codegen.c, behavior unchanged).  Relies on resolved types, so it runs at
+   the end of sema_check; codegen keeps its own call as the backstop. */
+void sema_preinstantiate_generic_types(AstNode* node) {
+    if (!node) return;
+    if (node->ast_resolved_type.type_kind == TYPE_CLASS && node->ast_resolved_type.type_arg_count > 0) {
+        symtab_instantiate_class_from_type(&node->ast_resolved_type);
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+        sema_preinstantiate_generic_types(node->ast_children[i]);
+    }
+    sema_preinstantiate_generic_types(node->next);
+}
+
 /* Element type of a MyArray value type (moved from codegen.c, behavior
    unchanged). */
 Type array_elem_type(const Type* arr_type) {
@@ -2103,6 +2118,55 @@ static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) 
     s_current_class_name = prev_class_name;
 }
 
+/* Walks the substituted body of a generic instantiation (checks, transforms,
+   and resolution, same as a normal class body) and instantiates every generic
+   type it names.  The owner is the mangled name, mirroring how
+   codegen_class_decl(ci->generic_ast) sees the clone. */
+static void sema_walk_instantiation(ClassInfo* ci) {
+    AstNode* class_node = ci->generic_ast;
+    /* Fields of type (ref-struct)[] are rejected, same as sema_check's
+       per-decl loop: substituted field types can newly become such arrays. */
+    int i;
+    for (i = 0; i < ci->field_count; i++) {
+        if (type_is_ref_struct_array(&ci->field_types[i])) {
+            sema_report_error(class_node, "arrays of struct '%s' with reference fields are not supported yet (field '%s')",
+                              ci->field_types[i].class_name, ci->field_names[i]);
+        }
+    }
+    AstNode* m = (class_node->ast_child_count > 0) ? class_node->ast_children[0] : NULL;
+    while (m) {
+        if (m->ast_kind == AST_FUNC_DECL) {
+            sema_walk_method(m, ci->name, 0);
+        }
+        m = m->next;
+    }
+    /* Types named only inside this body (locals, 'new', calls) are resolved
+       now; instantiate them before codegen starts. */
+    sema_preinstantiate_generic_types(class_node);
+}
+
+/* Walks every instantiation created so far; walking one can create more
+   (generic types named only inside instantiation bodies), so scan the class
+   list to a fixpoint.  New instantiations prepend to the list head and are
+   picked up by the next scan; ClassInfo.sema_walked prevents re-walking
+   self-referential instantiations. */
+static void sema_walk_instantiations_fixpoint(void) {
+    extern ClassInfo* class_list;
+    for (;;) {
+        int progressed = 0;
+        ClassInfo* ci = class_list;
+        while (ci) {
+            if (ci->is_instantiation && ci->generic_ast && !ci->sema_walked) {
+                ci->sema_walked = 1;
+                progressed = 1;
+                sema_walk_instantiation(ci);
+            }
+            ci = ci->next;
+        }
+        if (!progressed) break;
+    }
+}
+
 void sema_check(AstNode* program) {
     if (!program || program->ast_kind != AST_PROGRAM) return;
 
@@ -2189,4 +2253,15 @@ void sema_check(AstNode* program) {
             ii = ii->next;
         }
     }
+
+    /* Instantiate every generic type named by the (now resolved) program AST. */
+    sema_preinstantiate_generic_types(program);
+
+    /* Transitive closure: check, transform, and resolve instantiation bodies
+       and materialise the generic types only they name, so codegen's lazy
+       instantiation triggers become memoized no-ops (kept as backstops).
+       This also lets codegen's header loops see every instantiation: types
+       named only inside an instantiation body previously got their struct,
+       type-id, and prototypes emitted nowhere. */
+    sema_walk_instantiations_fixpoint();
 }

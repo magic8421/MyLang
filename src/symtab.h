@@ -93,6 +93,11 @@ typedef struct ClassInfo {
 
     PropertyInfo* properties;
 
+    /* Set once sema has walked this instantiation's substituted body
+       (sema_check's generic-instantiation fixpoint); prevents re-walking
+       self-referential instantiations. */
+    int  sema_walked;
+
     struct ClassInfo* next;
 } ClassInfo;
 

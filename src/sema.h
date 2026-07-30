@@ -43,6 +43,10 @@ int class_implements(ClassInfo* ci, const char* iname);
    codegen). */
 ClassInfo* class_info_for_type(Type* t);
 
+/* Instantiates every generic-typed node in an AST subtree (shared with
+   codegen, which keeps its prepare-time call as the backstop). */
+void sema_preinstantiate_generic_types(AstNode* node);
+
 /* Pass-by-reference predicate (shared with codegen). */
 int type_is_ref(const Type* t);
 
