@@ -43,6 +43,9 @@ int class_implements(ClassInfo* ci, const char* iname);
    codegen). */
 ClassInfo* class_info_for_type(Type* t);
 
+/* Pass-by-reference predicate (shared with codegen). */
+int type_is_ref(const Type* t);
+
 /* Element type of a MyArray value type (shared with codegen). */
 Type array_elem_type(const Type* arr_type);
 

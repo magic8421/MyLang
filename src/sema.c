@@ -69,6 +69,11 @@ int class_implements(ClassInfo* ci, const char* iname) {
     return 0;
 }
 
+/* Pass-by-reference predicate (moved from codegen.c, behavior unchanged). */
+int type_is_ref(const Type* t) {
+    return t->is_ref;
+}
+
 /* Class lookup that also materialises generic instantiations (moved from
    codegen.c, behavior unchanged). */
 ClassInfo* class_info_for_type(Type* t) {
@@ -1573,6 +1578,27 @@ static void sema_walk_stmt(AstNode* node) {
     }
 }
 
+/* Declaration-level signature checks, migrated from codegen_func_decl,
+   codegen_method_decl, and codegen_struct_method_decl.  Only the ref-struct-
+   array parameter check lives here: the array-return-by-value and array-
+   parameter-must-be-ref diagnostics are already reported by the parser
+   (parser.c, with its own texts), and parser errors abort before sema runs,
+   so sema copies would be dead code for non-generic declarations; the codegen
+   copies remain as the backstop for generic instantiation bodies.
+   check_params is 0 for native class methods (codegen returns before the
+   parameter loop there), 1 otherwise. */
+static void sema_check_signature(AstNode* node, int check_params) {
+    if (!check_params) return;
+    AstNode* p = (node->ast_child_count == 2) ? node->ast_children[0] : NULL;
+    while (p) {
+        if (type_is_ref_struct_array(&p->ast_resolved_type)) {
+            sema_report_error(p, "arrays of struct '%s' with reference fields are not supported yet",
+                              p->ast_resolved_type.class_name);
+        }
+        p = p->next;
+    }
+}
+
 /* Walks a function/method body with the given parameters in scope, inserting
    'this' when insert_this is set (mirrors the three codegen emit sites).
    ret_type becomes the current return type for sema_check_return. */
@@ -1622,6 +1648,8 @@ static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) 
     }
     const char* prev_class_name = s_current_class_name;
     s_current_class_name = is_struct ? NULL : owner_name;
+    /* codegen returns before the parameter loop for native class methods. */
+    sema_check_signature(m, is_struct || !m->ast_is_native);
     sema_walk_body(params, body, insert_this, &thiz_type, &m->ast_resolved_type);
     s_current_class_name = prev_class_name;
 }
@@ -1637,6 +1665,15 @@ void sema_check(AstNode* program) {
                resolve once codegen instantiates the class, which re-resolves
                the substituted nodes on demand (clones carry no cache). */
             if (ci && !ci->is_generic) {
+                /* Fields of type (ref-struct)[] are rejected (mirrors
+                   codegen_class_decl). */
+                int i;
+                for (i = 0; i < ci->field_count; i++) {
+                    if (type_is_ref_struct_array(&ci->field_types[i])) {
+                        sema_report_error(decl, "arrays of struct '%s' with reference fields are not supported yet (field '%s')",
+                                          ci->field_types[i].class_name, ci->field_names[i]);
+                    }
+                }
                 AstNode* m = (decl->ast_child_count > 0) ? decl->ast_children[0] : NULL;
                 while (m) {
                     if (m->ast_kind == AST_FUNC_DECL) {
@@ -1660,6 +1697,7 @@ void sema_check(AstNode* program) {
             AstNode* params = (decl->ast_child_count == 2) ? decl->ast_children[0] : NULL;
             AstNode* body   = (decl->ast_child_count == 2) ? decl->ast_children[1]
                                                            : (decl->ast_child_count == 1 ? decl->ast_children[0] : NULL);
+            sema_check_signature(decl, 1);
             sema_walk_body(params, body, 0, NULL, &decl->ast_resolved_type);
         }
         decl = decl->next;

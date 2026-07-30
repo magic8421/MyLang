@@ -769,9 +769,7 @@ static void codegen_unary(CodegenContext* ctx, AstNode* node) {
     codegen_expr(ctx, node->ast_children[0]);
 }
 
-static int type_is_ref(const Type* t) {
-    return t->is_ref;
-}
+/* (type_is_ref moved to sema.c.) */
 
 /* Emit a single argument.  If the callee expects a ref parameter, only a
    local variable identifier is allowed; it is passed as &var, or as the raw
