@@ -52,6 +52,7 @@ static const KeywordEntry keywords[] = {
     {"const",     TOK_KW_CONST},
     {"static",    TOK_KW_STATIC},
     {"enum",      TOK_KW_ENUM},
+    {"namespace", TOK_KW_NAMESPACE},
     {NULL,        0},
 };
 

@@ -177,6 +177,11 @@ void        symtab_add_class(const char* name, ClassInfo* info);
 ClassInfo*  symtab_find_class(const char* name);
 int         symtab_add_field(ClassInfo* info, const char* name, Type type, int is_private);
 
+/* Namespace registry: plain source-level names ("N"), used by the parser to
+   recognize `namespace N { ... }` blocks and qualified references. */
+void        symtab_add_namespace(const char* name);
+int         symtab_find_namespace(const char* name);
+
 void        symtab_add_struct(const char* name, StructInfo* info);
 StructInfo* symtab_find_struct(const char* name);
 StructInfo* symtab_first_struct(void);

@@ -12,6 +12,29 @@ InterfaceInfo*        interface_list = NULL;
 static FuncInfo*      func_list     = NULL;
 static int            next_type_id  = TYPE_ID_CLASS_BASE;
 
+#define MAX_NAMESPACES 32
+static char namespace_names[MAX_NAMESPACES][NAME_BUF_SIZE];
+static int  namespace_count = 0;
+
+void symtab_add_namespace(const char* name) {
+    if (symtab_find_namespace(name)) return;
+    if (namespace_count >= MAX_NAMESPACES) {
+        fprintf(stderr, "error: too many namespaces (max %d)\n", MAX_NAMESPACES);
+        return;
+    }
+    CHECK_STRSCPY(strscpy(namespace_names[namespace_count], name,
+                          sizeof(namespace_names[0])), "namespace name too long");
+    namespace_count++;
+}
+
+int symtab_find_namespace(const char* name) {
+    int i;
+    for (i = 0; i < namespace_count; i++) {
+        if (strcmp(namespace_names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
 static unsigned hash_string(const char* s) {
     unsigned h = 5381;
     while (*s) {
@@ -22,6 +45,7 @@ static unsigned hash_string(const char* s) {
 
 void symtab_init(void) {
     class_list  = NULL;
+    namespace_count = 0;
     scope_counter = 0;
     current_scope = calloc(1, sizeof(Scope));
     current_scope->level = scope_counter++;

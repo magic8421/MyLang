@@ -49,6 +49,7 @@ const char* token_kind_name(TokenKind kind) {
         case TOK_KW_CONST:   return "const";
         case TOK_KW_STATIC:  return "static";
         case TOK_KW_ENUM:    return "enum";
+        case TOK_KW_NAMESPACE: return "namespace";
         case TOK_PLUS:      return "+";
         case TOK_MINUS:     return "-";
         case TOK_STAR:      return "*";

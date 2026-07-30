@@ -69,6 +69,18 @@ static int is_type_name(const char* name) {
            symtab_find_enum(name) != NULL;
 }
 
+/* Rewrite a declaration name token to its namespace-qualified underscored
+   form ("N_name") when the parser is inside a namespace block.  Everything
+   downstream (symtab, sema, codegen) only ever sees the qualified form, so
+   C emission needs no namespace awareness. */
+static void parser_qualify_decl_name(Parser* p, Token* name) {
+    if (!p->ns_prefix[0]) return;
+    char q[TOKEN_TEXT_SIZE];
+    int n = snprintf(q, sizeof(q), "%s_%s", p->ns_prefix, name->text);
+    CHECK_SNPRINTF(n, sizeof(q), "qualified name too long");
+    CHECK_STRSCPY(strscpy(name->text, q, sizeof(name->text)), "qualified name too long");
+}
+
 /* ================================================================
    FORWARD DECLARATIONS
    ================================================================ */
@@ -78,6 +90,8 @@ static AstNode* parse_match_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 static AstNode* parse_required_block(Parser* p, const char* what, int allow_if);
+static AstNode* parse_namespace_decl(Parser* p);
+static AstNode* parse_top_level(Parser* p);
 static void parse_const_initializer(Parser* p, Token name, const Type* t,
                                     int is_string, ConstInfo* info);
 
@@ -169,6 +183,18 @@ static Type parse_base_type(Parser* p) {
         t.type_id = TYPE_ID_STRING;
     } else if (check(p, TOK_IDENT)) {
         const char* name = p->current.text;
+        char qname[NAME_BUF_SIZE];
+        /* Same-namespace-first: inside `namespace N { ... }`, an unqualified
+           type name that matches a type declared in N resolves to "N_name".
+           Forward decls are pre-registered, so later declarations match too. */
+        if (p->ns_prefix[0] && !parser_is_type_param(name)) {
+            int n = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix, name);
+            CHECK_SNPRINTF(n, sizeof(qname), "qualified type name too long");
+            if (symtab_find_class(qname) || symtab_find_struct(qname) ||
+                symtab_find_interface(qname) || symtab_find_enum(qname)) {
+                name = qname;
+            }
+        }
         if (parser_is_type_param(name)) {
             Type t = type_make_param(name);
             advance(p);
@@ -319,6 +345,10 @@ static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, 
     lexer_set_filename(&sub_lexer, lexer_filename(outer->lexer));
     Parser sub;
     parser_init(&sub, &sub_lexer);
+    /* Keep the enclosing namespace context so f-string interpolations inside
+       a namespace block resolve names the same way as surrounding code. */
+    CHECK_STRSCPY(strscpy(sub.ns_prefix, outer->ns_prefix, sizeof(sub.ns_prefix)),
+                  "namespace prefix too long");
     AstNode* e = parse_expr(&sub);
     if (parser_had_error(&sub)) {
         outer->had_error = 1;
@@ -1258,6 +1288,7 @@ static AstNode* parse_struct_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+    parser_qualify_decl_name(p, &name);
     expect(p, TOK_LBRACE);
 
     StructInfo* info = symtab_find_struct(name.text);
@@ -1443,6 +1474,7 @@ static AstNode* parse_class_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+    parser_qualify_decl_name(p, &name);
 
     if (strcmp(name.text, "String") == 0) {
         fprintf(stderr, "%s(%d,%d): error: class name '%s' is reserved for a builtin type\n",
@@ -1468,6 +1500,11 @@ static AstNode* parse_class_decl(Parser* p) {
 
     /* parse optional generic parameter list */
     if (check(p, TOK_LT)) {
+        if (p->ns_prefix[0]) {
+            fprintf(stderr, "%s(%d,%d): error: generic classes are not supported inside namespaces\n",
+                    parser_filename(p), p->current.line, p->current.col);
+            p->had_error = 1;
+        }
         advance(p); /* < */
         char params[MAX_GENERIC_PARAMS][64];
         int param_count = 0;
@@ -1962,6 +1999,7 @@ static AstNode* parse_interface_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+    parser_qualify_decl_name(p, &name);
 
     if (strcmp(name.text, "IToString") == 0) {
         fprintf(stderr, "%s(%d,%d): error: interface name '%s' is reserved for a builtin type\n",
@@ -2123,6 +2161,12 @@ static AstNode* parse_interface_decl(Parser* p) {
 
 static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     Token name = p->current; advance(p);
+    if (p->ns_prefix[0] && strcmp(name.text, "main") == 0) {
+        fprintf(stderr, "%s(%d,%d): error: 'main' must be declared at top level, outside any namespace\n",
+                parser_filename(p), name.line, name.col);
+        p->had_error = 1;
+    }
+    parser_qualify_decl_name(p, &name);
     expect(p, TOK_LPAREN);
 
     symtab_enter_scope();
@@ -2218,6 +2262,7 @@ static AstNode* parse_enum_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+    parser_qualify_decl_name(p, &name);
     expect(p, TOK_LBRACE);
 
     EnumInfo* info = symtab_find_enum(name.text);
@@ -2434,6 +2479,7 @@ static AstNode* parse_const_decl(Parser* p) {
         return NULL;
     }
     Token name = p->current; advance(p);
+    parser_qualify_decl_name(p, &name);
 
     if (symtab_lookup_current(name.text) || symtab_find_func(name.text) ||
         is_type_name(name.text)) {
@@ -2454,7 +2500,54 @@ static AstNode* parse_const_decl(Parser* p) {
     return NULL;
 }
 
+/* namespace N { ... } -- one level of name grouping.  Declarations inside
+   are registered under the underscored name "N_name" (see
+   parser_qualify_decl_name), so the rest of the compiler treats them as
+   ordinary top-level declarations.  Nested namespaces are rejected. */
+static AstNode* parse_namespace_decl(Parser* p) {
+    advance(p); /* namespace */
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected namespace name\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    Token nsname = p->current; advance(p);
+    symtab_add_namespace(nsname.text);
+
+    if (p->ns_prefix[0]) {
+        fprintf(stderr, "%s(%d,%d): error: nested namespaces are not supported\n",
+                parser_filename(p), nsname.line, nsname.col);
+        p->had_error = 1;
+        /* Parse the body under the outer prefix so the file still compiles
+           far enough to report further errors. */
+    }
+    expect(p, TOK_LBRACE);
+
+    char saved[NAME_BUF_SIZE];
+    CHECK_STRSCPY(strscpy(saved, p->ns_prefix, sizeof(saved)), "namespace prefix too long");
+    if (!p->ns_prefix[0]) {
+        CHECK_STRSCPY(strscpy(p->ns_prefix, nsname.text, sizeof(p->ns_prefix)),
+                      "namespace name too long");
+    }
+
+    AstNode* decls = NULL;
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        AstNode* d = parse_top_level(p);
+        if (d) decls = ast_append_list(decls, d);
+    }
+    expect(p, TOK_RBRACE);
+
+    CHECK_STRSCPY(strscpy(p->ns_prefix, saved, sizeof(p->ns_prefix)), "namespace prefix too long");
+    return decls;
+}
+
 static AstNode* parse_top_level(Parser* p) {
+    if (check(p, TOK_KW_NAMESPACE)) {
+        return parse_namespace_decl(p);
+    }
+
     if (check(p, TOK_KW_CLASS)) {
         return parse_class_decl(p);
     }
@@ -2506,6 +2599,7 @@ static AstNode* parse_top_level(Parser* p) {
 void parser_init(Parser* p, Lexer* lexer) {
     p->lexer     = lexer;
     p->had_error = 0;
+    p->ns_prefix[0] = '\0';
     advance(p);
     advance(p);
     advance(p);
@@ -2513,20 +2607,57 @@ void parser_init(Parser* p, Lexer* lexer) {
 
 /* Pre-register all top-level class, struct, and interface names so that
    mutually-referencing types (e.g., SdlWindow holding an SdlApp field while
-   SdlApp is defined later) can resolve without forward-declaration syntax. */
+   SdlApp is defined later) can resolve without forward-declaration syntax.
+   Declarations inside a namespace block are registered under the qualified
+   underscored name "N_name", matching parser_qualify_decl_name. */
 static void parser_register_forward_decls(Parser* p) {
     Lexer scan = *p->lexer;
+    char fwd_prefix[NAME_BUF_SIZE] = "";
+    int  fwd_depth = 0;
     Token cur = lexer_next(&scan);
     while (cur.kind != TOK_EOF) {
+        if (cur.kind == TOK_KW_NAMESPACE) {
+            Token nsname = lexer_next(&scan);
+            if (nsname.kind == TOK_IDENT) {
+                symtab_add_namespace(nsname.text);
+            }
+            Token brace = lexer_next(&scan);
+            if (brace.kind == TOK_LBRACE) {
+                if (fwd_depth == 0 && nsname.kind == TOK_IDENT) {
+                    CHECK_STRSCPY(strscpy(fwd_prefix, nsname.text, sizeof(fwd_prefix)),
+                                  "namespace name too long");
+                }
+                /* Nested namespaces are a parser error; the scan just keeps
+                   the outer prefix so braces still pair up. */
+                fwd_depth++;
+            }
+            cur = lexer_next(&scan);
+            continue;
+        }
+        if (fwd_depth > 0) {
+            if (cur.kind == TOK_LBRACE) {
+                fwd_depth++;
+            } else if (cur.kind == TOK_RBRACE) {
+                fwd_depth--;
+                if (fwd_depth == 0) fwd_prefix[0] = '\0';
+            }
+        }
         if (cur.kind == TOK_KW_CLASS || cur.kind == TOK_KW_STRUCT || cur.kind == TOK_KW_INTERFACE ||
             cur.kind == TOK_KW_ENUM) {
             TokenKind decl_kind = cur.kind;
             Token name = lexer_next(&scan);
+            char qname[NAME_BUF_SIZE];
+            const char* regname = name.text;
+            if (fwd_prefix[0]) {
+                int qn = snprintf(qname, sizeof(qname), "%s_%s", fwd_prefix, name.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified name too long");
+                regname = qname;
+            }
             if (name.kind == TOK_IDENT) {
                 if (decl_kind == TOK_KW_CLASS) {
-                    if (!symtab_find_class(name.text)) {
+                    if (!symtab_find_class(regname)) {
                         ClassInfo* info = (ClassInfo*)calloc(1, sizeof(ClassInfo));
-                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "class name too long");
+                        CHECK_STRSCPY(strscpy(info->name, regname, sizeof(info->name)), "class name too long");
                         info->name[63] = '\0';
                         Token t = lexer_next(&scan);
                         if (t.kind == TOK_LT) {
@@ -2555,33 +2686,33 @@ static void parser_register_forward_decls(Parser* p) {
                         if (!info->is_generic) {
                             info->type_id = symtab_next_type_id();
                         }
-                        symtab_add_class(name.text, info);
+                        symtab_add_class(regname, info);
                     }
                 } else if (decl_kind == TOK_KW_STRUCT) {
-                    if (!symtab_find_struct(name.text)) {
+                    if (!symtab_find_struct(regname)) {
                         StructInfo* info = (StructInfo*)calloc(1, sizeof(StructInfo));
-                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "struct name too long");
+                        CHECK_STRSCPY(strscpy(info->name, regname, sizeof(info->name)), "struct name too long");
                         info->name[63] = '\0';
                         info->type_id = symtab_next_type_id() | TYPE_IS_STRUCT;
-                        symtab_add_struct(name.text, info);
+                        symtab_add_struct(regname, info);
                     }
                 } else if (decl_kind == TOK_KW_INTERFACE) {
-                    if (!symtab_find_interface(name.text)) {
+                    if (!symtab_find_interface(regname)) {
                         InterfaceInfo* info = (InterfaceInfo*)calloc(1, sizeof(InterfaceInfo));
-                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "interface name too long");
+                        CHECK_STRSCPY(strscpy(info->name, regname, sizeof(info->name)), "interface name too long");
                         info->name[63] = '\0';
                         info->type_id = symtab_next_type_id();
-                        symtab_add_interface(name.text, info);
+                        symtab_add_interface(regname, info);
                     }
                 } else if (decl_kind == TOK_KW_ENUM) {
                     /* Enums have no generics and no dependencies; only the
                        name is pre-registered.  parse_enum_decl fills in the
                        variants when the body is parsed. */
-                    if (!symtab_find_enum(name.text)) {
+                    if (!symtab_find_enum(regname)) {
                         EnumInfo* info = (EnumInfo*)calloc(1, sizeof(EnumInfo));
-                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "enum name too long");
+                        CHECK_STRSCPY(strscpy(info->name, regname, sizeof(info->name)), "enum name too long");
                         info->name[63] = '\0';
-                        symtab_add_enum(name.text, info);
+                        symtab_add_enum(regname, info);
                     }
                 }
             }
