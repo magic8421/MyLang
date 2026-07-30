@@ -392,12 +392,13 @@ Type sema_resolve_type(AstNode* node) {
    Forward pass: pre-resolve expression types in every reachable body
    ------------------------------------------------------------------------- */
 
+static int sema_member_visible(const char* owner, int is_private);
+
 /* Assignment type checks, migrated from the codegen AST_ASSIGN dispatch.
    The branch chain mirrors the dispatch exactly (array/null/const guards,
-   compound ops, array elements, then the lhs-kind chain); codegen keeps its
-   copies as the fallback for generic instantiations, which sema never sees.
-   Property writes are skipped: they are still unlowered at sema time and keep
-   their dedicated codegen diagnostics. */
+   property writes, compound ops, array elements, then the lhs-kind chain);
+   codegen keeps its copies as the fallback for generic instantiations, which
+   sema never sees. */
 static void sema_check_assign(AstNode* node) {
     AstNode* lhs = node->ast_children[0];
     AstNode* rhs = node->ast_children[1];
@@ -417,7 +418,28 @@ static void sema_check_assign(AstNode* node) {
         sema_report_error(node, "cannot assign to const variable '%s'", lhs->ast_token.text);
         return;
     }
-    if (member_access_property(lhs, NULL)) return;
+    {
+        /* Property writes (mirrors the codegen fallback block): the checks
+           run in the codegen order — compound op, missing setter, private.
+           The codegen block's fourth check ("cannot assign '%s' to property
+           '%s'") is NOT a language rule: it bluntly rejects reference-typed
+           RHS values because the inline fallback emission cannot handle their
+           ownership.  Valid writes go through lowering (here: the transform
+           pass below) and the normal call-argument checks, so sema does not
+           mirror it. */
+        ClassInfo* pci = NULL;
+        PropertyInfo* pi = member_access_property(lhs, &pci);
+        if (pi) {
+            if (is_compound_assign_op(node->ast_token.kind)) {
+                sema_report_error(node, "compound assignment is not supported on property '%s'", pi->name);
+            } else if (!pi->has_set) {
+                sema_report_error(node, "property '%s.%s' has no setter", pci->name, pi->name);
+            } else if (!sema_member_visible(pci->name, pi->is_private)) {
+                sema_report_error(node, "cannot access private property '%s.%s'", pci->name, pi->name);
+            }
+            return;
+        }
+    }
 
     TokenKind assign_op = node->ast_token.kind;
     if (is_compound_assign_op(assign_op)) {
@@ -1784,6 +1806,221 @@ static void sema_walk_stmt(AstNode* node) {
     }
 }
 
+/* -------------------------------------------------------------------------
+   Transform passes (moved from codegen.c prepare_expression, behavior
+   unchanged).  They run after the check walk of each body, still inside the
+   body's scope, so codegen sees the lowered form.  Codegen keeps its
+   idempotent copies in prepare_expression/prepare_condition as the backstop
+   for generic instantiation bodies, which sema skips.
+   ------------------------------------------------------------------------- */
+
+/* Turn a property access node into an ordinary accessor call node (moved
+   from codegen.c, behavior unchanged): the member access obj.X becomes the
+   call obj.get_X() (args == NULL) or, for an assignment node obj.X = rhs,
+   the call obj.set_X(rhs).  The object node moves under the synthetic callee;
+   the old node is rewritten in place so parents and list links stay valid. */
+static void sema_property_to_call(AstNode* node, AstNode* obj, AstNode* args,
+                                  const char* prefix, const char* prop_name) {
+    Token tok = node->ast_token;
+    int n = snprintf(tok.text, sizeof(tok.text), "%s_%s", prefix, prop_name);
+    CHECK_SNPRINTF(n, sizeof(tok.text), "accessor name too long");
+    AstNode* callee = ast_new_node(AST_MEMBER_ACCESS, tok);
+    ast_add_child(callee, obj);
+    memset(node->ast_children, 0, sizeof(node->ast_children));
+    node->ast_kind = AST_CALL;
+    node->ast_token = tok;
+    node->ast_child_count = 0;
+    ast_add_child(node, callee);
+    if (args) {
+        args->next = NULL;
+        ast_add_child(node, args);
+    }
+    memset(&node->ast_resolved_type, 0, sizeof(node->ast_resolved_type));
+    node->ast_is_resolved = 0;  /* node rewritten: invalidate the sema cache */
+    node->ast_temp_name[0] = '\0';
+    node->ast_match_var[0] = '\0';
+}
+
+/* Lower valid property accesses into accessor calls (moved from codegen.c,
+   behavior unchanged):
+     read   obj.X       -> obj.get_X()
+     write  obj.X = rhs -> obj.set_X(rhs)
+   Invalid accesses (no accessor, private, compound assignment, ++/--) are
+   left untouched: sema already reported their diagnostics, and the codegen
+   dispatch paths keep theirs as the backstop. */
+static void sema_lower_property_access(AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_ASSIGN) {
+        AstNode* lhs = node->ast_children[0];
+        AstNode* rhs = node->ast_children[1];
+        ClassInfo* pci = NULL;
+        PropertyInfo* pi = NULL;
+        if (!is_compound_assign_op(node->ast_token.kind)) {
+            pi = member_access_property(lhs, &pci);
+        }
+        if (pi && pi->has_set && sema_member_visible(pci->name, pi->is_private)) {
+            sema_property_to_call(node, lhs->ast_children[0], rhs, "set", pi->name);
+            sema_lower_property_access(node->ast_children[0]->ast_children[0]);
+            sema_lower_property_access(node->ast_children[1]);
+        } else {
+            /* Keep the LHS shape for the dispatch diagnostics; still lower
+               property reads inside the object expression. */
+            if (lhs && lhs->ast_kind == AST_MEMBER_ACCESS) {
+                sema_lower_property_access(lhs->ast_children[0]);
+            } else {
+                sema_lower_property_access(lhs);
+            }
+            sema_lower_property_access(rhs);
+        }
+        sema_lower_property_access(node->next);
+        return;
+    }
+    if (node->ast_kind == AST_INC_DEC) {
+        AstNode* operand = node->ast_children[0];
+        if (operand && operand->ast_kind == AST_MEMBER_ACCESS) {
+            sema_lower_property_access(operand->ast_children[0]);
+        } else {
+            sema_lower_property_access(operand);
+        }
+        sema_lower_property_access(node->next);
+        return;
+    }
+    if (node->ast_kind == AST_MEMBER_ACCESS) {
+        ClassInfo* pci = NULL;
+        PropertyInfo* pi = member_access_property(node, &pci);
+        if (pi && pi->has_get && sema_member_visible(pci->name, pi->is_private)) {
+            sema_property_to_call(node, node->ast_children[0], NULL, "get", pi->name);
+            sema_lower_property_access(node->ast_children[0]->ast_children[0]);
+        } else {
+            sema_lower_property_access(node->ast_children[0]);
+        }
+        sema_lower_property_access(node->next);
+        return;
+    }
+    {
+        int i;
+        for (i = 0; i < node->ast_child_count; i++) {
+            AstNode* child = node->ast_children[i];
+            if (node->ast_kind == AST_CALL && i == 0 &&
+                child && child->ast_kind == AST_MEMBER_ACCESS) {
+                /* The callee of a call is not a read position: obj.X() where
+                   X names a property is reported by the call checks. */
+                sema_lower_property_access(child->ast_children[0]);
+            } else {
+                sema_lower_property_access(child);
+            }
+        }
+    }
+    sema_lower_property_access(node->next);
+}
+
+/* Appends clones of the stored default-value literals for any missing
+   trailing arguments of a user call (moved from codegen.c, behavior
+   unchanged).  Idempotent: a call that already supplies all parameters is
+   left unchanged. */
+static void sema_materialize_call_defaults(AstNode* node) {
+    if (!node || node->ast_kind != AST_CALL || node->ast_child_count < 1) return;
+    AstNode* callee = node->ast_children[0];
+    int param_count = 0;
+    AstNode* const* param_defaults = NULL;
+    if (callee->ast_kind == AST_MEMBER_ACCESS) {
+        AstNode* obj = callee->ast_children[0];
+        const char* mname = callee->ast_token.text;
+        MethodInfo* smi = sema_static_call_method(callee, NULL);
+        if (smi && smi->method_is_static) {
+            /* Static call via the class name. */
+            param_count = smi->param_count;
+            param_defaults = smi->param_defaults;
+        } else {
+        sema_resolve_type(obj);
+        Type* ot = &obj->ast_resolved_type;
+        if (ot->is_array) return;   /* array methods have fixed signatures */
+        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;
+        if (ot->type_kind == TYPE_CLASS) {
+            ClassInfo* ci = ot->type_arg_count > 0
+                ? symtab_instantiate_class_from_type(ot)
+                : symtab_find_class(ot->class_name);
+            MethodInfo* mi = ci ? symtab_find_method_in_class(ci, mname) : NULL;
+            if (mi) {
+                param_count = mi->param_count;
+                param_defaults = mi->param_defaults;
+            }
+        } else if (ot->type_kind == TYPE_STRUCT) {
+            StructInfo* si = symtab_find_struct(ot->class_name);
+            MethodInfo* mi = si ? symtab_find_struct_method(si, mname) : NULL;
+            if (mi) {
+                param_count = mi->param_count;
+                param_defaults = mi->param_defaults;
+            }
+        } else if (ot->type_kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(ot->class_name);
+            InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, mname) : NULL;
+            if (im) {
+                param_count = im->param_count;
+                param_defaults = im->param_defaults;
+            }
+        }
+        }
+    } else if (callee->ast_kind == AST_IDENT) {
+        FuncInfo* fi = symtab_find_func(callee->ast_token.text);
+        if (fi && !fi->is_builtin) {
+            param_count = fi->param_count;
+            param_defaults = fi->param_defaults;
+        }
+    }
+    if (!param_defaults) return;
+
+    int actual = 0;
+    AstNode* tail = NULL;
+    if (node->ast_child_count > 1) {
+        AstNode* a = node->ast_children[1];
+        while (a) {
+            tail = a;
+            actual++;
+            a = a->next;
+        }
+    }
+    if (actual >= param_count) return;
+    int i;
+    for (i = actual; i < param_count; i++) {
+        AstNode* def = param_defaults[i];
+        /* Missing required parameter: reported by the arity checks. */
+        if (!def) break;
+        /* Each call site gets its own clone so guard temporaries (assigned
+           per call site) never alias the shared signature node. */
+        AstNode* clone = ast_clone(def);
+        clone->xor_str_id = def->xor_str_id;
+        if (tail) {
+            tail->next = clone;
+        } else {
+            node->ast_children[1] = clone;
+            node->ast_child_count = 2;
+        }
+        tail = clone;
+    }
+}
+
+/* Fills default arguments for every user call in an expression tree (moved
+   from codegen.c, behavior unchanged). */
+static void sema_materialize_call_defaults_walk(AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_CALL) sema_materialize_call_defaults(node);
+    int i;
+    for (i = 0; i < node->ast_child_count; i++) {
+        sema_materialize_call_defaults_walk(node->ast_children[i]);
+    }
+    sema_materialize_call_defaults_walk(node->next);
+}
+
+/* Runs the transform passes over a checked body, in the same order as
+   codegen's prepare_expression: property lowering first, then default
+   argument materialization. */
+static void sema_transform_body(AstNode* body) {
+    if (!body) return;
+    sema_lower_property_access(body);
+    sema_materialize_call_defaults_walk(body);
+}
+
 /* Declaration-level signature checks, migrated from codegen_func_decl,
    codegen_method_decl, and codegen_struct_method_decl.  Only the ref-struct-
    array parameter check lives here: the array-return-by-value and array-
@@ -1830,6 +2067,9 @@ static void sema_walk_body(AstNode* params, AstNode* body,
     } else if (body) {
         sema_walk_stmt(body);
     }
+    /* Lower the body after the checks, still inside its scope (the passes
+       resolve object types through the symbol table). */
+    sema_transform_body(body);
     symtab_exit_scope();
     s_current_ret_type = prev_ret_type;
 }
@@ -1941,6 +2181,7 @@ void sema_check(AstNode* program) {
                 } else {
                     sema_walk_stmt(body);
                 }
+                sema_transform_body(body);
                 symtab_exit_scope();
                 s_in_interface_default = prev_iface_default;
                 s_current_ret_type = prev_ret_type;

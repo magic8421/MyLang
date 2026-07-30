@@ -3700,7 +3700,10 @@ static void indent_line(CodegenContext* ctx, int indent) {
 
 /* Prepare an expression for codegen: lower property accesses into accessor
    calls, fill default call arguments, lower any f-strings, then extract
-   owned subexpression temporaries and caller-side guarded temporaries. */
+   owned subexpression temporaries and caller-side guarded temporaries.
+   sema already ran the first two passes on every non-generic body (see
+   sema_transform_body); the calls here are idempotent and remain as the
+   backstop for generic instantiation bodies, which sema skips. */
 static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
     lower_property_access(ctx, expr);
     materialize_call_defaults_walk(expr);
