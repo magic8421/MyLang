@@ -154,60 +154,6 @@ String* SdlApp_eventTypeToString(SdlApp* thiz, uint32_t type){
 }
 #undef EVENT_ENTRY
 
-static bool SDLCALL sdl_event_filter(void* userdata, SDL_Event* event) {
-    (void)userdata;
-
-    SdlEvent ev;
-    ev.type = (int32_t)event->type;
-    ev.code = 0;
-
-    if (event->type == SDL_EVENT_QUIT) {
-        g_quit = 1;
-    }
-
-    AcquireSRWLockShared(&g_lock);
-    int i;
-    for (i = 0; i < MAX_LISTENERS; i++) {
-        if (g_listeners[i].active) {
-            SdlEventListener* l = &g_listeners[i].listener;
-            l->vtable->onEvent(l->data, ev);
-            switch (event->type) {
-                case SDL_EVENT_MOUSE_BUTTON_DOWN:
-                    {
-                        SdlMouseButtonEvent ev = { 0 };
-                        ev.button = event->button.button;
-                        ev.x = event->button.x;
-                        ev.y = event->button.y;
-                        l->vtable->onMouseButtonDown(l->data, &ev);
-                    }
-                    break;
-                case SDL_EVENT_MOUSE_WHEEL:
-                    {
-                        SdlMouseButtonEvent ev = { 0 };
-                        ev.wheel_x = event->wheel.integer_x;
-                        ev.wheel_y = event->wheel.integer_y;
-                        ev.x = event->button.x;
-                        ev.y = event->button.y;
-                        l->vtable->onMouseButtonDown(l->data, &ev);
-                    }
-                    break;
-                case SDL_EVENT_KEY_DOWN:
-                    {
-                        SdlKeyboardEvent ev = {0};
-                        ev.key = event->key.key;
-                        l->vtable->onKeyDown(l->data, &ev);
-                    }
-                    break;
-                default:
-                    break;
-            }
-        }
-    }
-    ReleaseSRWLockShared(&g_lock);
-
-    return true;
-}
-
 int32_t SdlApp_init(SdlApp* thiz) {
     (void)thiz;
     return SDL_Init(SDL_INIT_VIDEO) ? 0 : 1;
@@ -221,60 +167,43 @@ SdlWindow* SdlApp_createWindow(SdlApp* thiz, int32_t w, int32_t h) {
     return win;
 }
 
-void SdlApp_addListener(SdlApp* thiz, SdlEventListener l) {
-    (void)thiz;
-
-    AcquireSRWLockExclusive(&g_lock);
-
-    int i;
-    for (i = 0; i < MAX_LISTENERS; i++) {
-        if (!g_listeners[i].active) {
-            mylang_retain(l.data);
-            g_listeners[i].listener = l;
-            g_listeners[i].active = 1;
-            break;
-        }
-    }
-
-    if (!g_watch_registered) {
-        SDL_AddEventWatch(sdl_event_filter, NULL);
-        g_watch_registered = 1;
-    }
-
-    ReleaseSRWLockExclusive(&g_lock);
-}
-
-void SdlApp_removeListener(SdlApp* thiz, SdlEventListener l) {
-    (void)thiz;
-
-    AcquireSRWLockExclusive(&g_lock);
-
-    int i;
-    int remaining = 0;
-    for (i = 0; i < MAX_LISTENERS; i++) {
-        if (g_listeners[i].active && g_listeners[i].listener.data == l.data) {
-            mylang_release(g_listeners[i].listener.data);
-            g_listeners[i].active = 0;
-        }
-        if (g_listeners[i].active) {
-            remaining++;
-        }
-    }
-
-    if (g_watch_registered && remaining == 0) {
-        SDL_RemoveEventWatch(sdl_event_filter, NULL);
-        g_watch_registered = 0;
-    }
-
-    ReleaseSRWLockExclusive(&g_lock);
-}
-
 void SdlApp_pump(SdlApp* thiz) {
     (void)thiz;
-    SDL_Event e;
-    while (SDL_PollEvent(&e)) {
-        /* The registered event watch already dispatched the event to
-           listeners.  This loop just drains the queue. */
+    SDL_Event event;
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+            case SDL_EVENT_QUIT:
+                g_quit = 1;
+                break;
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+                {
+                    ltkMouseEvent ev = { 0 };
+                    ev.button = event.button.button;
+                    ev.x = event.button.x;
+                    ev.y = event.button.y;
+                    SdlApp_onMouseEvent(thiz, &ev);
+                }
+                break;
+            case SDL_EVENT_MOUSE_WHEEL:
+                {
+                    ltkMouseEvent ev = { 0 };
+                    ev.wheel_x = event.wheel.integer_x;
+                    ev.wheel_y = event.wheel.integer_y;
+                    ev.x = event.button.x;
+                    ev.y = event.button.y;
+                    SdlApp_onMouseEvent(thiz, &ev);
+                }
+                break;
+            case SDL_EVENT_KEY_DOWN:
+                {
+                    ltkKeyEvent ev = {0};
+                    ev.key = event.key.key;
+                    SdlApp_onKeyEvent(thiz, &ev);
+                }
+                break;
+            default:
+                break;
+        }
     }
 }
 

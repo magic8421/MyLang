@@ -3,7 +3,19 @@ struct SdlEvent {
     u32 code;
 }
 
-struct SdlMouseButtonEvent {
+const u32 LTK_LBUTTON_DOWN = 1;
+const u32 LTK_LBUTTON_UP = 2;
+const u32 LTK_RBUTTON_DOWN = 3;
+const u32 LTK_RBUTTON_UP = 4;
+const u32 LTK_WHEEL_UP = 5;
+const u32 LTK_WHEEL_DOWN = 6;
+
+enum ltkMouseAction {
+    LButtonUp, LButtonDown, RButtonUp, RButtonDown, WheelUp, WheelDown
+}
+
+struct ltkMouseEvent {
+    u32 action;
     u32 button;
     i32 wheel_x;
     i32 wheel_y;
@@ -11,7 +23,7 @@ struct SdlMouseButtonEvent {
     f32 y;
 }
 
-struct SdlKeyboardEvent {
+struct ltkKeyEvent {
     u32 scancode;    // SDL physical key code
     u32 key;         // SDL virtual key code
     u32 mod;         // current key modifiers
@@ -19,8 +31,8 @@ struct SdlKeyboardEvent {
 
 interface SdlEventListener {
     void onEvent(SdlEvent e);
-    void onMouseButtonDown(ref SdlMouseButtonEvent ev) {}
-    void onKeyDown(ref SdlKeyboardEvent ev) {}
+    void onMouseEvent(ref ltkMouseEvent ev) {}
+    void onKeyEvent(ref ltkKeyEvent ev) {}
 }
 
 
@@ -29,17 +41,36 @@ class SdlWindow {
     private u64 handle;
     private u32 window_id;
     public unowned SdlApp app;
+
+    u32 getId() {
+        return this.window_id;
+    }
     bool isValid() {
         return this.handle != 0;
     }
 }
 
 class SdlApp {
-    SdlWindow[] windows;
+    private SdlWindow[] windows;
+
+    SdlWindow windowFromId(u32 id) {
+        for (u32 i = 0; i < this.windows.length(); i++) {
+            if (this.windows[i].getId() == id) {
+                return this.windows[i];
+            }
+        }
+        return null;
+    }
+
+    void onMouseEvent(ref ltkMouseEvent e) {
+
+    }
+    void onKeyEvent(ref ltkKeyEvent ev) {
+
+    }
+
     native i32 init();
     native SdlWindow createWindow(i32 w, i32 h);
-    native void addListener(SdlEventListener l);
-    native void removeListener(SdlEventListener l);
     native void pump();
     native i32 shouldQuit();
     native void delay(i32 ms);
@@ -48,9 +79,9 @@ class SdlApp {
     native string eventTypeToString(u32 type);
 }
 
-class Logger : SdlEventListener {
+class Logger {
     public unowned SdlApp app;
-    override void onEvent(SdlEvent e) {
+    void onEvent(SdlEvent e) {
         match(e.type) {
             1024 => { return; } // SDL_EVENT_MOUSE_MOTION
             516 => { return; } // SDL_EVENT_WINDOW_EXPOSED
@@ -59,11 +90,11 @@ class Logger : SdlEventListener {
         string type_str = this.app.eventTypeToString(e.type);
         print(f"SDL Event: [{e.type}]{type_str} {e.code}");
     }
-    override void onMouseButtonDown(ref SdlMouseButtonEvent e) {
-        print(f"SDL Event: SdlMouseButtonEvent {e.button} {e.x} {e.y}");
+    void onMouseEvent(ref ltkMouseEvent e) {
+        print(f"SDL Event: ltkMouseEvent {e.button} {e.x} {e.y}");
     }
-    override void onKeyDown(ref SdlKeyboardEvent e) {
-        print(f"SDL Event: SdlKeyboardEvent {e.key}");
+    void onKeyDown(ref ltkKeyEvent e) {
+        print(f"SDL Event: ltkKeyEvent {e.key}");
     }
 }
 
@@ -79,16 +110,11 @@ i32 main() {
         return 2;
     }
 
-    Logger logger = new Logger;
-    logger.app = app;
-    app.addListener(logger);
-
     while (app.shouldQuit() == 0) {
         app.pump();
         app.delay(16);
     }
 
-    app.removeListener(logger);
     app.destroyWindow(win);
     app.quit();
     return 0;
