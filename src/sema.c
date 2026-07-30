@@ -830,11 +830,23 @@ static void sema_check_call_args(AstNode* node, int param_count, const Type* par
     }
 }
 
+/* Access control (mirrors codegen's member_visible): a private class member
+   is visible only inside methods of the same class (any instance, C++ style).
+   s_current_class_name is set by sema_walk_method for class methods and is
+   NULL everywhere else (free functions, struct methods, interface default
+   methods). */
+static const char* s_current_class_name = NULL;
+
+static int sema_member_visible(const char* owner, int is_private) {
+    if (!is_private) return 1;
+    return s_current_class_name && strcmp(s_current_class_name, owner) == 0;
+}
+
 /* Mirrors the call-boundary diagnostics of codegen_call: callee existence,
-   arity, and per-argument checks.  Diagnostics belonging to later clusters
-   (visibility, weak lock(), array builtins, assert/hash/equals) stay in
-   codegen, but the control flow around them is mirrored so the remaining
-   checks run in the same cases. */
+   arity, per-argument checks, and method-call visibility.  Diagnostics
+   belonging to later clusters (weak lock(), array builtins,
+   assert/hash/equals) stay in codegen, but the control flow around them is
+   mirrored so the remaining checks run in the same cases. */
 static void sema_check_call(AstNode* node) {
     AstNode* callee = node->ast_children[0];
     if (!callee) return;
@@ -853,11 +865,14 @@ static void sema_check_call(AstNode* node) {
                 sema_report_error(callee, "method '%s.%s' does not exist", sci->name, mname);
                 return;
             }
-            /* "instance method via the class name" stays in codegen
-               (visibility cluster); codegen returns before the arity check. */
-            if (!smi->method_is_static) return;
-            /* The private-method diagnostic stays in codegen; the arity and
-               argument checks still run after it there. */
+            if (!smi->method_is_static) {
+                sema_report_error(callee, "cannot call instance method '%s.%s' via the class name; use an instance",
+                                  sci->name, mname);
+                return;  /* codegen returns before the arity check */
+            }
+            if (!sema_member_visible(sci->name, smi->is_private)) {
+                sema_report_error(callee, "cannot call private method '%s.%s'", sci->name, mname);
+            }
             dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", sci->name, mname);
             CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
             sema_check_call_arity(callee, dbuf, sema_count_call_args(node),
@@ -880,8 +895,13 @@ static void sema_check_call(AstNode* node) {
             if (ci && !mi) {
                 sema_report_error(callee, "method '%s.%s' does not exist", ci->name, mname);
             }
-            /* static-via-instance and private diagnostics stay in codegen
-               (visibility cluster); codegen continues to the arity check. */
+            if (mi && mi->method_is_static) {
+                sema_report_error(callee, "cannot call static method '%s.%s' via an instance; use the class name",
+                                  ci->name, mname);
+            }
+            if (mi && ci && !sema_member_visible(ci->name, mi->is_private)) {
+                sema_report_error(callee, "cannot call private method '%s.%s'", ci->name, mname);
+            }
             if (mi && ci) {
                 dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", ci->name, mname);
                 CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
@@ -1137,7 +1157,10 @@ static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) 
         }
         insert_this = 1;
     }
+    const char* prev_class_name = s_current_class_name;
+    s_current_class_name = is_struct ? NULL : owner_name;
     sema_walk_body(params, body, insert_this, &thiz_type, &m->ast_resolved_type);
+    s_current_class_name = prev_class_name;
 }
 
 void sema_check(AstNode* program) {
