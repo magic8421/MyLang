@@ -126,6 +126,30 @@ Detailed reference; the rules in AGENTS.md still apply.
 - `const` is rejected on class/interface/object/struct/array/weak/unowned types and on class/struct fields (no constructors or field initializers exist, so a const field could only ever be zero).
 - Representation: `Type.is_const`; `type_equal` ignores it (top-level const on values does not affect type compatibility or interface signature matching). Generated C is unchanged — enforcement lives entirely in the compiler front end.
 
+## Top-Level const Declarations
+- `const u32 X = 1;` / `const string S = "hello";` at top level declares a
+  program-wide constant. Parsed by `parse_const_decl` (no AST node); the name
+  goes into the global scope (`symtab_insert`, so uses resolve as ordinary
+  identifiers and the existing `is_const` enforcement applies unchanged) and
+  into the `ConstInfo` registry (`symtab_add_const` / `symtab_first_const`).
+- Types: primitive value types (same set as local const) plus `string`, which
+  is allowed only here. The initializer must be a literal matching the type
+  (integer/float/char/string/`true`/`false`; an optional `-` precedes numeric
+  literals) — same literal-only rule as default parameter values.
+- Order-independent: uses are resolved at codegen time, after all files are
+  parsed, so a function may reference a const declared later.
+- Emission: scalars become `static const <ctype> NAME = <lit>;` in the header
+  (`emit_const_decls`). String consts become `static String* NAME;` in the
+  header, initialized at the start of the real C `main` before `_my_main()`
+  (`emit_const_string_inits`) and released right after it returns
+  (`emit_const_string_releases`), so `--leak-check` and the CRT debug heap see
+  a balanced alloc/release. Programs without `main` leave string consts NULL.
+- Under `--xor-strings`, string const literals are registered with the
+  encryption table by `codegen_collect_xor_consts` (they live in the symtab,
+  outside the program AST, like parameter defaults) and created via
+  `mylang_string_new_encrypted`.
+- A local variable may shadow a top-level const (normal scope-chain rule).
+
 ## Increment / Decrement Operators
 - Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.
 - Operand may be a local variable, a member access (`obj.field++`), or an array element (`arr[i]++`), including `ref` parameters.

@@ -5064,6 +5064,45 @@ Key default_key() { return Key.Down; }
 """),
 ]),
 
+    ("const_scalars", """
+const u32 LTK_DOWN = 1;
+const i32 NEG = -5;
+const f64 PI = 3.5;
+const bool FLAG = true;
+const i8 CH = 'a';
+i32 main() {
+    if (LTK_DOWN != 1) { return 1; }
+    if (!FLAG) { return 2; }
+    if (PI < 3.0) { return 3; }
+    if (CH != 'a') { return 4; }
+    return NEG + 47;
+}
+""", 42),
+
+    ("const_string", """
+const string GREETING = "hello";
+i32 main() {
+    string s = GREETING;
+    if (!s.equals(GREETING)) { return 1; }
+    print(f"{s} const");
+    return 0;
+}
+""", "hello const\n"),
+
+    ("const_forward_use", """
+i32 get_code() { return CODE + 1; }
+const i32 CODE = 41;
+i32 main() { return get_code(); }
+""", 42),
+
+    ("const_shadow", """
+const i32 X = 10;
+i32 main() {
+    i32 X = 32;
+    return X + 10;
+}
+""", 42),
+
 
 ]
 
@@ -6469,6 +6508,39 @@ i32 main() {
     return 0;
 }
 """, "operator '+' not allowed for operands of type 'Key' and 'Key'"),
+
+    ("bad_const_reassign", """
+const i32 X = 1;
+i32 main() { X = 2; return 0; }
+""", "cannot assign to const variable 'X'"),
+
+    ("bad_const_no_init", """
+const i32 X;
+i32 main() { return 0; }
+""", "const 'X' requires an initializer"),
+
+    ("bad_const_nonliteral", """
+const i32 Y = 1;
+const i32 X = Y;
+i32 main() { return 0; }
+""", "initializer must be a literal"),
+
+    ("bad_const_type_mismatch", """
+const i32 X = "str";
+i32 main() { return 0; }
+""", "initializer must be a literal matching type 'i32'"),
+
+    ("bad_const_class_type", """
+class Foo { }
+const Foo F = null;
+i32 main() { return 0; }
+""", "top-level const is only supported on primitive value types and string"),
+
+    ("bad_const_dup", """
+const i32 X = 1;
+const i32 X = 2;
+i32 main() { return 0; }
+""", "const 'X' conflicts with an existing declaration"),
 
 ]
 

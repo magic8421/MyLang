@@ -2132,9 +2132,134 @@ static AstNode* parse_enum_decl(Parser* p) {
     return NULL;
 }
 
+/* const u32 X = 1; / const string S = "hello"; -- top-level const declaration.
+   The name is inserted into the global scope (uses resolve as ordinary
+   identifiers; is_const blocks reassignment) and recorded in the ConstInfo
+   registry, from which codegen emits the C declaration.  Initializers are
+   literals only (same rule as default parameter values); an optional '-'
+   may precede a numeric literal.  Strings are allowed here even though local
+   consts are primitive-only: a global string const is initialized once at
+   program start and never reassigned. */
+static AstNode* parse_const_decl(Parser* p) {
+    advance(p); /* const */
+
+    Type t = parse_type(p);
+    int is_string = t.type_kind == TYPE_CLASS && strcmp(t.class_name, "String") == 0 &&
+                    !t.is_array && !t.is_weak && !t.is_unowned;
+    if (t.is_array || t.is_weak || t.is_unowned || t.is_ref ||
+        (!type_is_primitive_value(t.type_kind) && !is_string)) {
+        fprintf(stderr, "%s(%d,%d): error: top-level const is only supported on primitive value types and string\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+    }
+    t.is_const = 1;
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected const name\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+        expect(p, TOK_SEMI);
+        return NULL;
+    }
+    Token name = p->current; advance(p);
+
+    if (symtab_lookup_current(name.text) || symtab_find_func(name.text) ||
+        is_type_name(name.text)) {
+        fprintf(stderr, "%s(%d,%d): error: const '%s' conflicts with an existing declaration\n",
+                parser_filename(p), name.line, name.col, name.text);
+        p->had_error = 1;
+    }
+
+    if (!check(p, TOK_ASSIGN)) {
+        fprintf(stderr, "%s(%d,%d): error: const '%s' requires an initializer\n",
+                parser_filename(p), name.line, name.col, name.text);
+        p->had_error = 1;
+        expect(p, TOK_SEMI);
+        return NULL;
+    }
+    advance(p); /* = */
+
+    int neg = 0;
+    if (check(p, TOK_MINUS)) { neg = 1; advance(p); }
+
+    ConstInfo* info = (ConstInfo*)calloc(1, sizeof(ConstInfo));
+    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "const name too long");
+    info->const_type = t;
+    info->const_is_string = is_string;
+    int lit_ok = 1;
+
+    if (is_string) {
+        if (neg || !check(p, TOK_STRING_LIT)) {
+            lit_ok = 0;
+        } else {
+            Token lit = p->current; advance(p);
+            unescape_brace_sentinels(lit.text);
+            CHECK_STRSCPY(strscpy(info->const_literal, lit.text, sizeof(info->const_literal)),
+                          "const string literal too long");
+        }
+    } else if (t.type_kind == TYPE_BOOL) {
+        if (neg || !(check(p, TOK_KW_TRUE) || check(p, TOK_KW_FALSE))) {
+            lit_ok = 0;
+        } else {
+            CHECK_STRSCPY(strscpy(info->const_literal, check(p, TOK_KW_TRUE) ? "1" : "0",
+                                  sizeof(info->const_literal)), "const literal too long");
+            advance(p);
+        }
+    } else if (t.type_kind == TYPE_F32 || t.type_kind == TYPE_F64) {
+        if (!check(p, TOK_INT_LIT) && !check(p, TOK_FLOAT_LIT)) {
+            lit_ok = 0;
+        } else {
+            snprintf(info->const_literal, sizeof(info->const_literal), "%s%s",
+                     neg ? "-" : "", p->current.text);
+            advance(p);
+        }
+    } else {
+        /* Integer types: integer or char literal.  Char literals store the
+           decoded char in char_val; re-wrap it with C quoting/escaping. */
+        if (check(p, TOK_CHAR_LIT) && !neg) {
+            char c = p->current.char_val;
+            const char* esc = NULL;
+            switch (c) {
+                case '\n': esc = "'\\n'"; break;
+                case '\t': esc = "'\\t'"; break;
+                case '\r': esc = "'\\r'"; break;
+                case '\\': esc = "'\\\\'"; break;
+                case '\'': esc = "'\\''"; break;
+            }
+            if (esc) {
+                CHECK_STRSCPY(strscpy(info->const_literal, esc, sizeof(info->const_literal)),
+                              "const literal too long");
+            } else {
+                snprintf(info->const_literal, sizeof(info->const_literal), "'%c'", c);
+            }
+            advance(p);
+        } else if (check(p, TOK_INT_LIT)) {
+            snprintf(info->const_literal, sizeof(info->const_literal), "%s%s",
+                     neg ? "-" : "", p->current.text);
+            advance(p);
+        } else {
+            lit_ok = 0;
+        }
+    }
+    if (!lit_ok) {
+        fprintf(stderr, "%s(%d,%d): error: const '%s' initializer must be a literal matching type '%s'\n",
+                parser_filename(p), p->current.line, p->current.col, name.text, type_name(&t));
+        p->had_error = 1;
+    }
+
+    symtab_add_const(name.text, info);
+    symtab_insert(name.text, t);
+    expect(p, TOK_SEMI);
+    return NULL;
+}
+
 static AstNode* parse_top_level(Parser* p) {
     if (check(p, TOK_KW_CLASS)) {
         return parse_class_decl(p);
+    }
+
+    if (check(p, TOK_KW_CONST)) {
+        return parse_const_decl(p);
     }
 
     if (check(p, TOK_KW_STRUCT)) {

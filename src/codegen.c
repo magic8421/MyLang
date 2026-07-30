@@ -6030,6 +6030,79 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     ctx->current_class = prev_class;
 }
 
+/* Top-level const declarations.  Scalar consts become a C `static const`
+   initialized with the literal; string consts become a global String*
+   initialized in main (see emit_const_string_inits).  Emitted after the
+   class forward declarations, so the String* form only needs the
+   forward-declared String. */
+static void emit_const_decls(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    ConstInfo* ci = symtab_first_const();
+    while (ci) {
+        if (ci->const_is_string) {
+            fprintf(h, "static String* %s;\n", ci->name);
+        } else {
+            char buf[128];
+            c_type_str(&ci->const_type, buf, sizeof(buf));
+            fprintf(h, "static const %s %s = %s;\n", buf, ci->name, ci->const_literal);
+        }
+        ci = ci->next;
+    }
+}
+
+/* Registers top-level string const literals with the string-encryption
+   table.  They live in the symbol table, outside the program AST, so
+   codegen_collect_xor_strings never visits them. */
+static void codegen_collect_xor_consts(CodegenContext* ctx) {
+    ConstInfo* ci = symtab_first_const();
+    while (ci) {
+        if (ci->const_is_string && strlen(ci->const_literal) > 0) {
+            ci->xor_str_id = ++ctx->xor_str_id;
+            emit_xor_string_array_decl(ctx, ci->const_literal, ci->xor_str_id);
+        }
+        ci = ci->next;
+    }
+}
+
+/* Initializes top-level string consts; emitted at the start of the real C
+   main, before _my_main(). */
+static void emit_const_string_inits(CodegenContext* ctx) {
+    ConstInfo* ci = symtab_first_const();
+    while (ci) {
+        if (ci->const_is_string) {
+            if (ctx->xor_strings) {
+                size_t len = strlen(ci->const_literal);
+                if (len == 0) {
+                    fprintf(ctx->out, "    %s = mylang_string_new_encrypted(MYLANG_TID_String, NULL, 0, 1);\n",
+                            ci->name);
+                } else {
+                    int id = ci->xor_str_id;
+                    fprintf(ctx->out, "    %s = mylang_string_new_encrypted(MYLANG_TID_String, _xs%d, %zu, %u);\n",
+                            ci->name, id, len, (unsigned)xor_string_key(id));
+                }
+            } else {
+                fprintf(ctx->out, "    %s = mylang_string_new(MYLANG_TID_String, \"", ci->name);
+                emit_c_string_literal(ctx, ci->const_literal);
+                fprintf(ctx->out, "\");\n");
+            }
+        }
+        ci = ci->next;
+    }
+}
+
+/* Releases top-level string consts; emitted after _my_main() returns so the
+   MyLang leak checker and the CRT debug heap see a balanced alloc/release. */
+static void emit_const_string_releases(CodegenContext* ctx) {
+    ConstInfo* ci = symtab_first_const();
+    while (ci) {
+        if (ci->const_is_string) {
+            fprintf(ctx->out, "    mylang_release(%s);\n", ci->name);
+            fprintf(ctx->out, "    %s = NULL;\n", ci->name);
+        }
+        ci = ci->next;
+    }
+}
+
 void codegen_program(AstNode* program, FILE* out, FILE* header,
                      const char* source_file, int leak_check,
                      const char* header_include_name, int xor_strings) {
@@ -6061,6 +6134,9 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     /* Enum typedefs come before struct/class definitions so that enum-typed
        fields can name the completed type. */
     emit_enum_typedefs(&ctx);
+    /* Top-level consts: scalars as static const, strings as globals that
+       main initializes. */
+    emit_const_decls(&ctx);
 
     /* Emit struct and class definitions before interface typedefs so that
        interface method signatures can reference value types like SdlEvent.
@@ -6124,6 +6200,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     if (ctx.xor_strings) {
         codegen_collect_xor_strings(&ctx, program);
         codegen_collect_xor_defaults(&ctx);
+        codegen_collect_xor_consts(&ctx);
         fprintf(ctx.out, "\n");
     }
 
@@ -6169,8 +6246,10 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
         fprintf(ctx.out, "    _CrtSetReportMode(_CRT_WARN, _CRTDBG_MODE_FILE);\n");
         fprintf(ctx.out, "    _CrtSetReportFile(_CRT_WARN, _CRTDBG_FILE_STDERR);\n");
         fprintf(ctx.out, "#endif\n");
+        emit_const_string_inits(&ctx);
         if (ctx.main_return_type.type_kind == TYPE_VOID) {
             fprintf(ctx.out, "    _my_main();\n");
+            emit_const_string_releases(&ctx);
             fprintf(ctx.out, "#ifdef _DEBUG\n");
             fprintf(ctx.out, "    _CrtDumpMemoryLeaks();\n");
             fprintf(ctx.out, "    fflush(stderr);\n");
@@ -6178,6 +6257,7 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
             fprintf(ctx.out, "    return 0;\n");
         } else {
             fprintf(ctx.out, "    %s _ret = _my_main();\n", c_base_name(&ctx.main_return_type));
+            emit_const_string_releases(&ctx);
             fprintf(ctx.out, "#ifdef _DEBUG\n");
             fprintf(ctx.out, "    _CrtDumpMemoryLeaks();\n");
             fprintf(ctx.out, "    fflush(stderr);\n");

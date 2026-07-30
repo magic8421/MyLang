@@ -117,6 +117,21 @@ typedef struct SymEntry {
     struct SymEntry* next;
 } SymEntry;
 
+/* Top-level const declaration: `const u32 X = 1;` / `const string S = "...";`.
+   Scalar consts emit a C `static const` with the literal; string consts emit
+   a runtime-initialized global String* (see codegen).  The entry is also
+   inserted into the global scope so uses resolve as ordinary identifiers. */
+typedef struct ConstInfo {
+    char name[NAME_BUF_SIZE];
+    Type const_type;
+    int  const_is_string;
+    /* C literal text for scalars (e.g. "1", "-3", "'a'"); decoded content
+       for strings (same form as AST_STRING_LIT token text). */
+    char const_literal[TOKEN_TEXT_SIZE];
+    int  xor_str_id;             /* encryption table id under --xor-strings */
+    struct ConstInfo* next;
+} ConstInfo;
+
 typedef struct Scope {
     SymEntry*     table[HASH_SIZE];
     struct Scope* parent;
@@ -142,6 +157,9 @@ StructInfo* symtab_first_struct(void);
 void        symtab_add_enum(const char* name, EnumInfo* info);
 EnumInfo*   symtab_find_enum(const char* name);
 EnumInfo*   symtab_first_enum(void);
+void        symtab_add_const(const char* name, ConstInfo* info);
+ConstInfo*  symtab_find_const(const char* name);
+ConstInfo*  symtab_first_const(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
                                      int pc, const char pn[][64], const Type pt[],

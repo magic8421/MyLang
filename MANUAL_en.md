@@ -391,6 +391,34 @@ Rules:
 - `const` cannot be applied to class / interface / object / struct / array / weak /
   unowned types, nor to fields.
 
+### 4.9 Top-Level const Declarations
+
+At top level, `const` declares a named constant visible in the whole program:
+
+```mylang
+const u32 LTK_LBUTTON_DOWN = 1;
+const i32 MAX_RETRY = -5;         // a '-' may precede a numeric literal
+const f64 PI = 3.14159;
+const bool DEBUG = true;
+const string GREETING = "hello";  // string is allowed at top level
+```
+
+Rules:
+
+- The initializer is mandatory and must be a **literal** matching the declared
+  type (integer, float, char, string, or `true`/`false`) — no expressions and
+  no references to other constants.
+- Unlike local consts, top-level consts may also be `string`. A string const is
+  a global `String*` initialized once at program start and released at program
+  exit; under `--xor-strings` its literal is encrypted like any other string
+  literal.
+- The name must not collide with another top-level declaration (type, function,
+  or const). A local variable may shadow a top-level const inside a function.
+- Declaration order does not matter: a function may use a const declared later
+  in the file.
+- The same read-only enforcement as local consts applies (no assignment, no
+  `++`/`--`, no passing to `ref` parameters).
+
 ---
 
 ## 5. Control Flow
