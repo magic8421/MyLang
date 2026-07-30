@@ -5140,6 +5140,66 @@ i32 main() {
 }
 """, 42),
 
+    ("property_basic", """
+class Counter {
+    private i32 _count;
+    i32 Count {
+        get { return this._count; }
+        set { this._count = value; }
+    }
+    i32 Doubled {
+        get { return this._count * 2; }
+    }
+}
+i32 main() {
+    Counter c = new Counter;
+    c.Count = 20;
+    c.Count = c.Count + 1;
+    if (c.Count != 21) { return 1; }
+    return c.Doubled;
+}
+""", 42),
+
+    ("property_enum_bool", """
+enum State { Idle, Running }
+class Machine {
+    private State _s;
+    State Current {
+        get { return this._s; }
+        set { this._s = value; }
+    }
+    bool Active {
+        get { return this._s == State.Running; }
+    }
+}
+i32 main() {
+    Machine m = new Machine;
+    if (m.Active) { return 1; }
+    m.Current = State.Running;
+    if (!m.Active) { return 2; }
+    if (m.Current != State.Running) { return 3; }
+    return 42;
+}
+""", 42),
+
+    ("property_in_method", """
+class Cfg {
+    private i32 _v;
+    private i32 Secret {
+        get { return this._v; }
+        set { this._v = value; }
+    }
+    i32 bump(i32 x) {
+        this.Secret = this.Secret + x;
+        return this.Secret;
+    }
+}
+i32 main() {
+    Cfg c = new Cfg;
+    return c.bump(42);
+}
+""", 42),
+
 
 ]
 
@@ -6608,6 +6668,51 @@ i32 main() { return 0; }
 class C { static const i32 X = 1; static const i32 X = 2; }
 i32 main() { return 0; }
 """, "duplicate static const 'X' in class 'C'"),
+
+    ("bad_prop_no_setter", """
+class C { private i32 _x; i32 X { get { return this._x; } } }
+i32 main() { C c = new C; c.X = 5; return 0; }
+""", "property 'C.X' has no setter"),
+
+    ("bad_prop_no_getter", """
+class C { private i32 _x; i32 X { set { this._x = value; } } }
+i32 main() { C c = new C; return c.X; }
+""", "property 'C.X' has no getter"),
+
+    ("bad_prop_private", """
+class C { private i32 _x; private i32 X { get { return this._x; } } }
+i32 main() { C c = new C; return c.X; }
+""", "cannot access private property 'C.X'"),
+
+    ("bad_prop_compound", """
+class C { private i32 _x; i32 X { get { return this._x; } set { this._x = value; } } }
+i32 main() { C c = new C; c.X += 1; return 0; }
+""", "compound assignment is not supported on property 'X'"),
+
+    ("bad_prop_inc_dec", """
+class C { private i32 _x; i32 X { get { return this._x; } set { this._x = value; } } }
+i32 main() { C c = new C; c.X++; return 0; }
+""", "increment/decrement is not supported on properties"),
+
+    ("bad_prop_ref_type", """
+class C { string Name { get { return "x"; } } }
+i32 main() { return 0; }
+""", "property 'Name' must have a primitive, bool, or enum type"),
+
+    ("bad_prop_static", """
+class C { static i32 X { get { return 1; } } }
+i32 main() { return 0; }
+""", "static/native/override are not allowed on property 'X'"),
+
+    ("bad_prop_field_clash", """
+class C { i32 X; i32 X { get { return 1; } } }
+i32 main() { return 0; }
+""", "property 'X' conflicts with an existing member in class 'C'"),
+
+    ("bad_prop_dup_accessor", """
+class C { i32 X { get { return 1; } get { return 2; } } }
+i32 main() { return 0; }
+""", "duplicate 'get' accessor in property 'X'"),
 
 ]
 

@@ -455,6 +455,21 @@ MethodInfo* symtab_find_method_in_class(ClassInfo* cls, const char* method_name)
     return NULL;
 }
 
+void symtab_add_property(ClassInfo* cls, PropertyInfo* info) {
+    info->next = cls->properties;
+    cls->properties = info;
+}
+
+PropertyInfo* symtab_find_property(ClassInfo* cls, const char* name) {
+    if (!cls) return NULL;
+    PropertyInfo* pi = cls->properties;
+    while (pi) {
+        if (strcmp(pi->name, name) == 0) return pi;
+        pi = pi->next;
+    }
+    return NULL;
+}
+
 void symtab_add_interface(const char* name, InterfaceInfo* info) {
     info->next = interface_list;
     interface_list = info;

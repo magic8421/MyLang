@@ -172,6 +172,35 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Not supported: generic classes (no access syntax), structs,
   `native`/`override` modifiers, enum-typed consts.
 
+## Properties
+- C#-style: `i32 Count { get { ... } set { ... } }` in a class body.
+  Property types are restricted to primitives, bool, and enums: a property
+  read is a call result (owned for reference types), which the
+  reference-ownership machinery (`expr_is_owned` and the guard sites) cannot
+  model at member-access sites yet — reference-type properties are future
+  work.
+- Parsing: the class member loop sees `{` after `Type name` and parses
+  accessors.  Each accessor is SYNTHESIZED AS AN ORDINARY METHOD named
+  `get_X` / `set_X` (registered via `symtab_add_method` and appended to the
+  class's method AST list), so emission, prototypes, scopes, cleanup, and
+  MY_PUSH frames all come from the normal method machinery.  The setter gets
+  an implicit `value` parameter of the property type.
+- A `PropertyInfo` per property hangs off `ClassInfo.properties`
+  (`symtab_add_property` / `symtab_find_property`); it drives the access
+  dispatch.
+- Read path: `codegen_member_access` falls through to the property lookup
+  when no field matches, and emits `Class_get_X(obj)`.  Write path: the
+  `AST_ASSIGN` case intercepts property lvalues via `member_access_property`
+  and emits `Class_set_X(obj, rhs)` with primitive-only type checks
+  (bool/enum mismatch, no references/null).  `resolve_type` returns
+  `prop_type` for property member access.
+- Rejected: compound assignment and `++`/`--` on properties (dedicated
+  errors), `ref` arguments (ref requires a local variable anyway), static /
+  native / override properties, generic classes, structs, per-accessor
+  modifiers, missing accessor use (`has no getter`/`has no setter`), and
+  name collisions with fields/methods/static consts/other properties
+  (including the synthesized `get_X`/`set_X` names).
+
 ## Increment / Decrement Operators
 - Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.
 - Operand may be a local variable, a member access (`obj.field++`), or an array element (`arr[i]++`), including `ref` parameters.

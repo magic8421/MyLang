@@ -52,6 +52,19 @@ typedef struct InterfaceInfo {
     struct InterfaceInfo* next;
 } InterfaceInfo;
 
+/* Property (C# style): `i32 Count { get { ... } set { ... } }` in a class
+   body.  Accessors are synthesized as ordinary get_X/set_X methods at parse
+   time and flow through the normal method machinery; this record drives the
+   obj.X read/write dispatch in codegen.  Value types only. */
+typedef struct PropertyInfo {
+    char name[NAME_BUF_SIZE];
+    Type prop_type;
+    int  has_get;
+    int  has_set;
+    int  is_private;
+    struct PropertyInfo* next;
+} PropertyInfo;
+
 typedef struct ClassInfo {
     char name[NAME_BUF_SIZE];
     int  type_id;
@@ -77,6 +90,8 @@ typedef struct ClassInfo {
     int  instantiation_arg_count;
     Type instantiation_args[MAX_GENERIC_PARAMS];
     char mangled_name[128];
+
+    PropertyInfo* properties;
 
     struct ClassInfo* next;
 } ClassInfo;
@@ -179,6 +194,9 @@ void        symtab_add_method(ClassInfo* cls, const char* name, Type ret_type,
                               int is_native, int is_override, int is_private,
                               int is_static, Token tok);
 MethodInfo* symtab_find_method(const char* class_name, const char* method_name);
+
+void         symtab_add_property(ClassInfo* cls, PropertyInfo* info);
+PropertyInfo* symtab_find_property(ClassInfo* cls, const char* name);
 
 typedef struct FuncInfo {
     char name[NAME_BUF_SIZE];

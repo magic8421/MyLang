@@ -446,6 +446,42 @@ Rules:
 - Not supported on generic classes (no access syntax), on structs, or with
   `native`/`override`.
 
+### 4.11 Properties
+
+A class may declare a C#-style property with `get`/`set` accessors:
+
+```mylang
+class Counter {
+    private i32 _count;
+    i32 Count {
+        get { return this._count; }
+        set { this._count = value; }
+    }
+    i32 Doubled {
+        get { return this._count * 2; }     // get-only property
+    }
+}
+Counter c = new Counter;
+c.Count = 20;               // calls the setter; 'value' is the implicit parameter
+i32 x = c.Count;            // calls the getter
+```
+
+Rules:
+
+- The property type must be a primitive, `bool`, or an enum. Reference-type
+  properties (string/class/interface) are not supported yet.
+- An accessor body is a method body: `this` is the receiver, and the setter
+  has an implicit `value` parameter of the property type.
+- A property may be get-only or set-only; using the missing accessor is a
+  compile error. At least one accessor is required.
+- `private` on the property restricts both accessors to the class's own
+  methods (same rule as private fields).
+- Compound assignment (`c.X += 1`) and `++`/`--` on a property are compile
+  errors, and a property cannot be passed to a `ref` parameter.
+- Not supported: static properties, properties on structs or in generic
+  classes, per-accessor access modifiers, and auto-implemented properties
+  (declare the backing field yourself).
+
 ---
 
 ## 5. Control Flow

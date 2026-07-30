@@ -1601,6 +1601,126 @@ static AstNode* parse_class_decl(Parser* p) {
         }
         Token fname = p->current; advance(p);
 
+        if (check(p, TOK_LBRACE)) {
+            /* PROPERTY: Type name { get { ... } set { ... } } (C# style).
+               Accessors are synthesized as ordinary get_X/set_X methods and
+               flow through the normal method machinery.  Value types only:
+               a property read is a call result, which the reference-
+               ownership machinery cannot model at member-access sites yet. */
+            advance(p); /* { */
+
+            if (is_static || is_native || is_override) {
+                fprintf(stderr, "%s(%d,%d): error: static/native/override are not allowed on property '%s'\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+            if (info->is_generic) {
+                fprintf(stderr, "%s(%d,%d): error: properties are not supported in generic classes\n",
+                        parser_filename(p), fname.line, fname.col);
+                p->had_error = 1;
+            }
+            if (!type_is_primitive_value(ft.type_kind) && ft.type_kind != TYPE_ENUM) {
+                fprintf(stderr, "%s(%d,%d): error: property '%s' must have a primitive, bool, or enum type\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+            /* Name collisions: fields, methods, static consts, other
+               properties, and the synthesized accessor names. */
+            {
+                int clash = symtab_find_property(info, fname.text) != NULL ||
+                            symtab_find_class_const(info->name, fname.text) != NULL ||
+                            symtab_find_method_in_class(info, fname.text) != NULL;
+                int fi;
+                for (fi = 0; fi < info->field_count && fi < MAX_FIELDS; fi++) {
+                    if (strcmp(info->field_names[fi], fname.text) == 0) { clash = 1; break; }
+                }
+                char acc_name[NAME_BUF_SIZE + 4];
+                snprintf(acc_name, sizeof(acc_name), "get_%s", fname.text);
+                if (symtab_find_method_in_class(info, acc_name)) clash = 1;
+                snprintf(acc_name, sizeof(acc_name), "set_%s", fname.text);
+                if (symtab_find_method_in_class(info, acc_name)) clash = 1;
+                if (clash) {
+                    fprintf(stderr, "%s(%d,%d): error: property '%s' conflicts with an existing member in class '%s'\n",
+                            parser_filename(p), fname.line, fname.col, fname.text, name.text);
+                    p->had_error = 1;
+                }
+            }
+
+            PropertyInfo* pi = (PropertyInfo*)calloc(1, sizeof(PropertyInfo));
+            CHECK_STRSCPY(strscpy(pi->name, fname.text, sizeof(pi->name)), "property name too long");
+            pi->prop_type = ft;
+            pi->is_private = is_private;
+
+            while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+                if (!check(p, TOK_IDENT) ||
+                    (strcmp(p->current.text, "get") != 0 && strcmp(p->current.text, "set") != 0)) {
+                    fprintf(stderr, "%s(%d,%d): error: expected 'get' or 'set' accessor in property '%s'\n",
+                            parser_filename(p), p->current.line, p->current.col, fname.text);
+                    p->had_error = 1;
+                    advance(p);
+                    continue;
+                }
+                Token acc = p->current; advance(p);
+                int is_get = strcmp(acc.text, "get") == 0;
+                if ((is_get && pi->has_get) || (!is_get && pi->has_set)) {
+                    fprintf(stderr, "%s(%d,%d): error: duplicate '%s' accessor in property '%s'\n",
+                            parser_filename(p), acc.line, acc.col, acc.text, fname.text);
+                    p->had_error = 1;
+                }
+                if (is_get) pi->has_get = 1; else pi->has_set = 1;
+
+                /* Parse the accessor body as a method: 'this' is the
+                   receiver; the setter gets an implicit 'value' parameter. */
+                char mname[NAME_BUF_SIZE + 4];
+                snprintf(mname, sizeof(mname), "%s_%s", acc.text, fname.text);
+                Token mtok = acc;
+                CHECK_STRSCPY(strscpy(mtok.text, mname, sizeof(mtok.text)), "property name too long");
+
+                symtab_enter_scope();
+                Type this_type = type_make_user(TYPE_CLASS, name.text);
+                this_type.is_pointer = 1;
+                symtab_insert("this", this_type);
+
+                AstNode* mparams = NULL;
+                int mc = 0;
+                char mpn[1][64];
+                Type mpt[1];
+                Type ret_type = ft;
+                if (!is_get) {
+                    ret_type = type_make_primitive(TYPE_VOID);
+                    symtab_insert("value", ft);
+                    AstNode* pd = ast_new_node(AST_VAR_DECL, acc);
+                    CHECK_STRSCPY(strscpy(pd->ast_token.text, "value", sizeof(pd->ast_token.text)), "param name too long");
+                    pd->ast_resolved_type = ft;
+                    mparams = ast_append_list(mparams, pd);
+                    CHECK_STRSCPY(strscpy(mpn[0], "value", sizeof(mpn[0])), "param name too long");
+                    mpt[0] = ft;
+                    mc = 1;
+                }
+
+                AstNode* mbody = parse_stmt(p);
+                symtab_exit_scope();
+
+                symtab_add_method(info, mname, ret_type, mc, mpn, mpt, NULL,
+                                  0, 0, is_private, 0, acc);
+
+                AstNode* mnode = ast_new_node(AST_FUNC_DECL, mtok);
+                mnode->ast_resolved_type = ret_type;
+                if (mparams) { ast_add_child(mnode, mparams); }
+                ast_add_child(mnode, mbody);
+                methods = ast_append_list(methods, mnode);
+            }
+            expect(p, TOK_RBRACE);
+
+            if (!pi->has_get && !pi->has_set) {
+                fprintf(stderr, "%s(%d,%d): error: property '%s' must have at least one accessor\n",
+                        parser_filename(p), fname.line, fname.col, fname.text);
+                p->had_error = 1;
+            }
+            symtab_add_property(info, pi);
+            continue;
+        }
+
         if (check(p, TOK_LPAREN)) {
             /* METHOD */
             advance(p); /* consume ( */
@@ -1613,6 +1733,11 @@ static AstNode* parse_class_decl(Parser* p) {
 
             if (symtab_find_class_const(info->name, fname.text)) {
                 fprintf(stderr, "%s(%d,%d): error: method '%s' conflicts with a static const in class '%s'\n",
+                        parser_filename(p), fname.line, fname.col, fname.text, name.text);
+                p->had_error = 1;
+            }
+            if (symtab_find_property(info, fname.text)) {
+                fprintf(stderr, "%s(%d,%d): error: method '%s' conflicts with a property in class '%s'\n",
                         parser_filename(p), fname.line, fname.col, fname.text, name.text);
                 p->had_error = 1;
             }
@@ -1792,6 +1917,11 @@ static AstNode* parse_class_decl(Parser* p) {
             }
             if (symtab_find_class_const(info->name, fname.text)) {
                 fprintf(stderr, "%s(%d,%d): error: field '%s' conflicts with a static const in class '%s'\n",
+                        parser_filename(p), fname.line, fname.col, fname.text, name.text);
+                p->had_error = 1;
+            }
+            if (symtab_find_property(info, fname.text)) {
+                fprintf(stderr, "%s(%d,%d): error: field '%s' conflicts with a property in class '%s'\n",
                         parser_filename(p), fname.line, fname.col, fname.text, name.text);
                 p->had_error = 1;
             }

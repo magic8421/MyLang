@@ -872,6 +872,10 @@ static Type resolve_type(AstNode* node) {
                         break;
                     }
                 }
+                PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
+                if (pi) {
+                    t = pi->prop_type;
+                }
             } else {
                 StructInfo* si = symtab_find_struct(obj.class_name);
                 if (si) {
@@ -2003,6 +2007,22 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node) {
     fprintf(ctx->out, ", %s))", elem_size);
 }
 
+/* If node is a member access that resolves to a class property, returns the
+   PropertyInfo and optionally the owning class.  Used by the property read,
+   write, and increment/decrement paths. */
+static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
+    if (!node || node->ast_kind != AST_MEMBER_ACCESS) return NULL;
+    AstNode* obj = node->ast_children[0];
+    if (!obj) return NULL;
+    resolve_type(obj);
+    if (obj->ast_resolved_type.type_kind != TYPE_CLASS) return NULL;
+    ClassInfo* ci = symtab_find_class(obj->ast_resolved_type.class_name);
+    if (!ci || ci->is_generic) return NULL;
+    PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
+    if (pi && out_ci) *out_ci = ci;
+    return pi;
+}
+
 static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
     AstNode* obj = node->ast_children[0];
     /* Enum variant access 'Key.Up' emits the C constant 'Key_Up'.  A local
@@ -2097,6 +2117,23 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
                     }
                 }
                 if (!found) {
+                    PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
+                    if (pi) {
+                        /* Property read: obj.X lowers to the getter call
+                           Class_get_X(obj). */
+                        if (!pi->has_get) {
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                                 "property '%s.%s' has no getter", ci->name, pi->name);
+                        } else if (!member_visible(ctx, ci->name, pi->is_private)) {
+                            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                                 "cannot access private property '%s.%s'", ci->name, pi->name);
+                        } else {
+                            fprintf(ctx->out, "%s_get_%s(", ci->name, pi->name);
+                            codegen_expr(ctx, obj);
+                            fprintf(ctx->out, ")");
+                        }
+                        return;
+                    }
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
                                          "class '%s' has no field '%s'", ci->name, node->ast_token.text);
                 }
@@ -2396,6 +2433,11 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
             break;
         case AST_INC_DEC: {
             AstNode* operand = node->ast_children[0];
+            if (member_access_property(operand, NULL)) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "increment/decrement is not supported on properties");
+                fprintf(ctx->out, "0 /* invalid property increment/decrement */");
+                break;
+            }
             resolve_type(operand);
             Type t = operand->ast_resolved_type;
             int is_primitive_numeric = (t.type_kind == TYPE_I8 || t.type_kind == TYPE_I16 ||
@@ -2442,6 +2484,46 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign to const variable '%s'", lhs->ast_token.text);
                 fprintf(ctx->out, "0 /* invalid const assignment */");
                 break;
+            }
+
+            /* Property assignment: obj.X = rhs lowers to a setter call
+               Class_set_X(obj, rhs).  Intercepts before the compound and
+               store paths; property types are value types, so no reference
+               ownership handling is needed. */
+            {
+                ClassInfo* pci = NULL;
+                PropertyInfo* pi = member_access_property(lhs, &pci);
+                if (pi) {
+                    if (is_compound_assign_op(node->ast_token.kind)) {
+                        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "compound assignment is not supported on property '%s'", pi->name);
+                        fprintf(ctx->out, "0 /* invalid property compound assignment */");
+                        break;
+                    }
+                    if (!pi->has_set) {
+                        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "property '%s.%s' has no setter", pci->name, pi->name);
+                        fprintf(ctx->out, "0 /* invalid property assignment */");
+                        break;
+                    }
+                    if (!member_visible(ctx, pci->name, pi->is_private)) {
+                        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access private property '%s.%s'", pci->name, pi->name);
+                        fprintf(ctx->out, "0 /* private property assignment */");
+                        break;
+                    }
+                    resolve_type(rhs);
+                    Type rt = rhs->ast_resolved_type;
+                    if (type_is_null(&rt) || type_is_reference(&rt) ||
+                        bool_mismatch(&lt, &rt) || enum_mismatch(&lt, &rt)) {
+                        codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to property '%s'", type_name(&rt), type_name(&lt));
+                        fprintf(ctx->out, "0 /* invalid property assignment */");
+                        break;
+                    }
+                    fprintf(ctx->out, "%s_set_%s(", pci->name, pi->name);
+                    codegen_expr(ctx, lhs->ast_children[0]);
+                    fprintf(ctx->out, ", ");
+                    codegen_expr(ctx, rhs);
+                    fprintf(ctx->out, ")");
+                    break;
+                }
             }
 
             {
