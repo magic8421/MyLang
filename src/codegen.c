@@ -169,11 +169,7 @@ static int guard_expr_is_owned(AstNode* node) {
    unowned references can never be null.  (type_is_null, type_accepts_null,
    bool_mismatch, enum_mismatch, type_is_reference now live in ast.c.) */
 
-/* Class lookup that also materialises generic instantiations. */
-static ClassInfo* class_info_for_type(Type* t) {
-    if (t->type_arg_count > 0) return symtab_instantiate_class_from_type(t);
-    return symtab_find_class(t->class_name);
-}
+/* (class_info_for_type moved to sema.c.) */
 
 /* (class_implements moved to sema.c.) */
 

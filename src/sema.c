@@ -69,6 +69,13 @@ int class_implements(ClassInfo* ci, const char* iname) {
     return 0;
 }
 
+/* Class lookup that also materialises generic instantiations (moved from
+   codegen.c, behavior unchanged). */
+ClassInfo* class_info_for_type(Type* t) {
+    if (t->type_arg_count > 0) return symtab_instantiate_class_from_type(t);
+    return symtab_find_class(t->class_name);
+}
+
 /* Element type of a MyArray value type (moved from codegen.c, behavior
    unchanged). */
 Type array_elem_type(const Type* arr_type) {
@@ -868,12 +875,12 @@ static void sema_check_array_method_call(AstNode* node, AstNode* callee,
                                          AstNode* arr, const char* mname);
 /* Defined below, after sema_check_call. */
 static void sema_check_member_access(AstNode* node);
+/* Defined below, after sema_check_call. */
+static void sema_check_builtin_call(AstNode* node, AstNode* callee);
 
 /* Mirrors the call-boundary diagnostics of codegen_call: callee existence,
-   arity, per-argument checks, and method-call visibility.  Diagnostics
-   belonging to later clusters (weak lock(), assert/hash/equals) stay in
-   codegen, but the control flow around them is mirrored so the remaining
-   checks run in the same cases. */
+   arity, per-argument checks, and method-call visibility, plus the weak/
+   unowned lock() and assert/hash/equals builtin checks. */
 static void sema_check_call(AstNode* node) {
     AstNode* callee = node->ast_children[0];
     if (!callee) return;
@@ -915,7 +922,13 @@ static void sema_check_call(AstNode* node) {
             sema_check_array_method_call(node, callee, obj, mname);
             return;
         }
-        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;  /* weak cluster */
+        /* lock() on a weak reference is the point of the builtin: no checks.
+           unowned references have no lock(); codegen mirrors this error. */
+        if (strcmp(mname, "lock") == 0 && ot->is_weak) return;
+        if (strcmp(mname, "lock") == 0 && ot->is_unowned) {
+            sema_report_error(node, "unowned references do not have lock(); use them directly");
+            return;
+        }
 
         if (ot->type_kind == TYPE_CLASS) {
             ClassInfo* ci = ot->type_arg_count > 0
@@ -989,10 +1002,14 @@ static void sema_check_call(AstNode* node) {
     if (callee->ast_kind == AST_IDENT) {
         FuncInfo* fi = symtab_find_func(callee->ast_token.text);
         if (!fi) {
-            /* assert/hash/equals builtins stay in codegen (builtin cluster). */
+            /* assert/hash/equals are unregistered builtins; a user-defined
+               function of the same name shadows them (fi set above). */
             if (strcmp(callee->ast_token.text, "assert") == 0 ||
                 strcmp(callee->ast_token.text, "hash") == 0 ||
-                strcmp(callee->ast_token.text, "equals") == 0) return;
+                strcmp(callee->ast_token.text, "equals") == 0) {
+                sema_check_builtin_call(node, callee);
+                return;
+            }
             sema_report_error(callee, "unknown function '%s'", callee->ast_token.text);
             return;
         }
@@ -1009,6 +1026,93 @@ static void sema_check_call(AstNode* node) {
         sema_check_call_args(node, fi->param_count, fi->param_types);
     }
     /* other callee shapes: no call-boundary checks (mirrors codegen). */
+}
+
+/* Mirrors the diagnostics of the unregistered assert/hash/equals builtins in
+   codegen_call, in codegen's branch order (the order sets diagnostic priority
+   when several apply).  The callee is a bare identifier with no user-defined
+   function of the same name. */
+static void sema_check_builtin_call(AstNode* node, AstNode* callee) {
+    const char* name = callee->ast_token.text;
+
+    if (strcmp(name, "assert") == 0) {
+        AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        if (!args || args->next) {
+            sema_report_error(callee, "assert expects 1 argument");
+        }
+        return;
+    }
+
+    if (strcmp(name, "hash") == 0) {
+        AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+        if (!args || args->next) {
+            sema_report_error(callee, "hash expects 1 argument");
+            return;
+        }
+        Type* at = &args->ast_resolved_type;
+        if (at->is_weak || at->is_unowned) {
+            sema_report_error(callee, "cannot hash a weak/unowned reference; lock() it first");
+            return;
+        }
+        if (at->is_array || at->type_kind == TYPE_STRUCT) {
+            sema_report_error(callee, "cannot hash values of this type");
+            return;
+        }
+        /* A class implementing IHashable hashes through its own hash(). */
+        if (at->type_kind == TYPE_CLASS) {
+            ClassInfo* ci = class_info_for_type(at);
+            if (class_implements(ci, "IHashable")) {
+                MethodInfo* mi = symtab_find_method_in_class(ci, "hash");
+                if (mi && mi->is_private) {
+                    sema_report_error(callee, "hash() method of '%s' is private", ci->name);
+                }
+            }
+        }
+        return;
+    }
+
+    /* equals(a, b) */
+    AstNode* a = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    AstNode* b = a ? a->next : NULL;
+    if (!a || !b || b->next) {
+        sema_report_error(callee, "equals expects 2 arguments");
+        return;
+    }
+    Type* at = &a->ast_resolved_type;
+    Type* bt = &b->ast_resolved_type;
+    if (at->is_weak || at->is_unowned || bt->is_weak || bt->is_unowned) {
+        sema_report_error(callee, "cannot compare weak/unowned references with equals; lock() them first");
+        return;
+    }
+    if (at->is_array || bt->is_array || at->type_kind == TYPE_STRUCT || bt->type_kind == TYPE_STRUCT) {
+        sema_report_error(callee, "cannot compare values of this type with equals");
+        return;
+    }
+    int a_ref = type_is_reference(at) || type_is_null(at);
+    int b_ref = type_is_reference(bt) || type_is_null(bt);
+    if (a_ref != b_ref) {
+        sema_report_error(callee, "cannot compare '%s' with '%s'", type_name(at), type_name(bt));
+        return;
+    }
+    if (!a_ref) return;  /* bool, integer, and float values compare directly */
+    if (type_is_null(at) && type_is_null(bt)) return;
+    if (at->type_kind == TYPE_CLASS && strcmp(at->class_name, "String") == 0) {
+        if (!type_is_null(bt) &&
+            !(bt->type_kind == TYPE_CLASS && strcmp(bt->class_name, "String") == 0)) {
+            sema_report_error(callee, "cannot compare 'string' with '%s'", type_name(bt));
+        }
+        return;
+    }
+    if (at->type_kind == TYPE_INTERFACE) return;
+    if (at->type_kind == TYPE_CLASS && !type_is_null(at)) {
+        ClassInfo* ci = class_info_for_type(at);
+        if (class_implements(ci, "IHashable")) {
+            MethodInfo* mi = symtab_find_method_in_class(ci, "equals");
+            if (mi && mi->is_private) {
+                sema_report_error(callee, "equals(object) method of '%s' is private", ci->name);
+            }
+        }
+    }
 }
 
 /* Mirrors the diagnostics of codegen_array_method_call (array builtins).

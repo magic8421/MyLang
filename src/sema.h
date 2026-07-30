@@ -39,6 +39,10 @@ int is_array_method_name(const char* s);
 /* Interface-implementation predicate (shared with codegen). */
 int class_implements(ClassInfo* ci, const char* iname);
 
+/* Class lookup that also materialises generic instantiations (shared with
+   codegen). */
+ClassInfo* class_info_for_type(Type* t);
+
 /* Element type of a MyArray value type (shared with codegen). */
 Type array_elem_type(const Type* arr_type);
 
