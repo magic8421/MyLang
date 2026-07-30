@@ -642,6 +642,50 @@ static void sema_check_unary(AstNode* node) {
     }
 }
 
+/* Return type of the function/method body currently being walked; set by
+   sema_walk_body and the interface-default-method loop (mirrors
+   ctx->return_type in codegen). */
+static Type s_current_ret_type;
+
+/* Mirrors the diagnostics of codegen_return_stmt.  The expression has
+   already been resolved (and checked) by sema_walk_expr. */
+static void sema_check_return(AstNode* node) {
+    if (node->ast_child_count == 0) return;  /* bare 'return': no diagnostic */
+    AstNode* ret = node->ast_children[0];
+
+    if (type_is_null(&ret->ast_resolved_type)) {
+        /* return null: only reference return types are allowed. */
+        if (!type_accepts_null(&s_current_ret_type)) {
+            sema_report_error(ret, "cannot return null from function returning '%s'",
+                              type_name(&s_current_ret_type));
+        }
+        return;
+    }
+
+    /* Strict bool/enum rules at the return boundary. */
+    if (s_current_ret_type.type_kind != TYPE_VOID &&
+        (bool_mismatch(&s_current_ret_type, &ret->ast_resolved_type) ||
+         enum_mismatch(&s_current_ret_type, &ret->ast_resolved_type))) {
+        sema_report_error(ret, "cannot return '%s' from function returning '%s'",
+                          type_name(&ret->ast_resolved_type), type_name(&s_current_ret_type));
+    }
+
+    /* object converts back to a concrete type only through 'as'. */
+    if (ret->ast_resolved_type.type_kind == TYPE_OBJECT &&
+        s_current_ret_type.type_kind != TYPE_OBJECT) {
+        sema_report_error(ret, "cannot return 'object' from function returning '%s'; cast with 'as' first",
+                          type_name(&s_current_ret_type));
+    }
+
+    /* Array-by-value: mirrors the emission chain in codegen_return_stmt,
+       where class/object/interface values take their own branches first. */
+    TypeKind k = ret->ast_resolved_type.type_kind;
+    if (k != TYPE_CLASS && k != TYPE_OBJECT && k != TYPE_INTERFACE &&
+        ret->ast_resolved_type.is_array) {
+        sema_report_error(ret, "cannot return array by value; use move_to(ref) through a ref parameter");
+    }
+}
+
 /* Resolves every node of an expression tree (post-order) and runs the
    migrated checks.  Call argument lists are linked through 'next', so those
    are walked too. */
@@ -756,6 +800,7 @@ static void sema_walk_stmt(AstNode* node) {
 
         case AST_RETURN_STMT:
             if (node->ast_child_count > 0) sema_walk_expr(node->ast_children[0]);
+            sema_check_return(node);
             break;
 
         case AST_EXPR_STMT:
@@ -774,9 +819,12 @@ static void sema_walk_stmt(AstNode* node) {
 }
 
 /* Walks a function/method body with the given parameters in scope, inserting
-   'this' when insert_this is set (mirrors the three codegen emit sites). */
+   'this' when insert_this is set (mirrors the three codegen emit sites).
+   ret_type becomes the current return type for sema_check_return. */
 static void sema_walk_body(AstNode* params, AstNode* body,
-                           int insert_this, Type* thiz_type) {
+                           int insert_this, Type* thiz_type, Type* ret_type) {
+    Type prev_ret_type = s_current_ret_type;
+    s_current_ret_type = *ret_type;
     symtab_enter_scope();
     if (insert_this) {
         symtab_insert("this", *thiz_type);
@@ -796,6 +844,7 @@ static void sema_walk_body(AstNode* params, AstNode* body,
         sema_walk_stmt(body);
     }
     symtab_exit_scope();
+    s_current_ret_type = prev_ret_type;
 }
 
 static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) {
@@ -816,7 +865,7 @@ static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) 
         }
         insert_this = 1;
     }
-    sema_walk_body(params, body, insert_this, &thiz_type);
+    sema_walk_body(params, body, insert_this, &thiz_type, &m->ast_resolved_type);
 }
 
 void sema_check(AstNode* program) {
@@ -853,7 +902,7 @@ void sema_check(AstNode* program) {
             AstNode* params = (decl->ast_child_count == 2) ? decl->ast_children[0] : NULL;
             AstNode* body   = (decl->ast_child_count == 2) ? decl->ast_children[1]
                                                            : (decl->ast_child_count == 1 ? decl->ast_children[0] : NULL);
-            sema_walk_body(params, body, 0, NULL);
+            sema_walk_body(params, body, 0, NULL, &decl->ast_resolved_type);
         }
         decl = decl->next;
     }
@@ -869,6 +918,8 @@ void sema_check(AstNode* program) {
                 InterfaceMethodInfo* im = &ii->methods[j];
                 AstNode* body = im->interface_method_default_body;
                 if (!body) continue;
+                Type prev_ret_type = s_current_ret_type;
+                s_current_ret_type = im->return_type;
                 symtab_enter_scope();
                 int k;
                 for (k = 0; k < im->param_count; k++) {
@@ -884,6 +935,7 @@ void sema_check(AstNode* program) {
                     sema_walk_stmt(body);
                 }
                 symtab_exit_scope();
+                s_current_ret_type = prev_ret_type;
             }
             ii = ii->next;
         }
