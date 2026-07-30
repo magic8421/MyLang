@@ -129,6 +129,8 @@ int main(int argc, char** argv) {
 
     sema_check(ast);
 
+    if (sema_had_error()) { exit_code = 1; goto exit; }
+
     codegen_program(ast, out, header, src_path, leak_check, header_name, xor_strings);
     if (codegen_had_error()) { exit_code = 1; goto exit; }
 

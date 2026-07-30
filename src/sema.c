@@ -1,6 +1,77 @@
 #include "sema.h"
 #include "util.h"
 #include <string.h>
+#include <stdio.h>
+#include <stdarg.h>
+
+/* -------------------------------------------------------------------------
+   Diagnostics (VS Code-compatible location prefix, same shape as codegen's)
+   ------------------------------------------------------------------------- */
+
+static int s_sema_error = 0;
+
+int sema_had_error(void) { return s_sema_error; }
+
+/* Reports an error located at the given node: "path(line,col): error: msg".
+   The message text is identical to the codegen diagnostic it replaces; the
+   negative tests match on it. */
+static void sema_report_error(AstNode* node, const char* fmt, ...) {
+    const char* file = (node && node->ast_token.filename && node->ast_token.filename[0])
+                       ? node->ast_token.filename : "<unknown>";
+    int line = node ? node->ast_token.line : 0;
+    int col  = node ? node->ast_token.col : 0;
+    va_list ap;
+    fprintf(stderr, "%s(%d,%d): error: ", file, line, col);
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    fprintf(stderr, "\n");
+    s_sema_error = 1;
+}
+
+/* -------------------------------------------------------------------------
+   Predicates shared with codegen (moved from codegen.c, behavior unchanged)
+   ------------------------------------------------------------------------- */
+
+int is_bit_compound_op(TokenKind k) {
+    return k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
+           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
+}
+
+int is_compound_assign_op(TokenKind k) {
+    return k == TOK_PLUS_ASSIGN || k == TOK_MINUS_ASSIGN ||
+           k == TOK_STAR_ASSIGN || k == TOK_SLASH_ASSIGN ||
+           k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
+           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
+}
+
+PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
+    if (!node || node->ast_kind != AST_MEMBER_ACCESS) return NULL;
+    AstNode* obj = node->ast_children[0];
+    if (!obj) return NULL;
+    sema_resolve_type(obj);
+    if (obj->ast_resolved_type.type_kind != TYPE_CLASS) return NULL;
+    ClassInfo* ci = symtab_find_class(obj->ast_resolved_type.class_name);
+    if (!ci || ci->is_generic) return NULL;
+    PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
+    if (pi && out_ci) *out_ci = ci;
+    return pi;
+}
+
+/* True when the expression is a lock() call on an unowned reference, which
+   yields a strong value that may be assigned to a strong class variable.
+   The codegen_call path emits a dedicated error message for this; we must not
+   shadow it with a generic type-mismatch error in the variable-init or
+   assignment paths.  Callers have already resolved the source expression. */
+int expr_is_unowned_lock(AstNode* node) {
+    if (!node || node->ast_kind != AST_CALL || node->ast_child_count < 1) return 0;
+    AstNode* mem = node->ast_children[0];
+    if (!mem || mem->ast_kind != AST_MEMBER_ACCESS) return 0;
+    if (strcmp(mem->ast_token.text, "lock") != 0) return 0;
+    AstNode* obj = mem->ast_children[0];
+    if (!obj) return 0;
+    return obj->ast_resolved_type.is_unowned;
+}
 
 /* -------------------------------------------------------------------------
    Type resolution (moved from codegen.c; behavior unchanged, plus caching)
@@ -275,8 +346,127 @@ Type sema_resolve_type(AstNode* node) {
    Forward pass: pre-resolve expression types in every reachable body
    ------------------------------------------------------------------------- */
 
-/* Resolves every node of an expression tree (post-order).  Call argument
-   lists are linked through 'next', so those are walked too. */
+/* Assignment type checks, migrated from the codegen AST_ASSIGN dispatch.
+   The branch chain mirrors the dispatch exactly (array/null/const guards,
+   compound ops, array elements, then the lhs-kind chain); codegen keeps its
+   copies as the fallback for generic instantiations, which sema never sees.
+   Property writes are skipped: they are still unlowered at sema time and keep
+   their dedicated codegen diagnostics. */
+static void sema_check_assign(AstNode* node) {
+    AstNode* lhs = node->ast_children[0];
+    AstNode* rhs = node->ast_children[1];
+    if (!lhs || !rhs) return;
+    Type lt = lhs->ast_resolved_type;
+    Type rt = rhs->ast_resolved_type;
+
+    if (lt.is_array) {
+        sema_report_error(lhs, "cannot assign arrays directly; use move_to(ref) or copy_to(ref)");
+        return;
+    }
+    if (type_is_null(&lt)) {
+        sema_report_error(node, "cannot assign to null literal");
+        return;
+    }
+    if (lt.is_const) {
+        sema_report_error(node, "cannot assign to const variable '%s'", lhs->ast_token.text);
+        return;
+    }
+    if (member_access_property(lhs, NULL)) return;
+
+    TokenKind assign_op = node->ast_token.kind;
+    if (is_compound_assign_op(assign_op)) {
+        /* Compound assignment: arithmetic ops accept primitive numeric
+           types; bitwise ops require integer types. */
+        int type_ok = is_bit_compound_op(assign_op)
+            ? type_is_integer(&lt) : type_is_numeric(&lt);
+        if (!type_ok) {
+            sema_report_error(node, "compound assignment not supported for this type");
+        }
+        return;
+    }
+
+    if (lhs->ast_kind == AST_ARRAY_ACCESS && lhs->ast_children[0] &&
+        lhs->ast_children[0]->ast_resolved_type.is_array) {
+        /* Array element assignment. */
+        if (lt.type_kind == TYPE_OBJECT) {
+            int rhs_iface = (rt.type_kind == TYPE_INTERFACE && !rt.is_weak);
+            if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
+                rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
+                sema_report_error(node, "cannot assign '%s' to 'object' array element", type_name(&rt));
+            }
+            return;
+        }
+        if (type_is_reference(&lt) || lt.is_weak) return;
+        /* primitive/struct/bool element: same checks as the plain branch */
+        if (type_is_null(&rt)) {
+            sema_report_error(node, "cannot assign 'null' to '%s'", type_name(&lt));
+        } else if (bool_mismatch(&lt, &rt) || enum_mismatch(&lt, &rt)) {
+            sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+        } else if (type_is_reference(&rt)) {
+            sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+        }
+        return;
+    }
+
+    if ((lt.is_weak || lt.is_unowned) && lt.type_kind == TYPE_CLASS) {
+        /* Weak/unowned class variable or field. */
+        if (type_is_null(&rt) && lt.is_unowned) {
+            sema_report_error(node, "cannot assign null to unowned reference");
+            return;
+        }
+        if (rt.type_kind != TYPE_CLASS && !type_is_null(&rt) && !rt.is_weak && !rt.is_unowned) {
+            sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+        }
+        return;
+    }
+    if (lt.type_kind == TYPE_CLASS) {
+        if (rt.type_kind == TYPE_OBJECT) {
+            sema_report_error(node, "cannot assign 'object' to '%s'; cast with 'as' first", type_name(&lt));
+            return;
+        }
+        if (rt.type_kind != TYPE_CLASS && !type_is_null(&rt) && !expr_is_unowned_lock(rhs)) {
+            sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+            return;
+        }
+        if (rt.is_weak) {
+            sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+        }
+        return;
+    }
+    if (lt.type_kind == TYPE_OBJECT) {
+        int rhs_iface = (rt.type_kind == TYPE_INTERFACE && !rt.is_weak);
+        if (!rhs_iface && rt.type_kind != TYPE_CLASS &&
+            rt.type_kind != TYPE_OBJECT && !type_is_null(&rt)) {
+            sema_report_error(node, "cannot assign '%s' to 'object'", type_name(&rt));
+        }
+        return;
+    }
+    if (lt.is_weak && lt.type_kind == TYPE_INTERFACE) {
+        if (!(rt.is_weak && rt.type_kind == TYPE_INTERFACE) &&
+            rt.type_kind != TYPE_INTERFACE && rt.type_kind != TYPE_CLASS &&
+            !type_is_null(&rt)) {
+            sema_report_error(node, "cannot assign to weak interface from this type");
+        }
+        return;
+    }
+    if (lt.type_kind == TYPE_INTERFACE) {
+        /* No dedicated checks in the assign dispatch. */
+        return;
+    }
+
+    /* primitive/struct/bool plain assignment */
+    if (type_is_null(&rt)) {
+        sema_report_error(node, "cannot assign 'null' to '%s'", type_name(&lt));
+    } else if (bool_mismatch(&lt, &rt) || enum_mismatch(&lt, &rt)) {
+        sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+    } else if (type_is_reference(&rt)) {
+        sema_report_error(node, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
+    }
+}
+
+/* Resolves every node of an expression tree (post-order) and runs the
+   migrated checks.  Call argument lists are linked through 'next', so those
+   are walked too. */
 static void sema_walk_expr(AstNode* node) {
     if (!node) return;
     int i;
@@ -285,6 +475,9 @@ static void sema_walk_expr(AstNode* node) {
     }
     sema_walk_expr(node->next);
     sema_resolve_type(node);
+    if (node->ast_kind == AST_ASSIGN) {
+        sema_check_assign(node);
+    }
 }
 
 static void sema_walk_stmt(AstNode* node) {

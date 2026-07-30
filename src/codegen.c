@@ -16,7 +16,6 @@ static void codegen_expr_raw(CodegenContext* ctx, AstNode* node);
 static void indent_line(CodegenContext* ctx, int indent);
 static void emit_array_ptr_expr(CodegenContext* ctx, AstNode* arr_node);
 static void codegen_expr_stmt(CodegenContext* ctx, AstNode* node, int indent);
-static int is_compound_assign_op(TokenKind k);
 
 #define MAX_CLEANUP 128
 #define MAX_SCOPE 64
@@ -144,8 +143,6 @@ static const char* class_c_name(const ClassInfo* ci) {
     return ci->name;
 }
 
-static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci);
-
 static int expr_is_owned(AstNode* node) {
     if (node && node->ast_kind == AST_MEMBER_ACCESS) {
         /* A reference-typed property read lowers to a getter call, whose
@@ -169,40 +166,8 @@ static int guard_expr_is_owned(AstNode* node) {
 
 /* The 'null' literal has the compile-time-only type TYPE_NULL.  It may be
    assigned to class (including string), interface, and weak references;
-   unowned references can never be null. */
-static int type_is_null(const Type* t) {
-    return t->type_kind == TYPE_NULL;
-}
-
-static int type_accepts_null(const Type* t) {
-    if (t->is_array || t->is_unowned) return 0;
-    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
-           t->type_kind == TYPE_OBJECT;
-}
-
-/* Strict bool rule: bool and numeric types do not implicitly convert.
-   True when exactly one side is bool. */
-static int bool_mismatch(const Type* dst, const Type* src) {
-    return (dst->type_kind == TYPE_BOOL) != (src->type_kind == TYPE_BOOL);
-}
-
-/* Strict enum rule: enums do not implicitly convert to or from any other
-   type, and two different enum types do not convert between each other.
-   Cross the boundary with an explicit 'as' cast instead. */
-static int enum_mismatch(const Type* dst, const Type* src) {
-    int de = dst->type_kind == TYPE_ENUM;
-    int se = src->type_kind == TYPE_ENUM;
-    if (de != se) return 1;
-    return de && strcmp(dst->class_name, src->class_name) != 0;
-}
-
-/* Reference-like types: class, interface, object (weak/unowned class and
-   interface are included because they are represented as pointers/fat
-   pointers).  Arrays are handled separately. */
-static int type_is_reference(const Type* t) {
-    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
-           t->type_kind == TYPE_OBJECT;
-}
+   unowned references can never be null.  (type_is_null, type_accepts_null,
+   bool_mismatch, enum_mismatch, type_is_reference now live in ast.c.) */
 
 /* Class lookup that also materialises generic instantiations. */
 static ClassInfo* class_info_for_type(Type* t) {
@@ -244,19 +209,7 @@ static int type_is_ref_struct_array(const Type* t) {
     return struct_has_ref_fields(&et);
 }
 
-/* Detect the special case of calling .lock() on an unowned reference.  The
-   codegen_call path emits a dedicated error message for this; we must not
-   shadow it with a generic type-mismatch error in the variable-init or
-   assignment paths.  Callers have already resolved the source expression. */
-static int expr_is_unowned_lock(AstNode* node) {
-    if (!node || node->ast_kind != AST_CALL || node->ast_child_count < 1) return 0;
-    AstNode* mem = node->ast_children[0];
-    if (!mem || mem->ast_kind != AST_MEMBER_ACCESS) return 0;
-    if (strcmp(mem->ast_token.text, "lock") != 0) return 0;
-    AstNode* obj = mem->ast_children[0];
-    if (!obj) return 0;
-    return obj->ast_resolved_type.is_unowned;
-}
+/* (expr_is_unowned_lock moved to sema.c.) */
 /* Emit a codegen error with a VS Code-compatible location prefix.
    The format is "path(line,col): error: message" so that problem matchers
    (including MSVC style) can jump to the source location. */
@@ -288,23 +241,8 @@ static void const_c_name(const ConstInfo* ci, char* out, size_t out_size) {
     }
 }
 
-/* Integer types (bitwise operands); bool is intentionally excluded. */
-static int type_is_integer(const Type* t) {
-    return t->type_kind == TYPE_I8 || t->type_kind == TYPE_I16 ||
-           t->type_kind == TYPE_I32 || t->type_kind == TYPE_I64 ||
-           t->type_kind == TYPE_U8 || t->type_kind == TYPE_U16 ||
-           t->type_kind == TYPE_U32 || t->type_kind == TYPE_U64;
-}
-
-/* Primitive numeric types (arithmetic compound assignment). */
-static int type_is_numeric(const Type* t) {
-    return type_is_integer(t) || t->type_kind == TYPE_F32 || t->type_kind == TYPE_F64;
-}
-
-static int is_bit_compound_op(TokenKind k) {
-    return k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
-           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
-}
+/* (type_is_integer and type_is_numeric moved to ast.c; is_bit_compound_op
+   moved to sema.c.) */
 
 static const char* compound_op_text(TokenKind k) {
     switch (k) {
@@ -1758,22 +1696,9 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node) {
     fprintf(ctx->out, ", %s))", elem_size);
 }
 
-/* If node is a member access that resolves to a class property, returns the
-   PropertyInfo and optionally the owning class.  Used by the prepare-time
+/* (member_access_property moved to sema.c; still used by the prepare-time
    property lowering, the expr_is_owned safety net, and the property read,
-   write, and increment/decrement dispatch paths. */
-static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
-    if (!node || node->ast_kind != AST_MEMBER_ACCESS) return NULL;
-    AstNode* obj = node->ast_children[0];
-    if (!obj) return NULL;
-    resolve_type(obj);
-    if (obj->ast_resolved_type.type_kind != TYPE_CLASS) return NULL;
-    ClassInfo* ci = symtab_find_class(obj->ast_resolved_type.class_name);
-    if (!ci || ci->is_generic) return NULL;
-    PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
-    if (pi && out_ci) *out_ci = ci;
-    return pi;
-}
+   write, and increment/decrement dispatch paths.) */
 
 /* Turn a property access node into an ordinary accessor call node:
    the member access obj.X becomes the call obj.get_X() (args == NULL) or,
@@ -5030,12 +4955,7 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
     }
 }
 
-static int is_compound_assign_op(TokenKind k) {
-    return k == TOK_PLUS_ASSIGN || k == TOK_MINUS_ASSIGN ||
-           k == TOK_STAR_ASSIGN || k == TOK_SLASH_ASSIGN ||
-           k == TOK_AMP_ASSIGN || k == TOK_PIPE_ASSIGN || k == TOK_CARET_ASSIGN ||
-           k == TOK_SHL_ASSIGN || k == TOK_SHR_ASSIGN;
-}
+/* (is_compound_assign_op moved to sema.c.) */
 
 /* For compound assignments and increment/decrement on non-trivial lvalues
    (array elements, member accesses, etc.), evaluate the address once into a

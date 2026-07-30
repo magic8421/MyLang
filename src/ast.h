@@ -135,6 +135,29 @@ AstNode* ast_append_list(AstNode* head, AstNode* item);
 const char* type_name(const Type* t);
 int         type_equal(const Type* a, const Type* b);
 
+/* Type predicates shared by the sema pass and the code generator. */
+
+/* The 'null' literal has the compile-time-only type TYPE_NULL.  It may be
+   assigned to class (including string), interface, and weak references;
+   unowned references can never be null. */
+int type_is_null(const Type* t);
+int type_accepts_null(const Type* t);
+/* Strict bool rule: bool and numeric types do not implicitly convert.
+   True when exactly one side is bool. */
+int bool_mismatch(const Type* dst, const Type* src);
+/* Strict enum rule: enums do not implicitly convert to or from any other
+   type, and two different enum types do not convert between each other.
+   Cross the boundary with an explicit 'as' cast instead. */
+int enum_mismatch(const Type* dst, const Type* src);
+/* Reference-like types: class, interface, object (weak/unowned class and
+   interface are included because they are represented as pointers/fat
+   pointers).  Arrays are handled separately. */
+int type_is_reference(const Type* t);
+/* Integer types (bitwise operands); bool is intentionally excluded. */
+int type_is_integer(const Type* t);
+/* Primitive numeric types (arithmetic compound assignment). */
+int type_is_numeric(const Type* t);
+
 /* Type construction helpers */
 Type        type_make_primitive(TypeKind kind);
 Type        type_make_user(TypeKind kind, const char* name);

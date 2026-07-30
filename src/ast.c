@@ -77,6 +77,43 @@ int type_equal(const Type* a, const Type* b) {
     return 1;
 }
 
+int type_is_null(const Type* t) {
+    return t->type_kind == TYPE_NULL;
+}
+
+int type_accepts_null(const Type* t) {
+    if (t->is_array || t->is_unowned) return 0;
+    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
+           t->type_kind == TYPE_OBJECT;
+}
+
+int bool_mismatch(const Type* dst, const Type* src) {
+    return (dst->type_kind == TYPE_BOOL) != (src->type_kind == TYPE_BOOL);
+}
+
+int enum_mismatch(const Type* dst, const Type* src) {
+    int de = dst->type_kind == TYPE_ENUM;
+    int se = src->type_kind == TYPE_ENUM;
+    if (de != se) return 1;
+    return de && strcmp(dst->class_name, src->class_name) != 0;
+}
+
+int type_is_reference(const Type* t) {
+    return t->type_kind == TYPE_CLASS || t->type_kind == TYPE_INTERFACE ||
+           t->type_kind == TYPE_OBJECT;
+}
+
+int type_is_integer(const Type* t) {
+    return t->type_kind == TYPE_I8 || t->type_kind == TYPE_I16 ||
+           t->type_kind == TYPE_I32 || t->type_kind == TYPE_I64 ||
+           t->type_kind == TYPE_U8 || t->type_kind == TYPE_U16 ||
+           t->type_kind == TYPE_U32 || t->type_kind == TYPE_U64;
+}
+
+int type_is_numeric(const Type* t) {
+    return type_is_integer(t) || t->type_kind == TYPE_F32 || t->type_kind == TYPE_F64;
+}
+
 Type type_make_primitive(TypeKind kind) {
     Type t = {0};
     t.type_kind = kind;
