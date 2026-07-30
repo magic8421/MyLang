@@ -1,7 +1,7 @@
 CC       = gcc
 CFLAGS   = -Wall -Wextra -std=c99 -g
 SRCDIR   = src
-OBJS     = $(SRCDIR)/token.o $(SRCDIR)/ast.o $(SRCDIR)/mangle.o $(SRCDIR)/lexer.o $(SRCDIR)/symtab.o $(SRCDIR)/parser.o $(SRCDIR)/codegen.o $(SRCDIR)/main.o
+OBJS     = $(SRCDIR)/token.o $(SRCDIR)/ast.o $(SRCDIR)/mangle.o $(SRCDIR)/lexer.o $(SRCDIR)/symtab.o $(SRCDIR)/parser.o $(SRCDIR)/sema.o $(SRCDIR)/codegen.o $(SRCDIR)/main.o
 TARGET   = mylang.exe
 
 .PHONY: all clean test

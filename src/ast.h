@@ -118,6 +118,10 @@ struct AstNode {
     int      ast_is_native;
     int      ast_is_static;
     int      xor_str_id;
+    /* Set once sema_resolve_type has computed ast_resolved_type; later calls
+       return the cached type.  Code that rewrites a node (property lowering,
+       generic type substitution) must clear this flag. */
+    int      ast_is_resolved;
 
     /* for AST_BINARY / AST_UNARY: op stored in tok.kind */
     /* for AST_IDENT / AST_CLASS_DECL: name in tok.text */

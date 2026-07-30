@@ -22,7 +22,7 @@ if not exist "%VSPATH%" (
 call "%VSPATH%" >nul 2>&1
 
 set "CFLAGS=/nologo /std:c11 /fsanitize=address /Zi /W3 /D_CRT_SECURE_NO_WARNINGS"
-set "SRCS=src\token.c src\ast.c src\mangle.c src\lexer.c src\symtab.c src\parser.c src\codegen.c src\main.c"
+set "SRCS=src\token.c src\ast.c src\mangle.c src\lexer.c src\symtab.c src\parser.c src\sema.c src\codegen.c src\main.c"
 
 if not exist build mkdir build
 

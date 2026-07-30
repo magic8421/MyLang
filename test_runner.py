@@ -92,7 +92,7 @@ def find_python():
 
 def compile_mylang():
     """Build mylang.exe with MSVC + ASan (release) or debug CRT (debug)."""
-    srcs = "src\\token.c src\\ast.c src\\mangle.c src\\lexer.c src\\symtab.c src\\parser.c src\\codegen.c src\\main.c"
+    srcs = "src\\token.c src\\ast.c src\\mangle.c src\\lexer.c src\\symtab.c src\\parser.c src\\sema.c src\\codegen.c src\\main.c"
     if TEST_MODE == "debug":
         flags = "/MDd /Zi"
     else:

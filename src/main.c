@@ -1,5 +1,6 @@
 #include "lexer.h"
 #include "parser.h"
+#include "sema.h"
 #include "codegen.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -126,8 +127,9 @@ int main(int argc, char** argv) {
         goto exit;
     }
 
-    codegen_program(ast, out, header, src_path, leak_check, header_name, xor_strings);
+    sema_check(ast);
 
+    codegen_program(ast, out, header, src_path, leak_check, header_name, xor_strings);
     if (codegen_had_error()) { exit_code = 1; goto exit; }
 
     printf("compiled '%s' -> '%s', '%s'\n", src_path, out_path, header_path);

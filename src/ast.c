@@ -217,6 +217,7 @@ static void ast_substitute_types_node(AstNode* node, const char* params[], const
     Type* sub = type_substitute(&node->ast_resolved_type, params, args, count);
     type_free_args(&node->ast_resolved_type);
     node->ast_resolved_type = *sub;
+    node->ast_is_resolved = 0;  /* type changed: invalidate the sema cache */
     free(sub);
     int i;
     for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
