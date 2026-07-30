@@ -468,8 +468,9 @@ i32 x = c.Count;            // calls the getter
 
 Rules:
 
-- The property type must be a primitive, `bool`, or an enum. Reference-type
-  properties (string/class/interface) are not supported yet.
+- The property type must be a primitive, `bool`, an enum, or a strong class
+  reference (including `string`). `weak`/`unowned` references, arrays,
+  `object`, and interfaces are not supported.
 - An accessor body is a method body: `this` is the receiver, and the setter
   has an implicit `value` parameter of the property type.
 - A property may be get-only or set-only; using the missing accessor is a

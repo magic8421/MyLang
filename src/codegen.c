@@ -143,7 +143,16 @@ static const char* class_c_name(const ClassInfo* ci) {
     return ci->name;
 }
 
+static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci);
+
 static int expr_is_owned(AstNode* node) {
+    if (node && node->ast_kind == AST_MEMBER_ACCESS) {
+        /* A reference-typed property read lowers to a getter call, whose
+           result is owned like any other call result.  Value-typed property
+           reads keep the plain field-access treatment. */
+        PropertyInfo* pi = member_access_property(node, NULL);
+        if (pi && pi->prop_type.type_kind == TYPE_CLASS) return 1;
+    }
     return node && (node->ast_kind == AST_CALL ||
                     node->ast_kind == AST_NEW ||
                     node->ast_kind == AST_STRING_LIT);
@@ -2008,8 +2017,9 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node) {
 }
 
 /* If node is a member access that resolves to a class property, returns the
-   PropertyInfo and optionally the owning class.  Used by the property read,
-   write, and increment/decrement paths. */
+   PropertyInfo and optionally the owning class.  Used by the prepare-time
+   property lowering, the expr_is_owned safety net, and the property read,
+   write, and increment/decrement dispatch paths. */
 static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
     if (!node || node->ast_kind != AST_MEMBER_ACCESS) return NULL;
     AstNode* obj = node->ast_children[0];
@@ -2021,6 +2031,105 @@ static PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
     PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
     if (pi && out_ci) *out_ci = ci;
     return pi;
+}
+
+/* Turn a property access node into an ordinary accessor call node:
+   the member access obj.X becomes the call obj.get_X() (args == NULL) or,
+   for an assignment node obj.X = rhs, the call obj.set_X(rhs).  The object
+   node moves under the synthetic callee; the old node is rewritten in place
+   so parents and list links stay valid. */
+static void property_to_call(AstNode* node, AstNode* obj, AstNode* args,
+                             const char* prefix, const char* prop_name) {
+    Token tok = node->ast_token;
+    int n = snprintf(tok.text, sizeof(tok.text), "%s_%s", prefix, prop_name);
+    CHECK_SNPRINTF(n, sizeof(tok.text), "accessor name too long");
+    AstNode* callee = ast_new_node(AST_MEMBER_ACCESS, tok);
+    ast_add_child(callee, obj);
+    memset(node->ast_children, 0, sizeof(node->ast_children));
+    node->ast_kind = AST_CALL;
+    node->ast_token = tok;
+    node->ast_child_count = 0;
+    ast_add_child(node, callee);
+    if (args) {
+        args->next = NULL;
+        ast_add_child(node, args);
+    }
+    memset(&node->ast_resolved_type, 0, sizeof(node->ast_resolved_type));
+    node->ast_temp_name[0] = '\0';
+    node->ast_match_var[0] = '\0';
+}
+
+/* Lower valid property accesses into accessor calls before the temporary,
+   guard, and f-string passes run, so reference-typed properties get the same
+   ownership treatment as method calls:
+     read   obj.X       -> obj.get_X()
+     write  obj.X = rhs -> obj.set_X(rhs)
+   Invalid accesses (no accessor, private, compound assignment, ++/--) are
+   left untouched for the dispatch paths, which report the diagnostics. */
+static void lower_property_access(CodegenContext* ctx, AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_ASSIGN) {
+        AstNode* lhs = node->ast_children[0];
+        AstNode* rhs = node->ast_children[1];
+        ClassInfo* pci = NULL;
+        PropertyInfo* pi = NULL;
+        if (!is_compound_assign_op(node->ast_token.kind)) {
+            pi = member_access_property(lhs, &pci);
+        }
+        if (pi && pi->has_set && member_visible(ctx, pci->name, pi->is_private)) {
+            property_to_call(node, lhs->ast_children[0], rhs, "set", pi->name);
+            lower_property_access(ctx, node->ast_children[0]->ast_children[0]);
+            lower_property_access(ctx, node->ast_children[1]);
+        } else {
+            /* Keep the LHS shape for the dispatch diagnostics; still lower
+               property reads inside the object expression. */
+            if (lhs && lhs->ast_kind == AST_MEMBER_ACCESS) {
+                lower_property_access(ctx, lhs->ast_children[0]);
+            } else {
+                lower_property_access(ctx, lhs);
+            }
+            lower_property_access(ctx, rhs);
+        }
+        lower_property_access(ctx, node->next);
+        return;
+    }
+    if (node->ast_kind == AST_INC_DEC) {
+        AstNode* operand = node->ast_children[0];
+        if (operand && operand->ast_kind == AST_MEMBER_ACCESS) {
+            lower_property_access(ctx, operand->ast_children[0]);
+        } else {
+            lower_property_access(ctx, operand);
+        }
+        lower_property_access(ctx, node->next);
+        return;
+    }
+    if (node->ast_kind == AST_MEMBER_ACCESS) {
+        ClassInfo* pci = NULL;
+        PropertyInfo* pi = member_access_property(node, &pci);
+        if (pi && pi->has_get && member_visible(ctx, pci->name, pi->is_private)) {
+            property_to_call(node, node->ast_children[0], NULL, "get", pi->name);
+            lower_property_access(ctx, node->ast_children[0]->ast_children[0]);
+        } else {
+            lower_property_access(ctx, node->ast_children[0]);
+        }
+        lower_property_access(ctx, node->next);
+        return;
+    }
+    {
+        int i;
+        for (i = 0; i < node->ast_child_count; i++) {
+            AstNode* child = node->ast_children[i];
+            if (node->ast_kind == AST_CALL && i == 0 &&
+                child && child->ast_kind == AST_MEMBER_ACCESS) {
+                /* The callee of a call is not a read position: obj.X() where
+                   X names a property is reported by codegen_call. */
+                lower_property_access(ctx, child->ast_children[0]);
+            } else {
+                lower_property_access(ctx, child);
+            }
+        }
+    }
+    lower_property_access(ctx, node->next);
 }
 
 static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
@@ -2486,10 +2595,12 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 break;
             }
 
-            /* Property assignment: obj.X = rhs lowers to a setter call
-               Class_set_X(obj, rhs).  Intercepts before the compound and
-               store paths; property types are value types, so no reference
-               ownership handling is needed. */
+            /* Property assignment: obj.X = rhs.  Valid property writes have
+               already been rewritten into setter calls by
+               lower_property_access during prepare; this block only remains
+               as a fallback for expressions that bypass prepare, and to
+               report the dedicated diagnostics for the cases lowering skips
+               (compound assignment, no setter, private). */
             {
                 ClassInfo* pci = NULL;
                 PropertyInfo* pi = member_access_property(lhs, &pci);
@@ -3975,10 +4086,11 @@ static void indent_line(CodegenContext* ctx, int indent) {
     for (i = 0; i < indent; i++) fprintf(ctx->out, "    ");
 }
 
-/* Prepare an expression for codegen: fill default call arguments, lower any
-   f-strings, then extract owned subexpression temporaries and caller-side
-   guarded temporaries. */
+/* Prepare an expression for codegen: lower property accesses into accessor
+   calls, fill default call arguments, lower any f-strings, then extract
+   owned subexpression temporaries and caller-side guarded temporaries. */
 static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
+    lower_property_access(ctx, expr);
     materialize_call_defaults_walk(expr);
     emit_fstring_preambles(ctx, expr, indent);
     emit_subexpr_temps(ctx, expr, indent);
@@ -3991,6 +4103,7 @@ static void prepare_expression(CodegenContext* ctx, AstNode* expr, int indent) {
    not by an enclosing statement, so it must be released at the end of each
    iteration. */
 static void prepare_condition(CodegenContext* ctx, AstNode* cond, int indent) {
+    lower_property_access(ctx, cond);
     materialize_call_defaults_walk(cond);
     emit_fstring_preambles(ctx, cond, indent);
     emit_subexpr_temps(ctx, cond, indent);

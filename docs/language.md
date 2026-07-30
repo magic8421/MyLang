@@ -174,11 +174,9 @@ Detailed reference; the rules in AGENTS.md still apply.
 
 ## Properties
 - C#-style: `i32 Count { get { ... } set { ... } }` in a class body.
-  Property types are restricted to primitives, bool, and enums: a property
-  read is a call result (owned for reference types), which the
-  reference-ownership machinery (`expr_is_owned` and the guard sites) cannot
-  model at member-access sites yet — reference-type properties are future
-  work.
+  Property types: primitives, bool, enums, and strong class references
+  (including `string`).  `weak`/`unowned` references, arrays, `object`, and
+  interfaces are rejected at parse time.
 - Parsing: the class member loop sees `{` after `Type name` and parses
   accessors.  Each accessor is SYNTHESIZED AS AN ORDINARY METHOD named
   `get_X` / `set_X` (registered via `symtab_add_method` and appended to the
@@ -188,12 +186,19 @@ Detailed reference; the rules in AGENTS.md still apply.
 - A `PropertyInfo` per property hangs off `ClassInfo.properties`
   (`symtab_add_property` / `symtab_find_property`); it drives the access
   dispatch.
-- Read path: `codegen_member_access` falls through to the property lookup
-  when no field matches, and emits `Class_get_X(obj)`.  Write path: the
-  `AST_ASSIGN` case intercepts property lvalues via `member_access_property`
-  and emits `Class_set_X(obj, rhs)` with primitive-only type checks
-  (bool/enum mismatch, no references/null).  `resolve_type` returns
-  `prop_type` for property member access.
+- Lowering: `lower_property_access` runs as the first pass of
+  `prepare_expression`/`prepare_condition` and rewrites valid property
+  accesses into ordinary accessor call nodes (`obj.X` -> `obj.get_X()`,
+  `obj.X = rhs` -> `obj.set_X(rhs)`), so the temporary, guard, f-string, and
+  argument-ownership passes treat property access exactly like method calls —
+  this is what makes reference-typed properties ownership-safe.  Invalid
+  accesses (missing accessor, private, compound assignment, `++`/`--`) are
+  left untouched for the dispatch paths, which report the diagnostics.
+- `expr_is_owned` additionally treats a class-typed property member access
+  as owned (a getter call result) as a safety net for any path that bypasses
+  prepare; `codegen_member_access` and the `AST_ASSIGN` case keep their
+  hand-emitted property fallbacks for those skipped/error nodes, and
+  `resolve_type` returns `prop_type` for property member access.
 - Rejected: compound assignment and `++`/`--` on properties (dedicated
   errors), `ref` arguments (ref requires a local variable anyway), static /
   native / override properties, generic classes, structs, per-accessor

@@ -1604,9 +1604,9 @@ static AstNode* parse_class_decl(Parser* p) {
         if (check(p, TOK_LBRACE)) {
             /* PROPERTY: Type name { get { ... } set { ... } } (C# style).
                Accessors are synthesized as ordinary get_X/set_X methods and
-               flow through the normal method machinery.  Value types only:
-               a property read is a call result, which the reference-
-               ownership machinery cannot model at member-access sites yet. */
+               flow through the normal method machinery.  Value types and
+               strong class references (including string) are allowed; weak,
+               unowned, array, object, and interface types are not. */
             advance(p); /* { */
 
             if (is_static || is_native || is_override) {
@@ -1619,8 +1619,9 @@ static AstNode* parse_class_decl(Parser* p) {
                         parser_filename(p), fname.line, fname.col);
                 p->had_error = 1;
             }
-            if (!type_is_primitive_value(ft.type_kind) && ft.type_kind != TYPE_ENUM) {
-                fprintf(stderr, "%s(%d,%d): error: property '%s' must have a primitive, bool, or enum type\n",
+            if (!type_is_primitive_value(ft.type_kind) && ft.type_kind != TYPE_ENUM &&
+                !(ft.type_kind == TYPE_CLASS && !ft.is_weak && !ft.is_unowned && !ft.is_array)) {
+                fprintf(stderr, "%s(%d,%d): error: property '%s' must have a primitive, bool, enum, or strong class type\n",
                         parser_filename(p), fname.line, fname.col, fname.text);
                 p->had_error = 1;
             }

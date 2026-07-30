@@ -5200,6 +5200,92 @@ i32 main() {
 }
 """, 42),
 
+    ("property_string", """
+class Person {
+    private string _name;
+    string Name {
+        get { return this._name; }
+        set { this._name = value; }
+    }
+}
+string make_name() { return "bob"; }
+i32 name_len(string s) { return s.length(); }
+i32 main() {
+    Person p = new Person;
+    p.Name = "alice";
+    if (!p.Name.equals("alice")) { return 1; }
+    string a = p.Name;
+    string b = p.Name;
+    if (!a.equals(b)) { return 2; }
+    p.Name = make_name();
+    if (!p.Name.equals("bob")) { return 3; }
+    p.Name = a;
+    if (!p.Name.equals("alice")) { return 4; }
+    Person q = new Person;
+    q.Name = p.Name;
+    if (!q.Name.equals("alice")) { return 5; }
+    if (name_len(q.Name) != 5) { return 6; }
+    return 42;
+}
+""", 42),
+
+    ("property_class", """
+class Inner {
+    i32 v;
+}
+class Outer {
+    private Inner _inner;
+    Inner Child {
+        get { return this._inner; }
+        set { this._inner = value; }
+    }
+}
+Inner make_inner(i32 x) {
+    Inner i = new Inner;
+    i.v = x;
+    return i;
+}
+i32 main() {
+    Outer o = new Outer;
+    o.Child = make_inner(7);
+    if (o.Child.v != 7) { return 1; }
+    Inner a = o.Child;
+    Inner b = o.Child;
+    if (a.v != 7 || b.v != 7) { return 2; }
+    o.Child = make_inner(9);
+    if (o.Child.v != 9) { return 3; }
+    if (a.v != 7) { return 4; }
+    return 42;
+}
+""", 42),
+
+    ("property_string_chain", """
+class Name {
+    private string _s;
+    string Text {
+        get { return this._s; }
+        set { this._s = value; }
+    }
+}
+class Holder {
+    private Name _n;
+    Name N {
+        get { return this._n; }
+        set { this._n = value; }
+    }
+}
+i32 main() {
+    Holder h = new Holder;
+    Name n = new Name;
+    n.Text = "deep";
+    h.N = n;
+    if (h.N.Text.length() != 4) { return 1; }
+    h.N.Text = "deeper";
+    if (!h.N.Text.equals("deeper")) { return 2; }
+    return 42;
+}
+""", 42),
+
 
 ]
 
@@ -6694,10 +6780,16 @@ class C { private i32 _x; i32 X { get { return this._x; } set { this._x = value;
 i32 main() { C c = new C; c.X++; return 0; }
 """, "increment/decrement is not supported on properties"),
 
-    ("bad_prop_ref_type", """
-class C { string Name { get { return "x"; } } }
+    ("bad_prop_weak_type", """
+class C { i32 v; }
+class D { weak C X { get { return null; } } }
 i32 main() { return 0; }
-""", "property 'Name' must have a primitive, bool, or enum type"),
+""", "property 'X' must have a primitive, bool, enum, or strong class type"),
+
+    ("bad_prop_object_type", """
+class C { object X { get { return null; } } }
+i32 main() { return 0; }
+""", "property 'X' must have a primitive, bool, enum, or strong class type"),
 
     ("bad_prop_static", """
 class C { static i32 X { get { return 1; } } }
