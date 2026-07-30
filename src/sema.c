@@ -1065,6 +1065,27 @@ static void sema_check_array_access(AstNode* node) {
     }
 }
 
+/* Mirrors the diagnostics of the AST_INC_DEC dispatch in codegen_expr.
+   (The "not allowed in ..." placement errors are parser-stage.) */
+static void sema_check_inc_dec(AstNode* node) {
+    AstNode* operand = node->ast_children[0];
+    if (!operand) return;
+    /* Property ++/-- is left unlowered by prepare precisely so this
+       diagnostic fires; sema sees the same raw shape. */
+    if (member_access_property(operand, NULL)) {
+        sema_report_error(node, "increment/decrement is not supported on properties");
+        return;
+    }
+    Type* t = &operand->ast_resolved_type;
+    if (!type_is_numeric(t)) {
+        sema_report_error(node, "increment/decrement not supported for this type");
+        return;
+    }
+    if (t->is_const) {
+        sema_report_error(node, "cannot modify const variable '%s'", operand->ast_token.text);
+    }
+}
+
 /* -------------------------------------------------------------------------
    Match checks (mirrors codegen_match_stmt)
    ------------------------------------------------------------------------- */
@@ -1162,6 +1183,8 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_call(node);
     } else if (node->ast_kind == AST_ARRAY_ACCESS) {
         sema_check_array_access(node);
+    } else if (node->ast_kind == AST_INC_DEC) {
+        sema_check_inc_dec(node);
     }
 }
 
