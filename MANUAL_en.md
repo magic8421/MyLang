@@ -419,6 +419,33 @@ Rules:
 - The same read-only enforcement as local consts applies (no assignment, no
   `++`/`--`, no passing to `ref` parameters).
 
+### 4.10 Static Class Constants
+
+Inside a class body, `static const` declares a constant member:
+
+```mylang
+class Config {
+    static const i32 MAX = 10;
+    private static const string LABEL = "cfg";
+}
+i32 x = Config.MAX;        // accessed via the class name only
+```
+
+Rules:
+
+- The same types and literal-only initializers as top-level consts
+  (primitives and `string`).
+- Access is always qualified: `Config.MAX`, never through an instance.
+  A local variable named `Config` shadows the class (same rule as static
+  method calls).
+- `private static const` is visible only inside methods of the same class.
+- The name must not collide with another static const, field, or method of
+  the same class.
+- String members are initialized and released at program start/exit exactly
+  like top-level string consts, and are encrypted under `--xor-strings`.
+- Not supported on generic classes (no access syntax), on structs, or with
+  `native`/`override`.
+
 ---
 
 ## 5. Control Flow

@@ -78,6 +78,8 @@ static AstNode* parse_match_stmt(Parser* p);
 static AstNode* parse_expr(Parser* p);
 static AstNode* parse_expr_no_assign(Parser* p, const char* where);
 static AstNode* parse_required_block(Parser* p, const char* what, int allow_if);
+static void parse_const_initializer(Parser* p, Token name, const Type* t,
+                                    int is_string, ConstInfo* info);
 
 
 
@@ -1582,7 +1584,15 @@ static AstNode* parse_class_decl(Parser* p) {
                 advance(p);
             }
         }
+        /* 'static const string': parse_type rejects const on class types, so
+           consume const here and flag the type manually. */
+        int static_const_string = 0;
+        if (is_static && check(p, TOK_KW_CONST) && p->peek.kind == TOK_KW_STRING) {
+            static_const_string = 1;
+            advance(p); /* const */
+        }
         Type ft = parse_type(p);
+        if (static_const_string) ft.is_const = 1;
         if (!check(p, TOK_IDENT)) {
             fprintf(stderr, "%s(%d,%d): error: expected field or method name\n",
                     parser_filename(p), p->current.line, p->current.col);
@@ -1598,6 +1608,12 @@ static AstNode* parse_class_decl(Parser* p) {
             if (ft.is_unowned) {
                 fprintf(stderr, "%s(%d,%d): error: unowned return type is not supported\n",
                         parser_filename(p), fname.line, fname.col);
+                p->had_error = 1;
+            }
+
+            if (symtab_find_class_const(info->name, fname.text)) {
+                fprintf(stderr, "%s(%d,%d): error: method '%s' conflicts with a static const in class '%s'\n",
+                        parser_filename(p), fname.line, fname.col, fname.text, name.text);
                 p->had_error = 1;
             }
 
@@ -1721,7 +1737,49 @@ static AstNode* parse_class_decl(Parser* p) {
             methods = ast_append_list(methods, mnode);
 
         } else {
-            /* FIELD */
+            /* FIELD or STATIC CONST */
+            if (is_static && ft.is_const) {
+                /* static const member: lives in the global ConstInfo registry
+                   with the class as owner; codegen emits Class_NAME and
+                   member access resolves Class.MAX.  parse_type has already
+                   restricted const to primitive value types (string comes in
+                   via static_const_string), so no further type check here. */
+                if (is_native || is_override) {
+                    fprintf(stderr, "%s(%d,%d): error: native/override are not allowed on static const '%s'\n",
+                            parser_filename(p), fname.line, fname.col, fname.text);
+                    p->had_error = 1;
+                }
+                if (symtab_find_class_const(info->name, fname.text)) {
+                    fprintf(stderr, "%s(%d,%d): error: duplicate static const '%s' in class '%s'\n",
+                            parser_filename(p), fname.line, fname.col, fname.text, name.text);
+                    p->had_error = 1;
+                }
+                /* A static const may not share a name with a field or method
+                   of the same class (in either declaration order; the mirror
+                   checks live in the field and method branches). */
+                {
+                    int name_clash = symtab_find_method_in_class(info, fname.text) != NULL;
+                    int fci;
+                    for (fci = 0; fci < info->field_count && fci < MAX_FIELDS; fci++) {
+                        if (strcmp(info->field_names[fci], fname.text) == 0) { name_clash = 1; break; }
+                    }
+                    if (name_clash) {
+                        fprintf(stderr, "%s(%d,%d): error: static const '%s' conflicts with an existing member in class '%s'\n",
+                                parser_filename(p), fname.line, fname.col, fname.text, name.text);
+                        p->had_error = 1;
+                    }
+                }
+                ConstInfo* cc = (ConstInfo*)calloc(1, sizeof(ConstInfo));
+                CHECK_STRSCPY(strscpy(cc->name, fname.text, sizeof(cc->name)), "const name too long");
+                CHECK_STRSCPY(strscpy(cc->owner_class, info->name, sizeof(cc->owner_class)), "class name too long");
+                cc->const_type = ft;
+                cc->const_is_string = static_const_string;
+                cc->is_private = is_private;
+                parse_const_initializer(p, fname, &ft, static_const_string, cc);
+                symtab_add_const(fname.text, cc);
+                expect(p, TOK_SEMI);
+                continue;
+            }
             if (ft.is_const) {
                 fprintf(stderr, "%s(%d,%d): error: const fields are not supported\n",
                         parser_filename(p), fname.line, fname.col);
@@ -1730,6 +1788,11 @@ static AstNode* parse_class_decl(Parser* p) {
             if (is_static) {
                 fprintf(stderr, "%s(%d,%d): error: static fields are not supported\n",
                         parser_filename(p), fname.line, fname.col);
+                p->had_error = 1;
+            }
+            if (symtab_find_class_const(info->name, fname.text)) {
+                fprintf(stderr, "%s(%d,%d): error: field '%s' conflicts with a static const in class '%s'\n",
+                        parser_filename(p), fname.line, fname.col, fname.text, name.text);
                 p->had_error = 1;
             }
             expect(p, TOK_SEMI);
@@ -2132,60 +2195,24 @@ static AstNode* parse_enum_decl(Parser* p) {
     return NULL;
 }
 
-/* const u32 X = 1; / const string S = "hello"; -- top-level const declaration.
-   The name is inserted into the global scope (uses resolve as ordinary
-   identifiers; is_const blocks reassignment) and recorded in the ConstInfo
-   registry, from which codegen emits the C declaration.  Initializers are
-   literals only (same rule as default parameter values); an optional '-'
-   may precede a numeric literal.  Strings are allowed here even though local
-   consts are primitive-only: a global string const is initialized once at
-   program start and never reassigned. */
-static AstNode* parse_const_decl(Parser* p) {
-    advance(p); /* const */
-
-    Type t = parse_type(p);
-    int is_string = t.type_kind == TYPE_CLASS && strcmp(t.class_name, "String") == 0 &&
-                    !t.is_array && !t.is_weak && !t.is_unowned;
-    if (t.is_array || t.is_weak || t.is_unowned || t.is_ref ||
-        (!type_is_primitive_value(t.type_kind) && !is_string)) {
-        fprintf(stderr, "%s(%d,%d): error: top-level const is only supported on primitive value types and string\n",
-                parser_filename(p), p->current.line, p->current.col);
-        p->had_error = 1;
-    }
-    t.is_const = 1;
-
-    if (!check(p, TOK_IDENT)) {
-        fprintf(stderr, "%s(%d,%d): error: expected const name\n",
-                parser_filename(p), p->current.line, p->current.col);
-        p->had_error = 1;
-        expect(p, TOK_SEMI);
-        return NULL;
-    }
-    Token name = p->current; advance(p);
-
-    if (symtab_lookup_current(name.text) || symtab_find_func(name.text) ||
-        is_type_name(name.text)) {
-        fprintf(stderr, "%s(%d,%d): error: const '%s' conflicts with an existing declaration\n",
-                parser_filename(p), name.line, name.col, name.text);
-        p->had_error = 1;
-    }
-
+/* Parses the mandatory '= <literal>' initializer of a const declaration
+   (top-level or static class member) and fills info->const_literal.
+   Literals only, matching the declared type (same rule as default parameter
+   values); an optional '-' may precede a numeric literal.  Does not consume
+   the trailing ';'. */
+static void parse_const_initializer(Parser* p, Token name, const Type* t,
+                                    int is_string, ConstInfo* info) {
     if (!check(p, TOK_ASSIGN)) {
         fprintf(stderr, "%s(%d,%d): error: const '%s' requires an initializer\n",
                 parser_filename(p), name.line, name.col, name.text);
         p->had_error = 1;
-        expect(p, TOK_SEMI);
-        return NULL;
+        return;
     }
     advance(p); /* = */
 
     int neg = 0;
     if (check(p, TOK_MINUS)) { neg = 1; advance(p); }
 
-    ConstInfo* info = (ConstInfo*)calloc(1, sizeof(ConstInfo));
-    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "const name too long");
-    info->const_type = t;
-    info->const_is_string = is_string;
     int lit_ok = 1;
 
     if (is_string) {
@@ -2197,7 +2224,7 @@ static AstNode* parse_const_decl(Parser* p) {
             CHECK_STRSCPY(strscpy(info->const_literal, lit.text, sizeof(info->const_literal)),
                           "const string literal too long");
         }
-    } else if (t.type_kind == TYPE_BOOL) {
+    } else if (t->type_kind == TYPE_BOOL) {
         if (neg || !(check(p, TOK_KW_TRUE) || check(p, TOK_KW_FALSE))) {
             lit_ok = 0;
         } else {
@@ -2205,7 +2232,7 @@ static AstNode* parse_const_decl(Parser* p) {
                                   sizeof(info->const_literal)), "const literal too long");
             advance(p);
         }
-    } else if (t.type_kind == TYPE_F32 || t.type_kind == TYPE_F64) {
+    } else if (t->type_kind == TYPE_F32 || t->type_kind == TYPE_F64) {
         if (!check(p, TOK_INT_LIT) && !check(p, TOK_FLOAT_LIT)) {
             lit_ok = 0;
         } else {
@@ -2243,9 +2270,52 @@ static AstNode* parse_const_decl(Parser* p) {
     }
     if (!lit_ok) {
         fprintf(stderr, "%s(%d,%d): error: const '%s' initializer must be a literal matching type '%s'\n",
-                parser_filename(p), p->current.line, p->current.col, name.text, type_name(&t));
+                parser_filename(p), p->current.line, p->current.col, name.text, type_name(t));
         p->had_error = 1;
     }
+}
+
+/* const u32 X = 1; / const string S = "hello"; -- top-level const declaration.
+   The name is inserted into the global scope (uses resolve as ordinary
+   identifiers; is_const blocks reassignment) and recorded in the ConstInfo
+   registry, from which codegen emits the C declaration.  Strings are allowed
+   here even though local consts are primitive-only: a global string const is
+   initialized once at program start and never reassigned. */
+static AstNode* parse_const_decl(Parser* p) {
+    advance(p); /* const */
+
+    Type t = parse_type(p);
+    int is_string = t.type_kind == TYPE_CLASS && strcmp(t.class_name, "String") == 0 &&
+                    !t.is_array && !t.is_weak && !t.is_unowned;
+    if (t.is_array || t.is_weak || t.is_unowned || t.is_ref ||
+        (!type_is_primitive_value(t.type_kind) && !is_string)) {
+        fprintf(stderr, "%s(%d,%d): error: top-level const is only supported on primitive value types and string\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+    }
+    t.is_const = 1;
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected const name\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+        expect(p, TOK_SEMI);
+        return NULL;
+    }
+    Token name = p->current; advance(p);
+
+    if (symtab_lookup_current(name.text) || symtab_find_func(name.text) ||
+        is_type_name(name.text)) {
+        fprintf(stderr, "%s(%d,%d): error: const '%s' conflicts with an existing declaration\n",
+                parser_filename(p), name.line, name.col, name.text);
+        p->had_error = 1;
+    }
+
+    ConstInfo* info = (ConstInfo*)calloc(1, sizeof(ConstInfo));
+    CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "const name too long");
+    info->const_type = t;
+    info->const_is_string = is_string;
+    parse_const_initializer(p, name, &t, is_string, info);
 
     symtab_add_const(name.text, info);
     symtab_insert(name.text, t);

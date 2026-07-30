@@ -5103,6 +5103,43 @@ i32 main() {
 }
 """, 42),
 
+    ("class_const_basic", """
+class Config {
+    static const i32 MAX = 10;
+    static const u32 FLAG = 3;
+    static const string LABEL = "cfg";
+    i32 value;
+}
+i32 main() {
+    if (Config.MAX != 10) { return 1; }
+    if (Config.FLAG != 3) { return 2; }
+    string s = Config.LABEL;
+    if (!s.equals(Config.LABEL)) { return 3; }
+    print(f"{Config.LABEL} {Config.MAX}");
+    return 0;
+}
+""", "cfg 10\n"),
+
+    ("class_const_in_method", """
+class Config {
+    private static const i32 SECRET = 7;
+    static const i32 MAX = 10;
+    i32 bump(i32 x) { return x + Config.SECRET + Config.MAX; }
+}
+i32 main() {
+    Config c = new Config;
+    return c.bump(22);
+}
+""", 39),
+
+    ("class_const_shadow", """
+class Config { static const i32 MAX = 10; }
+i32 main() {
+    i32 Config = 32;
+    return Config + 10;
+}
+""", 42),
+
 
 ]
 
@@ -6541,6 +6578,36 @@ const i32 X = 1;
 const i32 X = 2;
 i32 main() { return 0; }
 """, "const 'X' conflicts with an existing declaration"),
+
+    ("bad_class_const_reassign", """
+class C { static const i32 X = 1; }
+i32 main() { C.X = 5; return 0; }
+""", "cannot assign to const variable 'X'"),
+
+    ("bad_class_const_private", """
+class C { private static const i32 X = 1; }
+i32 main() { return C.X; }
+""", "static const 'C.X' is private"),
+
+    ("bad_class_const_nonliteral", """
+class C { static const i32 X = 1; static const i32 Y = X; }
+i32 main() { return 0; }
+""", "initializer must be a literal"),
+
+    ("bad_class_const_no_init", """
+class C { static const i32 X; }
+i32 main() { return 0; }
+""", "const 'X' requires an initializer"),
+
+    ("bad_class_const_field_clash", """
+class C { static const i32 X = 1; i32 X; }
+i32 main() { return 0; }
+""", "conflicts with a static const"),
+
+    ("bad_class_const_dup", """
+class C { static const i32 X = 1; static const i32 X = 2; }
+i32 main() { return 0; }
+""", "duplicate static const 'X' in class 'C'"),
 
 ]
 

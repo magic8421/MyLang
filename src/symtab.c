@@ -334,6 +334,16 @@ ConstInfo* symtab_first_const(void) {
     return const_list;
 }
 
+ConstInfo* symtab_find_class_const(const char* class_name, const char* name) {
+    ConstInfo* c = const_list;
+    while (c) {
+        if (c->owner_class[0] && strcmp(c->owner_class, class_name) == 0 &&
+            strcmp(c->name, name) == 0) return c;
+        c = c->next;
+    }
+    return NULL;
+}
+
 int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
     CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");

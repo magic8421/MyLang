@@ -100,7 +100,7 @@ Detailed reference; the rules in AGENTS.md still apply.
 ## Static Methods
 - `static` on a class method (parsed in the same modifier loop as `native`/`override`/`public`/`private`): the method has no `this` receiver and is called only via the class name, `ClassName.method(args)`.
 - Calling a static method via an instance, or an instance method via the class name, is a compile error. Using `this` inside a static method is a compile error (instance fields are unreachable because they require `this.`).
-- Not supported: static fields, `static` + `native`/`override` (compile errors), static methods on interfaces, and static calls on generic classes (no call syntax; the flag is still cloned into instantiations).
+- Not supported: static fields (but `static const` members ARE supported — see "Static Class Constants"), `static` + `native`/`override` (compile errors), static methods on interfaces, and static calls on generic classes (no call syntax; the flag is still cloned into instantiations).
 - Storage: `MethodInfo.method_is_static`; the parser also tags the `AST_FUNC_DECL` node (`ast_is_static`, copied by `ast_clone`). Generic instantiations clone the flag.
 - Dispatch: `static_call_method()` in codegen resolves a `ClassName.m(...)` callee (a member access on a bare identifier that is not an in-scope variable) to the class method; `resolve_type`, `materialize_call_defaults`, `codegen_call`, and `call_arg_consumed_by_weak_iface` all route through it. A local variable shadows a same-named class and reverts to instance dispatch.
 - Emission: `codegen_method_decl` omits the implicit `ClassName* thiz` parameter for static methods and does not register `this` in the method scope; `CodegenContext.current_method_is_static` drives the `'this' cannot be used in a static method` error. `current_class` is still set so private static members are visible inside the class.
@@ -149,6 +149,28 @@ Detailed reference; the rules in AGENTS.md still apply.
   outside the program AST, like parameter defaults) and created via
   `mylang_string_new_encrypted`.
 - A local variable may shadow a top-level const (normal scope-chain rule).
+
+## Static Class Constants
+- `static const i32 MAX = 10;` inside a class body declares a constant
+  member, accessed only as `Config.MAX` (never via an instance).
+- Same types and literal-only initializers as top-level consts (primitives
+  and `string`); parsing shares `parse_const_initializer` with top-level
+  consts.  `static const string` requires a pre-parse trick because
+  `parse_type` rejects const on class types: the class member loop consumes
+  `const` itself when it sees `static const string` and sets `is_const`
+  manually.
+- Storage: the global `ConstInfo` registry with `owner_class` set (the C
+  name is `Class_NAME` via `const_c_name`); the name is NOT inserted into
+  any scope — `Class.MAX` resolves in `codegen_member_access` and
+  `resolve_type` (left side a bare class-name identifier, not an in-scope
+  variable; a same-named local shadows the class, same rule as static
+  calls).
+- `private static const` enforces visibility through `member_visible`
+  against `CodegenContext.current_class`.
+- Name collisions with other static consts, fields, or methods of the same
+  class are rejected at parse time (in both declaration orders).
+- Not supported: generic classes (no access syntax), structs,
+  `native`/`override` modifiers, enum-typed consts.
 
 ## Increment / Decrement Operators
 - Supported as standalone statements: `x++`, `++x`, `x--`, `--x`.

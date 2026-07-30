@@ -117,14 +117,20 @@ typedef struct SymEntry {
     struct SymEntry* next;
 } SymEntry;
 
-/* Top-level const declaration: `const u32 X = 1;` / `const string S = "...";`.
+/* Top-level or static-class-member const declaration:
+   `const u32 X = 1;` / `const string S = "...";` at top level, or
+   `static const i32 MAX = 10;` inside a class body.
    Scalar consts emit a C `static const` with the literal; string consts emit
-   a runtime-initialized global String* (see codegen).  The entry is also
-   inserted into the global scope so uses resolve as ordinary identifiers. */
+   a runtime-initialized global String* (see codegen).  Top-level consts are
+   also inserted into the global scope so uses resolve as ordinary
+   identifiers; class members are reached only via `Class.NAME` member
+   access, and their C name is `Class_NAME`. */
 typedef struct ConstInfo {
     char name[NAME_BUF_SIZE];
+    char owner_class[NAME_BUF_SIZE];  /* empty = top-level const */
     Type const_type;
     int  const_is_string;
+    int  is_private;                  /* class members only */
     /* C literal text for scalars (e.g. "1", "-3", "'a'"); decoded content
        for strings (same form as AST_STRING_LIT token text). */
     char const_literal[TOKEN_TEXT_SIZE];
@@ -160,6 +166,8 @@ EnumInfo*   symtab_first_enum(void);
 void        symtab_add_const(const char* name, ConstInfo* info);
 ConstInfo*  symtab_find_const(const char* name);
 ConstInfo*  symtab_first_const(void);
+/* Finds a static const member of a class by source name (owner match). */
+ConstInfo*  symtab_find_class_const(const char* class_name, const char* name);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
                                      int pc, const char pn[][64], const Type pt[],

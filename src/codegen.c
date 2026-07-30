@@ -268,6 +268,16 @@ static int member_visible(CodegenContext* ctx, const char* owner, int is_private
     return ctx->current_class && strcmp(ctx->current_class->name, owner) == 0;
 }
 
+/* C identifier for a const: plain name for top-level consts, Class_NAME for
+   static class members (the Class_method naming convention). */
+static void const_c_name(const ConstInfo* ci, char* out, size_t out_size) {
+    if (ci->owner_class[0]) {
+        snprintf(out, out_size, "%s_%s", ci->owner_class, ci->name);
+    } else {
+        snprintf(out, out_size, "%s", ci->name);
+    }
+}
+
 /* Integer types (bitwise operands); bool is intentionally excluded. */
 static int type_is_integer(const Type* t) {
     return t->type_kind == TYPE_I8 || t->type_kind == TYPE_I16 ||
@@ -835,6 +845,16 @@ static Type resolve_type(AstNode* node) {
                 if (ei) {
                     t = type_make_user(TYPE_ENUM, ei->name);
                     break;
+                }
+                /* Static class const access 'Config.MAX': the left side is a
+                   class name, not a variable. */
+                ClassInfo* cci = symtab_find_class(obj_node->ast_token.text);
+                if (cci && !cci->is_generic) {
+                    ConstInfo* cc = symtab_find_class_const(cci->name, node->ast_token.text);
+                    if (cc) {
+                        t = cc->const_type;
+                        break;
+                    }
                 }
             }
             Type obj = resolve_type(node->ast_children[0]);
@@ -2004,6 +2024,27 @@ static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
             }
             fprintf(ctx->out, "%s_%s", ei->name, node->ast_token.text);
             return;
+        }
+    }
+    /* Static class const access 'Config.MAX' emits the C constant
+       'Config_MAX'.  A local variable of the same name shadows the class
+       (same rule as static calls). */
+    if (obj->ast_kind == AST_IDENT && !symtab_lookup(obj->ast_token.text)) {
+        ClassInfo* ci = symtab_find_class(obj->ast_token.text);
+        if (ci && !ci->is_generic) {
+            ConstInfo* cc = symtab_find_class_const(ci->name, node->ast_token.text);
+            if (cc) {
+                if (!member_visible(ctx, ci->name, cc->is_private)) {
+                    codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                         "static const '%s.%s' is private", ci->name, cc->name);
+                    fprintf(ctx->out, "0 /* private static const */");
+                    return;
+                }
+                char cname[2 * NAME_BUF_SIZE];
+                const_c_name(cc, cname, sizeof(cname));
+                fprintf(ctx->out, "%s", cname);
+                return;
+            }
         }
     }
     resolve_type(obj);
@@ -6030,21 +6071,23 @@ static void codegen_func_decl(CodegenContext* ctx, AstNode* node) {
     ctx->current_class = prev_class;
 }
 
-/* Top-level const declarations.  Scalar consts become a C `static const`
-   initialized with the literal; string consts become a global String*
-   initialized in main (see emit_const_string_inits).  Emitted after the
-   class forward declarations, so the String* form only needs the
-   forward-declared String. */
+/* Top-level and static-class-member const declarations.  Scalar consts
+   become a C `static const` initialized with the literal; string consts
+   become a global String* initialized in main (see
+   emit_const_string_inits).  Emitted after the class forward declarations,
+   so the String* form only needs the forward-declared String. */
 static void emit_const_decls(CodegenContext* ctx) {
     FILE* h = ctx->header;
     ConstInfo* ci = symtab_first_const();
     while (ci) {
+        char cname[2 * NAME_BUF_SIZE];
+        const_c_name(ci, cname, sizeof(cname));
         if (ci->const_is_string) {
-            fprintf(h, "static String* %s;\n", ci->name);
+            fprintf(h, "static String* %s;\n", cname);
         } else {
             char buf[128];
             c_type_str(&ci->const_type, buf, sizeof(buf));
-            fprintf(h, "static const %s %s = %s;\n", buf, ci->name, ci->const_literal);
+            fprintf(h, "static const %s %s = %s;\n", buf, cname, ci->const_literal);
         }
         ci = ci->next;
     }
@@ -6064,24 +6107,26 @@ static void codegen_collect_xor_consts(CodegenContext* ctx) {
     }
 }
 
-/* Initializes top-level string consts; emitted at the start of the real C
-   main, before _my_main(). */
+/* Initializes top-level and static-class-member string consts; emitted at
+   the start of the real C main, before _my_main(). */
 static void emit_const_string_inits(CodegenContext* ctx) {
     ConstInfo* ci = symtab_first_const();
     while (ci) {
         if (ci->const_is_string) {
+            char cname[2 * NAME_BUF_SIZE];
+            const_c_name(ci, cname, sizeof(cname));
             if (ctx->xor_strings) {
                 size_t len = strlen(ci->const_literal);
                 if (len == 0) {
                     fprintf(ctx->out, "    %s = mylang_string_new_encrypted(MYLANG_TID_String, NULL, 0, 1);\n",
-                            ci->name);
+                            cname);
                 } else {
                     int id = ci->xor_str_id;
                     fprintf(ctx->out, "    %s = mylang_string_new_encrypted(MYLANG_TID_String, _xs%d, %zu, %u);\n",
-                            ci->name, id, len, (unsigned)xor_string_key(id));
+                            cname, id, len, (unsigned)xor_string_key(id));
                 }
             } else {
-                fprintf(ctx->out, "    %s = mylang_string_new(MYLANG_TID_String, \"", ci->name);
+                fprintf(ctx->out, "    %s = mylang_string_new(MYLANG_TID_String, \"", cname);
                 emit_c_string_literal(ctx, ci->const_literal);
                 fprintf(ctx->out, "\");\n");
             }
@@ -6090,14 +6135,17 @@ static void emit_const_string_inits(CodegenContext* ctx) {
     }
 }
 
-/* Releases top-level string consts; emitted after _my_main() returns so the
-   MyLang leak checker and the CRT debug heap see a balanced alloc/release. */
+/* Releases top-level and static-class-member string consts; emitted after
+   _my_main() returns so the MyLang leak checker and the CRT debug heap see a
+   balanced alloc/release. */
 static void emit_const_string_releases(CodegenContext* ctx) {
     ConstInfo* ci = symtab_first_const();
     while (ci) {
         if (ci->const_is_string) {
-            fprintf(ctx->out, "    mylang_release(%s);\n", ci->name);
-            fprintf(ctx->out, "    %s = NULL;\n", ci->name);
+            char cname[2 * NAME_BUF_SIZE];
+            const_c_name(ci, cname, sizeof(cname));
+            fprintf(ctx->out, "    mylang_release(%s);\n", cname);
+            fprintf(ctx->out, "    %s = NULL;\n", cname);
         }
         ci = ci->next;
     }
