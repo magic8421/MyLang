@@ -6780,6 +6780,43 @@ class C { private i32 _x; i32 X { get { return this._x; } set { this._x = value;
 i32 main() { C c = new C; c.X++; return 0; }
 """, "increment/decrement is not supported on properties"),
 
+    ("bad_call_arg_class_to_primitive", """
+void f(i32 x) {}
+class D {}
+i32 main() { D d = new D; f(d); return 0; }
+""", "cannot pass 'D' to 'i32' parameter"),
+
+    ("bad_call_arg_primitive_to_class", """
+void f(String s) {}
+i32 main() { f(1); return 0; }
+""", "cannot pass 'i32' to 'String' parameter"),
+
+    ("bad_call_arg_wrong_class", """
+class A {}
+class B {}
+void f(B b) {}
+i32 main() { A a = new A; f(a); return 0; }
+""", "cannot pass 'A' to 'B' parameter"),
+
+    ("bad_call_arg_iface_not_implemented", """
+interface IShape { i32 area(); }
+class Circle { i32 r; }
+void f(IShape s) {}
+i32 main() { Circle c = new Circle; f(c); return 0; }
+""", "cannot pass 'Circle' to 'IShape' parameter"),
+
+    ("bad_call_arg_generic_mismatch", """
+class Box<T> { T v; }
+void f(Box<String> x) {}
+i32 main() { Box<i32> b = new Box<i32>; f(b); return 0; }
+""", "cannot pass 'Box_i32' to 'Box_String' parameter"),
+
+    ("bad_prop_write_type", """
+class D {}
+class C { private i32 _x; i32 X { get { return this._x; } set { this._x = value; } } }
+i32 main() { C c = new C; D d = new D; c.X = d; return 0; }
+""", "cannot pass 'D' to 'i32' parameter"),
+
     ("bad_prop_weak_type", """
 class C { i32 v; }
 class D { weak C X { get { return null; } } }
