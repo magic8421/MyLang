@@ -4914,6 +4914,156 @@ i32 main() {
 }
 """, 42),
 
+    ("enum_basic", """
+enum Key { Up, Down, Left = 10, Right, }
+i32 main() {
+    Key k = Key.Up;
+    Key d = Key.Down;
+    if (k != Key.Up) { return 1; }
+    if (k == d) { return 2; }
+    k = Key.Right;
+    if (k != Key.Right) { return 3; }
+    Key r2 = k;
+    if (r2 != Key.Right) { return 4; }
+    return 42;
+}
+""", 42),
+
+    ("enum_explicit_values", """
+enum Code { A, B = 10, C, Neg = -3, After }
+i32 main() {
+    if ((Code.A as i32) != 0) { return 1; }
+    if ((Code.B as i32) != 10) { return 2; }
+    if ((Code.C as i32) != 11) { return 3; }
+    if ((Code.Neg as i32) != -3) { return 4; }
+    if ((Code.After as i32) != -2) { return 5; }
+    return 0;
+}
+""", 0),
+
+    ("enum_func_param_ret", """
+enum Key { Up, Down, Left, Right }
+Key opposite(Key k) {
+    if (k == Key.Up) { return Key.Down; }
+    if (k == Key.Down) { return Key.Up; }
+    return k;
+}
+void advance_key(ref Key k) {
+    if (k == Key.Up) { k = Key.Down; }
+    else { k = Key.Right; }
+}
+i32 main() {
+    Key k = Key.Up;
+    Key o = opposite(k);
+    if (o != Key.Down) { return 1; }
+    advance_key(ref k);
+    if (k != Key.Down) { return 2; }
+    advance_key(ref k);
+    if (k != Key.Right) { return 3; }
+    return (o as i32) + (k as i32);
+}
+""", 4),
+
+    ("enum_struct_field", """
+enum Key { Up, Down }
+struct Input {
+    Key key;
+    i32 pressed;
+}
+class Player {
+    Key last;
+}
+i32 main() {
+    Input inp;
+    inp.key = Key.Up;
+    inp.pressed = 1;
+    Player p = new Player;
+    p.last = inp.key;
+    if (p.last != Key.Up) { return 2; }
+    inp.key = Key.Down;
+    if (p.last == inp.key) { return 3; }
+    return inp.pressed + (p.last as i32);
+}
+""", 1),
+
+    ("enum_array", """
+enum Key { Up, Down, Left }
+i32 main() {
+    Key[] arr;
+    arr.push(Key.Up);
+    arr.push(Key.Down);
+    arr[1] = Key.Left;
+    if (arr[0] != Key.Up) { return 1; }
+    if (arr[1] != Key.Left) { return 2; }
+    arr.push(Key.Down);
+    if (arr[2] != Key.Down) { return 3; }
+    return (arr[0] as i32) + (arr[1] as i32) + (arr[2] as i32);
+}
+""", 3),
+
+    ("enum_as_cast", """
+enum Key { Up, Down, Left = 10, Right }
+i32 main() {
+    Key k = Key.Left;
+    i32 code = k as i32;
+    if (code != 10) { return 1; }
+    Key back = code as Key;
+    if (back != Key.Left) { return 2; }
+    Key up = 0 as Key;
+    if (up != Key.Up) { return 3; }
+    i64 wide = Key.Right as i64;
+    if (wide != 11) { return 4; }
+    return code;
+}
+""", 10),
+
+    ("enum_match", """
+enum Key { Up, Down, Left, Right }
+i32 dir(Key k) {
+    i32 r = 0;
+    match (k) {
+        Key.Up => { r = 1; }
+        Key.Down => { r = 2; }
+        Key.Left => { r = 3; }
+        else => { r = 40; }
+    }
+    return r;
+}
+i32 main() {
+    if (dir(Key.Up) != 1) { return 1; }
+    if (dir(Key.Left) != 3) { return 2; }
+    if (dir(Key.Right) != 40) { return 3; }
+    i32 fall = 7;
+    match (Key.Down) {
+        Key.Up => { fall = 1; }
+    }
+    return fall;
+}
+""", 7),
+
+    ("enum_shadow", """
+enum Mode { A, B }
+i32 main() {
+    Mode m = Mode.B;
+    i32 Mode = 7;
+    return Mode - (m as i32);
+}
+""", 6),
+
+    ("enum_import", """
+import("enum_import_lib.my");
+i32 main() {
+    Key k = default_key();
+    if (k != Key.Down) { return 1; }
+    return (k as i32) + (Key.Up as i32) + 5;
+}
+""", 6, None, [
+    ("enum_import_lib.my", """
+enum Key { Up, Down, Left = 10, Right }
+Key default_key() { return Key.Down; }
+"""),
+]),
+
 
 ]
 
@@ -6239,6 +6389,86 @@ i32 main() {
     return 0;
 }
 """, "cannot initialize 'String' with 'i32'"),
+
+    ("bad_enum_init_int", """
+enum Key { Up, Down }
+i32 main() {
+    Key k = 0;
+    return 0;
+}
+""", "cannot initialize 'Key' with 'i32'"),
+
+    ("bad_enum_init_to_int", """
+enum Key { Up, Down }
+i32 main() {
+    i32 x = Key.Up;
+    return x;
+}
+""", "cannot initialize 'i32' with 'Key'"),
+
+    ("bad_enum_cross_assign", """
+enum Key { Up }
+enum Color { Red }
+i32 main() {
+    Color c = Key.Up;
+    return 0;
+}
+""", "cannot initialize 'Color' with 'Key'"),
+
+    ("bad_enum_assign_int", """
+enum Key { Up, Down }
+i32 main() {
+    Key k = Key.Up;
+    k = 1;
+    return 0;
+}
+""", "cannot assign 'i32' to 'Key'"),
+
+    ("bad_enum_dup_variant", """
+enum Key { Up, Down, Up }
+i32 main() {
+    return 0;
+}
+""", "duplicate variant 'Up' in enum 'Key'"),
+
+    ("bad_enum_dup_def", """
+enum Key { Up }
+enum Key { Down }
+i32 main() {
+    return 0;
+}
+""", "enum 'Key' already defined"),
+
+    ("bad_enum_unknown_variant", """
+enum Key { Up, Down }
+i32 main() {
+    Key k = Key.Nope;
+    return 0;
+}
+""", "enum 'Key' has no variant 'Nope'"),
+
+    ("bad_enum_payload_tuple", """
+enum Key { Up(i32) }
+i32 main() {
+    return 0;
+}
+""", "payload enums are not yet supported"),
+
+    ("bad_enum_payload_struct", """
+enum E { Move { x: i32, y: i32 } }
+i32 main() {
+    return 0;
+}
+""", "payload enums are not yet supported"),
+
+    ("bad_enum_arith", """
+enum Key { Up, Down }
+i32 main() {
+    Key k = Key.Up;
+    k = k + k;
+    return 0;
+}
+""", "operator '+' not allowed for operands of type 'Key' and 'Key'"),
 
 ]
 

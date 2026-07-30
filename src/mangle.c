@@ -67,7 +67,8 @@ static void mangle_type_into(Type* t, char* out, size_t out_size) {
     switch (t->type_kind) {
         case TYPE_CLASS:
         case TYPE_STRUCT:
-        case TYPE_INTERFACE: {
+        case TYPE_INTERFACE:
+        case TYPE_ENUM: {
             CHECK_STRSCPY(strscpy(out, t->class_name, out_size), "class name too long");
             int i;
             for (i = 0; i < t->type_arg_count && i < MAX_TYPE_ARGS; i++) {

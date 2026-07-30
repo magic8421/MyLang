@@ -18,6 +18,11 @@ keep it in sync when language features change.
 ## Communication
 - During long-running tasks, occasionally give a brief progress update on what you are currently doing and any issues encountered.
 
+## Subagents
+- Do not spawn subagents to write code by default; implement changes directly
+  in the main session. Context compaction is the user's call — do not delegate
+  coding work just to save context.
+
 ## Comment Style
 All source comments must be written in plain English.
 Do not use emojis or non-ASCII characters in comments or identifiers.

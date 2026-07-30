@@ -7,12 +7,15 @@ Detailed reference; the rules in AGENTS.md still apply.
 - User types: `class` (heap/reference), `struct` (value/stack), and `interface` (fat pointer).
 - Type IDs: primitives use 0-15 (`bool` = 11, `object` = 12); classes, structs, and interfaces share a counter starting at 16.
 - `TYPE_NULL` is a compile-time-only `TypeKind` for the `null` literal; it has no runtime type_id.
+- `TYPE_ENUM` is a simple enum (C++ `enum class` style) with the enum name in `class_name`.
+  Enums are a pure compile-time type with no runtime type_id (verified: type_id is only
+  read on class/interface/object runtime paths). See the "Enums (simple)" section.
 - `TYPE_OBJECT` is the top reference type (`void*` in C); see "The object Type" section.
 - Flags: `TYPE_IS_ARRAY = 0x80000000`, `TYPE_IS_STRUCT = 0x40000000`, `TYPE_IS_WEAK = 0x20000000`, `TYPE_IS_INTERFACE = 0x10000000`, `TYPE_IS_UNOWNED = 0x08000000`.
 - `Type` struct fields: `type_kind`, `class_name[64]`, `is_pointer`, `is_array`, `array_size`, `is_ref`, `is_weak`, `is_unowned`, `type_id`.
 - `out` and `in` modifiers were removed (only `ref` remains).
 - Interface types have `type_kind = TYPE_INTERFACE`, `is_pointer = 0`. The C type is a fat pointer struct (two pointers), not a raw pointer.
-- Top-level `class`, `struct`, and `interface` names are pre-registered before
+- Top-level `class`, `struct`, `interface`, and `enum` names are pre-registered before
   their bodies are parsed, so types can refer to each other regardless of
   declaration order (e.g., `SdlWindow` can hold an `SdlApp` field while `SdlApp`
   is defined later). The parser reuses the pre-registered entry when the real
@@ -47,6 +50,42 @@ Detailed reference; the rules in AGENTS.md still apply.
 - object has no members: `o.field` and `o.method()` are compile errors ("cast it with 'as' first"). There are no `weak object` / `unowned object`, and `new object` is rejected.
 - Assigning object back to a class type without `as` is a compile error at var init, assignment, call arguments, and return (C would silently convert `void*` to any pointer).
 - f-string interpolation and `print` do not accept object (cast and use IToString instead).
+
+## Enums (simple)
+- Syntax: `enum Key { Up, Down, Left = 10, Right }` — unit variants only (C++
+  `enum class` style). Explicit values may be negative; unmarked variants
+  auto-increment from the previous one, starting at 0. Trailing comma allowed.
+  `Variant(...)` / `Variant {...}` produce a dedicated "payload enums are not
+  yet supported" error (syntax reserved for payload enums).
+- Scoped access only: `Key.Up`; variant names never enter the normal scope.
+  A local variable with the same name shadows the enum (same rule as class
+  static calls in `static_call_method`).
+- Storage: the declaration lives entirely in the symtab (`EnumInfo`, modeled
+  after `StructInfo` with per-variant payload field tables reserved for
+  payload enums; v1 keeps them empty and `has_payloads` is always 0). No AST
+  node is produced; codegen emits the C typedef from `symtab_first_enum()`.
+- C representation: `typedef enum Key { Key_Up = 0, ... } Key;` — the variant C
+  name is `EnumName_VariantName`, following the `Class_method` naming
+  convention. `c_base_name` maps `TYPE_ENUM` to the enum name.
+- Strong typing (same pattern as the strict bool rule): `enum_mismatch` is
+  checked at the same five boundaries as `bool_mismatch` (call arguments, both
+  assignment paths, variable initializers, `return`). No implicit conversion
+  between enum and integer, or between two different enums.
+- Explicit `as` casts cross the boundary in both directions (`k as i32`,
+  `code as Key`); they emit a plain C cast with no runtime check. Any other
+  `as` combination involving an enum is a compile error.
+- Operators: `==`/`!=` require both operands to be the same enum; arithmetic,
+  relational, and bitwise operators are rejected by a dedicated check in
+  `codegen_binary`. Compound assignment and `++`/`--` fall out of the existing
+  integer/numeric whitelists.
+- Arrays: `Key[]` is a `MyArray` with `MYLANG_ELEM_PRIMITIVE` elements
+  (`sizeof(Key)` slots); no retain/release hooks are involved.
+- v1 limitations: no enum methods, no `const Key`, no enum default parameter
+  values, no f-string interpolation of enums (cast with `as i32` first).
+- Planned direction: payload (tagged-union) enums. The `EnumInfo` field tables
+  leave room for per-variant fields; the C representation for payload enums
+  would fork `c_type_str` on `EnumInfo.has_payloads` to emit
+  `struct { i32 tag; union {...} u; }` while `TYPE_ENUM` stays unchanged.
 
 ## Access Modifiers (public/private)
 - Per-member modifiers on class fields and methods: `private i32 x;`, `private i32 helper() { ... }`. Parsed in the same modifier loop as `native`/`override`, in any order.
@@ -119,6 +158,9 @@ Detailed reference; the rules in AGENTS.md still apply.
   - The pattern class must implement the interface when the expression is an interface.
   - The bound variable is a class pointer that is visible only inside the arm body.
 - Integer literal arms match integer expressions.
+- Enum variant constant arms (`Key.Up =>`) match enum expressions; the arm variant must
+  belong to the matched enum type. Lowered to `_mN == Key_Up` if-chain comparisons with
+  no exhaustiveness check.
 - `else` must be the last arm and matches any remaining value.
 - The match expression is evaluated once into a local temporary; the temporary is released
   if it is owned by the expression.

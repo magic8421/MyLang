@@ -84,7 +84,7 @@ Start with a letter or `_`, followed by letters, digits, or `_`. Case-sensitive.
 
 ```
 u8 u16 u32 u64  i8 i16 i32 i64  f32 f64  bool  string
-class struct interface object
+class struct interface object enum
 ref weak unowned const
 if else while for return break continue match
 new this as native override
@@ -201,6 +201,43 @@ call arguments, `return`, and array element assignment:
 The same separation applies to comparisons: reference-like types may only be compared
 with reference-like types (or with `null`, and only via `==`/`!=`); `someObject == 0`
 is a compile error. Numeric comparisons within value types are unrestricted.
+
+### 3.7 Enums (simple)
+
+An enum declares a set of named integer constants under one type name
+(C++ `enum class` style):
+
+```mylang
+enum Key { Up, Down, Left = 10, Right }
+```
+
+- Variants are accessed in scoped form only: `Key.Up`. Variant names do not
+  enter the surrounding scope, and a local variable named `Key` shadows the
+  enum name (same rule as class static calls).
+- Values start at 0 and auto-increment; an explicit `= <integer>` (may be
+  negative) restarts numbering from that value. In the example above,
+  `Right` is 11.
+- Enums are strongly typed, like `bool`: no implicit conversion between an
+  enum and any integer type, and no implicit conversion between two different
+  enum types. Use an explicit `as` cast in either direction:
+
+```mylang
+Key k = Key.Left;
+i32 code = k as i32;    // 10
+Key back = code as Key; // explicit cast back
+```
+
+- `==` and `!=` compare two values of the same enum type. Arithmetic,
+  relational operators, compound assignment, and `++`/`--` are rejected.
+- Enums work anywhere a value type works: local variables, function
+  parameters and return values, `ref` parameters, struct/class fields, and
+  array elements (`Key[]`).
+- `match` supports enum variant constant arms (see 5.5). There is no
+  exhaustiveness check.
+- Current limitations: no enum methods, no `const Key`, no enum default
+  parameter values, no direct f-string interpolation (use `as i32` first),
+  and no payload (tagged-union) variants — `Variant(...)` or `Variant {...}`
+  is a dedicated compile error.
 
 ---
 
@@ -461,6 +498,17 @@ i32 classify(IShape s) {
         Circle ci => { return ci.radius; }
         else => { return 0; }
     }
+}
+```
+
+For enum expressions, variant constant arms are available; the arm variant must
+belong to the matched enum type:
+
+```mylang
+match (k) {
+    Key.Up => { dy = -1; }
+    Key.Down => { dy = 1; }
+    else => { dy = 0; }       // no exhaustiveness check: unmatched variants fall through
 }
 ```
 

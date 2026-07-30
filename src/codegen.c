@@ -124,6 +124,7 @@ static const char* c_base_name(const Type* t) {
         case TYPE_F64:   return "double";
         case TYPE_BOOL:  return "int";
         case TYPE_OBJECT: return "void";
+        case TYPE_ENUM:  return t->class_name;
         case TYPE_CLASS:
         case TYPE_STRUCT:
         case TYPE_INTERFACE:
@@ -173,6 +174,16 @@ static int type_accepts_null(const Type* t) {
    True when exactly one side is bool. */
 static int bool_mismatch(const Type* dst, const Type* src) {
     return (dst->type_kind == TYPE_BOOL) != (src->type_kind == TYPE_BOOL);
+}
+
+/* Strict enum rule: enums do not implicitly convert to or from any other
+   type, and two different enum types do not convert between each other.
+   Cross the boundary with an explicit 'as' cast instead. */
+static int enum_mismatch(const Type* dst, const Type* src) {
+    int de = dst->type_kind == TYPE_ENUM;
+    int se = src->type_kind == TYPE_ENUM;
+    if (de != se) return 1;
+    return de && strcmp(dst->class_name, src->class_name) != 0;
 }
 
 /* Reference-like types: class, interface, object (weak/unowned class and
@@ -545,6 +556,24 @@ static void emit_class_field_struct_deps(CodegenContext* ctx, ClassInfo* ci) {
     }
 }
 
+/* Emit one C typedef per registered enum:
+   typedef enum Key { Key_Up = 0, ... } Key;
+   Variant C names follow the Class_method naming convention. */
+static void emit_enum_typedefs(CodegenContext* ctx) {
+    FILE* h = ctx->header;
+    EnumInfo* ei = symtab_first_enum();
+    while (ei) {
+        fprintf(h, "typedef enum %s {\n", ei->name);
+        int i;
+        for (i = 0; i < ei->variant_count; i++) {
+            fprintf(h, "    %s_%s = %ld%s\n", ei->name, ei->variant_names[i],
+                    ei->variant_values[i], i + 1 < ei->variant_count ? "," : "");
+        }
+        fprintf(h, "} %s;\n\n", ei->name);
+        ei = ei->next;
+    }
+}
+
 static void emit_header_type_ids(CodegenContext* ctx) {
     FILE* h = ctx->header;
     ClassInfo* ci = class_list;
@@ -796,6 +825,18 @@ static Type resolve_type(AstNode* node) {
         }
 
         case AST_MEMBER_ACCESS: {
+            /* Enum variant access 'Key.Up': the left side is an enum name,
+               not a variable.  A local variable of the same name shadows the
+               enum (same rule as class static calls). */
+            AstNode* obj_node = node->ast_children[0];
+            if (obj_node->ast_kind == AST_IDENT &&
+                !symtab_lookup(obj_node->ast_token.text)) {
+                EnumInfo* ei = symtab_find_enum(obj_node->ast_token.text);
+                if (ei) {
+                    t = type_make_user(TYPE_ENUM, ei->name);
+                    break;
+                }
+            }
             Type obj = resolve_type(node->ast_children[0]);
             ClassInfo* ci = NULL;
             if (obj.type_kind == TYPE_CLASS && obj.type_arg_count > 0) {
@@ -979,6 +1020,21 @@ static void codegen_binary(CodegenContext* ctx, AstNode* node) {
         }
     }
 
+    /* Enum operands: only == and != between two values of the same enum type
+       are allowed; arithmetic and relational operators are rejected. */
+    if (lt.type_kind == TYPE_ENUM || rt.type_kind == TYPE_ENUM) {
+        int enum_ok = (op == TOK_EQ || op == TOK_NE) &&
+                      lt.type_kind == TYPE_ENUM && rt.type_kind == TYPE_ENUM &&
+                      strcmp(lt.class_name, rt.class_name) == 0;
+        if (!enum_ok) {
+            codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                    "operator '%s' not allowed for operands of type '%s' and '%s'",
+                    node->ast_token.text, type_name(&lt), type_name(&rt));
+            fprintf(ctx->out, "0 /* invalid enum operands */");
+            return;
+        }
+    }
+
     if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
         op == TOK_SHL || op == TOK_SHR) {
         /* Bitwise operators accept integer operands only. */
@@ -1105,8 +1161,9 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
             return;
         }
 
-        /* Strict bool rule at the call boundary. */
-        if (param_type->type_kind != TYPE_VOID && bool_mismatch(param_type, &at)) {
+        /* Strict bool/enum rules at the call boundary. */
+        if (param_type->type_kind != TYPE_VOID &&
+            (bool_mismatch(param_type, &at) || enum_mismatch(param_type, &at))) {
             codegen_report_error(ctx, arg->ast_token.line, arg->ast_token.col, "cannot pass '%s' to '%s' parameter", type_name(&at), type_name(param_type));
             fprintf(ctx->out, "0 /* invalid bool argument */");
             return;
@@ -1928,6 +1985,27 @@ static void codegen_array_access(CodegenContext* ctx, AstNode* node) {
 
 static void codegen_member_access(CodegenContext* ctx, AstNode* node) {
     AstNode* obj = node->ast_children[0];
+    /* Enum variant access 'Key.Up' emits the C constant 'Key_Up'.  A local
+       variable of the same name shadows the enum (same rule as class
+       static calls in static_call_method). */
+    if (obj->ast_kind == AST_IDENT && !symtab_lookup(obj->ast_token.text)) {
+        EnumInfo* ei = symtab_find_enum(obj->ast_token.text);
+        if (ei) {
+            int found = 0;
+            int i;
+            for (i = 0; i < ei->variant_count; i++) {
+                if (strcmp(ei->variant_names[i], node->ast_token.text) == 0) { found = 1; break; }
+            }
+            if (!found) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                     "enum '%s' has no variant '%s'", ei->name, node->ast_token.text);
+                fprintf(ctx->out, "0 /* invalid enum variant */");
+                return;
+            }
+            fprintf(ctx->out, "%s_%s", ei->name, node->ast_token.text);
+            return;
+        }
+    }
     resolve_type(obj);
     if (type_is_null(&obj->ast_resolved_type)) {
         codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot access member '%s' on null", node->ast_token.text);
@@ -2496,7 +2574,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                         if (type_is_null(&rt)) {
                             codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign 'null' to '%s'", type_name(&lt));
                             fprintf(ctx->out, "0 /* invalid null assignment */");
-                        } else if (bool_mismatch(&lt, &rt)) {
+                        } else if (bool_mismatch(&lt, &rt) || enum_mismatch(&lt, &rt)) {
                             codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
                             fprintf(ctx->out, "0 /* invalid bool assignment */");
                         } else if (type_is_reference(&rt)) {
@@ -2753,7 +2831,7 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 if (type_is_null(&rt)) {
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign 'null' to '%s'", type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid null assignment */");
-                } else if (bool_mismatch(&lt, &rt)) {
+                } else if (bool_mismatch(&lt, &rt) || enum_mismatch(&lt, &rt)) {
                     codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot assign '%s' to '%s'", type_name(&rt), type_name(&lt));
                     fprintf(ctx->out, "0 /* invalid bool assignment */");
                 } else if (type_is_reference(&rt)) {
@@ -2840,6 +2918,24 @@ static void codegen_expr_dispatch(CodegenContext* ctx, AstNode* node) {
                 if (obj_name) fprintf(ctx->out, "%s", obj_name);
                 else codegen_expr(ctx, obj);
                 fprintf(ctx->out, ").data : NULL)");
+            } else if (target.type_kind == TYPE_ENUM &&
+                       type_is_integer(&obj->ast_resolved_type)) {
+                /* integer -> enum: plain C cast, no runtime check. */
+                fprintf(ctx->out, "((%s)(", c_base_name(&target));
+                codegen_expr(ctx, obj);
+                fprintf(ctx->out, "))");
+            } else if (type_is_integer(&target) &&
+                       obj->ast_resolved_type.type_kind == TYPE_ENUM) {
+                /* enum -> integer: plain C cast. */
+                fprintf(ctx->out, "((%s)(", c_base_name(&target));
+                codegen_expr(ctx, obj);
+                fprintf(ctx->out, "))");
+            } else if (target.type_kind == TYPE_ENUM ||
+                       obj->ast_resolved_type.type_kind == TYPE_ENUM) {
+                codegen_report_error(ctx, node->ast_token.line, node->ast_token.col,
+                                     "cannot cast '%s' to '%s'",
+                                     type_name(&obj->ast_resolved_type), type_name(&target));
+                fprintf(ctx->out, "0 /* invalid enum cast */");
             } else {
                 codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "'as' target must be a class type");
                 fprintf(ctx->out, "/* as-cast unsupported target */");
@@ -4121,7 +4217,8 @@ static void codegen_var_decl(CodegenContext* ctx, AstNode* node, int indent) {
                 codegen_expr(ctx, init);
             }
         } else if (type.type_kind != TYPE_CLASS && type.type_kind != TYPE_INTERFACE &&
-                   type.type_kind != TYPE_OBJECT && bool_mismatch(&type, &it)) {
+                   type.type_kind != TYPE_OBJECT &&
+                   (bool_mismatch(&type, &it) || enum_mismatch(&type, &it))) {
             codegen_report_error(ctx, node->ast_token.line, node->ast_token.col, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
             fprintf(ctx->out, " = 0 /* invalid bool initializer */");
         } else if (type.type_kind != TYPE_CLASS && type.type_kind != TYPE_INTERFACE &&
@@ -4697,6 +4794,35 @@ static void codegen_match_stmt(CodegenContext* ctx, AstNode* node, int indent) {
                 fprintf(ctx->out, "else if (%s == %d)\n", temp_name, arm->ast_token.int_val);
             }
             codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
+        } else if (pat_type.type_kind == TYPE_ENUM) {
+            /* Enum variant constant arm: compare against the C constant.  No
+               exhaustiveness check; missing variants fall through. */
+            if (expr_type.type_kind != TYPE_ENUM ||
+                strcmp(expr_type.class_name, pat_type.class_name) != 0) {
+                codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col,
+                                     "match pattern type '%s' does not match expression type '%s'",
+                                     type_name(&pat_type), type_name(&expr_type));
+            }
+            EnumInfo* ei = symtab_find_enum(pat_type.class_name);
+            int found = 0;
+            int vi;
+            for (vi = 0; ei && vi < ei->variant_count; vi++) {
+                if (strcmp(ei->variant_names[vi], arm->ast_token.text) == 0) { found = 1; break; }
+            }
+            if (!found) {
+                codegen_report_error(ctx, arm->ast_token.line, arm->ast_token.col,
+                                     "enum '%s' has no variant '%s'",
+                                     pat_type.class_name, arm->ast_token.text);
+            }
+            indent_line(ctx, indent);
+            if (is_first) {
+                fprintf(ctx->out, "if (%s == %s_%s)\n",
+                        temp_name, pat_type.class_name, arm->ast_token.text);
+            } else {
+                fprintf(ctx->out, "else if (%s == %s_%s)\n",
+                        temp_name, pat_type.class_name, arm->ast_token.text);
+            }
+            codegen_match_arm_body(ctx, arm, arm->ast_children[0], temp_name, &expr_type, indent);
         } else if (pat_type.type_kind == TYPE_CLASS) {
             if (expr_type.type_kind == TYPE_INTERFACE) {
                 ClassInfo* cls = symtab_find_class(pat_type.class_name);
@@ -4798,9 +4924,10 @@ static void codegen_return_stmt(CodegenContext* ctx, AstNode* node, int indent) 
             return;
         }
 
-        /* Strict bool rule at the return boundary. */
+        /* Strict bool/enum rules at the return boundary. */
         if (ctx->return_type.type_kind != TYPE_VOID &&
-            bool_mismatch(&ctx->return_type, &ret->ast_resolved_type)) {
+            (bool_mismatch(&ctx->return_type, &ret->ast_resolved_type) ||
+             enum_mismatch(&ctx->return_type, &ret->ast_resolved_type))) {
             codegen_report_error(ctx, ret->ast_token.line, ret->ast_token.col, "cannot return '%s' from function returning '%s'", type_name(&ret->ast_resolved_type), type_name(&ctx->return_type));
         }
 
@@ -5931,6 +6058,9 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
     /* ---- Emit header ---- */
     emit_header_preamble(&ctx);
     emit_header_forward_decls(&ctx);
+    /* Enum typedefs come before struct/class definitions so that enum-typed
+       fields can name the completed type. */
+    emit_enum_typedefs(&ctx);
 
     /* Emit struct and class definitions before interface typedefs so that
        interface method signatures can reference value types like SdlEvent.

@@ -22,6 +22,7 @@ typedef enum {
     TYPE_BOOL,
     TYPE_OBJECT,   /* top reference type: any class or interface value (C void*) */
     TYPE_NULL,   /* compile-time only: the type of the 'null' literal */
+    TYPE_ENUM,   /* simple enum (C++ enum class style); enum name in class_name */
 } TypeKind;
 
 #define TYPE_ID_I8       0

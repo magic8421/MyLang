@@ -51,6 +51,7 @@ static const KeywordEntry keywords[] = {
     {"object",    TOK_KW_OBJECT},
     {"const",     TOK_KW_CONST},
     {"static",    TOK_KW_STATIC},
+    {"enum",      TOK_KW_ENUM},
     {NULL,        0},
 };
 

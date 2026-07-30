@@ -50,6 +50,7 @@ typedef enum {
     TOK_KW_OBJECT,
     TOK_KW_CONST,
     TOK_KW_STATIC,
+    TOK_KW_ENUM,
 
     TOK_PLUS,
     TOK_MINUS,

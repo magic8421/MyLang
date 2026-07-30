@@ -94,6 +94,23 @@ typedef struct StructInfo {
     struct StructInfo* next;
 } StructInfo;
 
+/* Simple enum (C++ enum class style): unit variants with i32 values.
+   The per-variant field tables are modeled after StructInfo's field table so
+   that payload enums (tagged unions) can be added later without changing the
+   registry shape; v1 only allows zero-field variants, so has_payloads is
+   always 0 and the field tables stay empty. */
+typedef struct EnumInfo {
+    char name[NAME_BUF_SIZE];
+    int  variant_count;
+    char variant_names[MAX_FIELDS][NAME_BUF_SIZE];
+    long variant_values[MAX_FIELDS];   /* explicit or auto-incremented */
+    /* Reserved for payload enums; always empty in v1: */
+    int  variant_field_counts[MAX_FIELDS];
+    Type variant_fields[MAX_FIELDS][MAX_FIELDS];
+    int  has_payloads;                 /* always 0 in v1 */
+    struct EnumInfo* next;
+} EnumInfo;
+
 typedef struct SymEntry {
     char name[NAME_BUF_SIZE];
     Type type;
@@ -122,6 +139,9 @@ int         symtab_add_field(ClassInfo* info, const char* name, Type type, int i
 void        symtab_add_struct(const char* name, StructInfo* info);
 StructInfo* symtab_find_struct(const char* name);
 StructInfo* symtab_first_struct(void);
+void        symtab_add_enum(const char* name, EnumInfo* info);
+EnumInfo*   symtab_find_enum(const char* name);
+EnumInfo*   symtab_first_enum(void);
 int         symtab_add_struct_field(StructInfo* info, const char* name, Type type);
 void        symtab_add_struct_method(StructInfo* st, const char* name, Type ret_type,
                                      int pc, const char pn[][64], const Type pt[],

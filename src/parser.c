@@ -65,7 +65,8 @@ static int is_type_name(const char* name) {
     return parser_is_type_param(name) ||
            symtab_find_class(name) != NULL ||
            symtab_find_struct(name) != NULL ||
-           symtab_find_interface(name) != NULL;
+           symtab_find_interface(name) != NULL ||
+           symtab_find_enum(name) != NULL;
 }
 
 /* ================================================================
@@ -174,6 +175,7 @@ static Type parse_base_type(Parser* p) {
         ClassInfo* ci = symtab_find_class(name);
         StructInfo* si = symtab_find_struct(name);
         InterfaceInfo* ii = symtab_find_interface(name);
+        EnumInfo* ei = symtab_find_enum(name);
         if (ci) {
             t = type_make_user(TYPE_CLASS, name);
             t.is_pointer = 1;
@@ -184,6 +186,9 @@ static Type parse_base_type(Parser* p) {
         } else if (ii) {
             t = type_make_user(TYPE_INTERFACE, name);
             t.type_id = ii->type_id;
+        } else if (ei) {
+            /* Enums are a pure compile-time type: no runtime type_id. */
+            t = type_make_user(TYPE_ENUM, name);
         } else {
             fprintf(stderr, "%s(%d,%d): error: unknown type '%s'\n",
                     parser_filename(p), p->current.line, p->current.col, name);
@@ -986,6 +991,23 @@ static AstNode* parse_match_stmt(Parser* p) {
             advance(p);
             arm = ast_new_node(AST_MATCH_ARM, lit);
             arm->ast_resolved_type = type_make_primitive(TYPE_I32);
+        } else if (check(p, TOK_IDENT) && p->peek.kind == TOK_DOT &&
+                   symtab_find_enum(p->current.text)) {
+            /* Enum variant constant arm: EnumName.Variant.  Variant existence
+               is validated in codegen: the enum body may be parsed after the
+               function that contains this match (names are pre-registered). */
+            Token enum_tok = p->current;
+            advance(p); /* enum name */
+            advance(p); /* . */
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "%s(%d,%d): error: expected variant name after '%s.'\n",
+                        parser_filename(p), p->current.line, p->current.col, enum_tok.text);
+                p->had_error = 1;
+            }
+            Token variant = p->current;
+            if (check(p, TOK_IDENT)) advance(p);
+            arm = ast_new_node(AST_MATCH_ARM, variant);
+            arm->ast_resolved_type = type_make_user(TYPE_ENUM, enum_tok.text);
         } else if (check(p, TOK_IDENT)) {
             /* Type pattern: ClassName var */
             Type pattern_type = parse_base_type(p);
@@ -1013,7 +1035,7 @@ static AstNode* parse_match_stmt(Parser* p) {
             arm_scope_entered = 1;
             symtab_insert(var.text, pattern_type);
         } else {
-            fprintf(stderr, "%s(%d,%d): error: expected 'else', integer literal, or type pattern in match arm\n",
+            fprintf(stderr, "%s(%d,%d): error: expected 'else', integer literal, enum variant, or type pattern in match arm\n",
                     parser_filename(p), p->current.line, p->current.col);
             p->had_error = 1;
             if (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) { advance(p); }
@@ -1988,6 +2010,128 @@ static AstNode* parse_func_decl(Parser* p, Type ret_type) {
     return node;
 }
 
+/* enum Key { Up, Down, Left = 10, Right } -- simple enum (C++ enum class
+   style), unit variants only.  The declaration lives entirely in the symtab
+   (no AST node); codegen emits the C typedef from the EnumInfo registry.
+   The name was pre-registered by parser_register_forward_decls. */
+static AstNode* parse_enum_decl(Parser* p) {
+    advance(p); /* enum */
+
+    if (!check(p, TOK_IDENT)) {
+        fprintf(stderr, "%s(%d,%d): error: expected enum name\n",
+                parser_filename(p), p->current.line, p->current.col);
+        p->had_error = 1;
+        return NULL;
+    }
+    Token name = p->current; advance(p);
+    expect(p, TOK_LBRACE);
+
+    EnumInfo* info = symtab_find_enum(name.text);
+    int first_definition = 1;
+    if (info) {
+        /* variant_count > 0 means the body was already parsed once. */
+        if (info->variant_count > 0) {
+            fprintf(stderr, "%s(%d,%d): error: enum '%s' already defined\n",
+                    parser_filename(p), name.line, name.col, name.text);
+            p->had_error = 1;
+            first_definition = 0;
+        }
+    } else {
+        info = (EnumInfo*)calloc(1, sizeof(EnumInfo));
+        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "enum name too long");
+        info->name[63] = '\0';
+        symtab_add_enum(name.text, info);
+    }
+
+    long next_value = 0;
+    while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
+        if (!check(p, TOK_IDENT)) {
+            fprintf(stderr, "%s(%d,%d): error: expected enum variant name\n",
+                    parser_filename(p), p->current.line, p->current.col);
+            p->had_error = 1;
+            advance(p);
+            continue;
+        }
+        Token variant = p->current; advance(p);
+
+        if (check(p, TOK_LPAREN) || check(p, TOK_LBRACE)) {
+            /* Tuple-style Variant(...) and struct-style Variant {...} are the
+               payload-enum forms; reserved for a future language version. */
+            fprintf(stderr, "%s(%d,%d): error: payload enums are not yet supported\n",
+                    parser_filename(p), p->current.line, p->current.col);
+            p->had_error = 1;
+            /* Skip the payload, then continue with the next variant. */
+            int depth = 0;
+            while (!check(p, TOK_EOF)) {
+                if (depth == 0 && (check(p, TOK_COMMA) || check(p, TOK_RBRACE))) break;
+                if (check(p, TOK_LPAREN) || check(p, TOK_LBRACE)) depth++;
+                if (check(p, TOK_RPAREN) || check(p, TOK_RBRACE)) {
+                    if (depth == 0) break;
+                    depth--;
+                }
+                advance(p);
+            }
+            if (check(p, TOK_COMMA)) { advance(p); }
+            continue;
+        }
+
+        int duplicate = 0;
+        int vi;
+        for (vi = 0; vi < info->variant_count; vi++) {
+            if (strcmp(info->variant_names[vi], variant.text) == 0) { duplicate = 1; break; }
+        }
+        if (duplicate) {
+            fprintf(stderr, "%s(%d,%d): error: duplicate variant '%s' in enum '%s'\n",
+                    parser_filename(p), variant.line, variant.col, variant.text, name.text);
+            p->had_error = 1;
+        }
+
+        long value = next_value;
+        if (check(p, TOK_ASSIGN)) {
+            advance(p);
+            int neg = 0;
+            if (check(p, TOK_MINUS)) { neg = 1; advance(p); }
+            if (!check(p, TOK_INT_LIT)) {
+                fprintf(stderr, "%s(%d,%d): error: expected integer literal as enum variant value\n",
+                        parser_filename(p), p->current.line, p->current.col);
+                p->had_error = 1;
+            } else {
+                value = p->current.int_val;
+                if (neg) value = -value;
+                advance(p);
+            }
+        }
+        next_value = value + 1;
+
+        if (first_definition && !duplicate) {
+            if (info->variant_count >= MAX_FIELDS) {
+                fprintf(stderr, "%s(%d,%d): error: too many variants in enum '%s' (max %d)\n",
+                        parser_filename(p), variant.line, variant.col, name.text, MAX_FIELDS);
+                p->had_error = 1;
+            } else {
+                CHECK_STRSCPY(strscpy(info->variant_names[info->variant_count], variant.text,
+                                      sizeof(info->variant_names[0])), "enum variant name too long");
+                info->variant_values[info->variant_count] = value;
+                info->variant_count++;
+            }
+        }
+
+        if (check(p, TOK_COMMA)) {
+            advance(p);
+        } else if (!check(p, TOK_RBRACE)) {
+            expect(p, TOK_COMMA);
+        }
+    }
+    expect(p, TOK_RBRACE);
+
+    if (first_definition && info->variant_count == 0 && !p->had_error) {
+        fprintf(stderr, "%s(%d,%d): error: enum '%s' must have at least one variant\n",
+                parser_filename(p), name.line, name.col, name.text);
+        p->had_error = 1;
+    }
+    return NULL;
+}
+
 static AstNode* parse_top_level(Parser* p) {
     if (check(p, TOK_KW_CLASS)) {
         return parse_class_decl(p);
@@ -1995,6 +2139,10 @@ static AstNode* parse_top_level(Parser* p) {
 
     if (check(p, TOK_KW_STRUCT)) {
         return parse_struct_decl(p);
+    }
+
+    if (check(p, TOK_KW_ENUM)) {
+        return parse_enum_decl(p);
     }
 
     if (check(p, TOK_KW_INTERFACE)) {
@@ -2044,7 +2192,8 @@ static void parser_register_forward_decls(Parser* p) {
     Lexer scan = *p->lexer;
     Token cur = lexer_next(&scan);
     while (cur.kind != TOK_EOF) {
-        if (cur.kind == TOK_KW_CLASS || cur.kind == TOK_KW_STRUCT || cur.kind == TOK_KW_INTERFACE) {
+        if (cur.kind == TOK_KW_CLASS || cur.kind == TOK_KW_STRUCT || cur.kind == TOK_KW_INTERFACE ||
+            cur.kind == TOK_KW_ENUM) {
             TokenKind decl_kind = cur.kind;
             Token name = lexer_next(&scan);
             if (name.kind == TOK_IDENT) {
@@ -2097,6 +2246,16 @@ static void parser_register_forward_decls(Parser* p) {
                         info->name[63] = '\0';
                         info->type_id = symtab_next_type_id();
                         symtab_add_interface(name.text, info);
+                    }
+                } else if (decl_kind == TOK_KW_ENUM) {
+                    /* Enums have no generics and no dependencies; only the
+                       name is pre-registered.  parse_enum_decl fills in the
+                       variants when the body is parsed. */
+                    if (!symtab_find_enum(name.text)) {
+                        EnumInfo* info = (EnumInfo*)calloc(1, sizeof(EnumInfo));
+                        CHECK_STRSCPY(strscpy(info->name, name.text, sizeof(info->name)), "enum name too long");
+                        info->name[63] = '\0';
+                        symtab_add_enum(name.text, info);
                     }
                 }
             }

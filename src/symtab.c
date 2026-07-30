@@ -293,6 +293,26 @@ StructInfo* symtab_first_struct(void) {
     return struct_list;
 }
 
+static EnumInfo* enum_list = NULL;
+
+void symtab_add_enum(const char* name, EnumInfo* info) {
+    info->next = enum_list;
+    enum_list = info;
+}
+
+EnumInfo* symtab_find_enum(const char* name) {
+    EnumInfo* e = enum_list;
+    while (e) {
+        if (strcmp(e->name, name) == 0) return e;
+        e = e->next;
+    }
+    return NULL;
+}
+
+EnumInfo* symtab_first_enum(void) {
+    return enum_list;
+}
+
 int symtab_add_struct_field(StructInfo* info, const char* name, Type type) {
     if (info->field_count >= MAX_FIELDS) return -1;
     CHECK_STRSCPY(strscpy(info->field_names[info->field_count], name, sizeof(info->field_names[0])), "field name too long");

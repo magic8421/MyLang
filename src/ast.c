@@ -45,6 +45,7 @@ const char* type_name(const Type* t) {
         case TYPE_NULL:  return "null";
         case TYPE_VOID:  return "void";
         case TYPE_TYPE_PARAM: return t->class_name;
+        case TYPE_ENUM:  return t->class_name;
         case TYPE_CLASS:
         case TYPE_STRUCT:
         case TYPE_INTERFACE:
@@ -64,7 +65,8 @@ int type_equal(const Type* a, const Type* b) {
     if (a->is_unowned != b->is_unowned) return 0;
     if (a->type_arg_count != b->type_arg_count) return 0;
     if (a->type_kind == TYPE_CLASS || a->type_kind == TYPE_STRUCT ||
-        a->type_kind == TYPE_INTERFACE || a->type_kind == TYPE_TYPE_PARAM) {
+        a->type_kind == TYPE_INTERFACE || a->type_kind == TYPE_TYPE_PARAM ||
+        a->type_kind == TYPE_ENUM) {
         if (strcmp(a->class_name, b->class_name) != 0) return 0;
     }
     int i;
