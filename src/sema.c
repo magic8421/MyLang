@@ -73,6 +73,20 @@ int expr_is_unowned_lock(AstNode* node) {
     return obj->ast_resolved_type.is_unowned;
 }
 
+int struct_has_ref_fields(const Type* t) {
+    if (t->type_kind != TYPE_STRUCT) return 0;
+    StructInfo* si = symtab_find_struct(t->class_name);
+    return si && si->has_ref_fields;
+}
+
+int type_is_ref_struct_array(const Type* t) {
+    if (!t->is_array) return 0;
+    Type et = *t;
+    et.is_array = 0;
+    et.array_size = 0;
+    return struct_has_ref_fields(&et);
+}
+
 /* -------------------------------------------------------------------------
    Type resolution (moved from codegen.c; behavior unchanged, plus caching)
    ------------------------------------------------------------------------- */
@@ -464,6 +478,170 @@ static void sema_check_assign(AstNode* node) {
     }
 }
 
+/* Variable-initializer type checks, migrated from codegen_var_decl.  The
+   branch chain mirrors it exactly (null guard, array, weak interface,
+   unowned, weak/unowned with init, interface, const, then the generic tail);
+   codegen keeps its copies as the fallback for generic instantiations. */
+static void sema_check_var_decl(AstNode* node) {
+    Type type = node->ast_resolved_type;
+    AstNode* init = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    Type it;
+    memset(&it, 0, sizeof(it));
+    if (init) it = init->ast_resolved_type;
+
+    /* null may only initialize reference types (class, interface, weak). */
+    if (init && type_is_null(&it) && !type_accepts_null(&type)) {
+        if (type.is_unowned) {
+            sema_report_error(node, "cannot initialize unowned '%s' with 'null'", type.class_name);
+        } else {
+            sema_report_error(node, "cannot initialize '%s' with 'null'", type_name(&type));
+        }
+        return;
+    }
+
+    if (type.is_array) {
+        if (type_is_ref_struct_array(&type)) {
+            sema_report_error(node, "arrays of struct '%s' with reference fields are not supported yet", type.class_name);
+        }
+        return;
+    }
+
+    if (type.is_weak && type.type_kind == TYPE_INTERFACE) {
+        if (init && !(it.is_weak && it.type_kind == TYPE_INTERFACE) &&
+            it.type_kind != TYPE_INTERFACE && it.type_kind != TYPE_CLASS &&
+            !type_is_null(&it)) {
+            sema_report_error(node, "cannot initialize weak interface '%s' with this value", type.class_name);
+        }
+        return;
+    }
+
+    if (type.is_unowned && !init) {
+        sema_report_error(node, "unowned variable '%s' requires an initializer", node->ast_token.text);
+        return;
+    }
+
+    if ((type.is_weak || type.is_unowned) && init) {
+        /* null with unowned was already rejected by the guard above. */
+        if (it.type_kind != TYPE_CLASS && !type_is_null(&it)) {
+            sema_report_error(node, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+        }
+        return;
+    }
+
+    if (type.type_kind == TYPE_INTERFACE) {
+        if (init && it.type_kind != TYPE_CLASS && it.type_kind != TYPE_INTERFACE &&
+            !type_is_null(&it)) {
+            sema_report_error(node, "cannot initialize interface '%s' with non-class value", type.class_name);
+        }
+        return;
+    }
+
+    if (type.is_const && !init) {
+        sema_report_error(node, "const variable '%s' requires an initializer", node->ast_token.text);
+        return;
+    }
+
+    if (!init) return;
+
+    if (type_is_null(&it)) {
+        /* Only reference types reach here with a null initializer. */
+        return;
+    }
+    if (type.type_kind == TYPE_OBJECT) {
+        /* object accepts any class, interface, or object value. */
+        if (!(it.type_kind == TYPE_INTERFACE && !it.is_weak) &&
+            it.type_kind != TYPE_CLASS && it.type_kind != TYPE_OBJECT) {
+            sema_report_error(node, "cannot initialize 'object' with '%s'", type_name(&it));
+        }
+        return;
+    }
+    if (type.type_kind == TYPE_CLASS && it.type_kind == TYPE_OBJECT) {
+        sema_report_error(node, "cannot initialize '%s' with 'object'; cast with 'as' first", type_name(&type));
+        return;
+    }
+    if (type.type_kind == TYPE_CLASS) {
+        if (!expr_is_unowned_lock(init) && (it.type_kind != TYPE_CLASS || it.is_weak)) {
+            sema_report_error(node, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+        }
+        return;
+    }
+
+    /* primitive/struct/bool/enum targets */
+    if (bool_mismatch(&type, &it) || enum_mismatch(&type, &it)) {
+        sema_report_error(node, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+    } else if (type_is_reference(&it)) {
+        sema_report_error(node, "cannot initialize '%s' with '%s'", type_name(&type), type_name(&it));
+    }
+}
+
+/* Binary/unary operator operand checks, migrated from codegen_binary and
+   codegen_unary.  The check order mirrors codegen exactly (null, reference
+   comparison, enum, bitwise); codegen keeps its copies as the fallback for
+   generic instantiations.  Reporting these in sema also keeps downstream
+   cascade errors (e.g. an initializer mismatch on the result type) behind
+   the primary operator diagnostic. */
+static void sema_check_binary(AstNode* node) {
+    TokenKind op = node->ast_token.kind;
+    Type lt = node->ast_children[0]->ast_resolved_type;
+    Type rt = node->ast_children[1]->ast_resolved_type;
+
+    if (type_is_null(&lt) || type_is_null(&rt)) {
+        /* null may only be compared for (in)equality. */
+        if (op != TOK_EQ && op != TOK_NE) {
+            sema_report_error(node, "operator '%s' not allowed with null", node->ast_token.text);
+            return;
+        }
+        Type nt = type_is_null(&lt) ? rt : lt;
+        if (nt.type_kind != TYPE_INTERFACE && nt.type_kind != TYPE_CLASS &&
+            nt.type_kind != TYPE_OBJECT && !type_is_null(&nt)) {
+            sema_report_error(node, "cannot compare '%s' with null", type_name(&nt));
+        }
+        return;
+    }
+
+    /* Reference-like types may only be compared with other reference-like
+       types (or null, handled above). */
+    if (op == TOK_EQ || op == TOK_NE || op == TOK_LT || op == TOK_LE ||
+        op == TOK_GT || op == TOK_GE) {
+        int lhs_ref = type_is_reference(&lt);
+        int rhs_ref = type_is_reference(&rt);
+        if ((lhs_ref || rhs_ref) && !(lhs_ref && rhs_ref)) {
+            sema_report_error(node, "cannot compare '%s' with '%s'", type_name(&lt), type_name(&rt));
+            return;
+        }
+    }
+
+    /* Enum operands: only == and != between two values of the same enum type
+       are allowed; arithmetic and relational operators are rejected. */
+    if (lt.type_kind == TYPE_ENUM || rt.type_kind == TYPE_ENUM) {
+        int enum_ok = (op == TOK_EQ || op == TOK_NE) &&
+                      lt.type_kind == TYPE_ENUM && rt.type_kind == TYPE_ENUM &&
+                      strcmp(lt.class_name, rt.class_name) == 0;
+        if (!enum_ok) {
+            sema_report_error(node, "operator '%s' not allowed for operands of type '%s' and '%s'",
+                    node->ast_token.text, type_name(&lt), type_name(&rt));
+            return;
+        }
+    }
+
+    if (op == TOK_AMP || op == TOK_PIPE || op == TOK_CARET ||
+        op == TOK_SHL || op == TOK_SHR) {
+        /* Bitwise operators accept integer operands only. */
+        if (!type_is_integer(&lt) || !type_is_integer(&rt)) {
+            sema_report_error(node, "operator '%s' requires integer operands", node->ast_token.text);
+        }
+    }
+}
+
+static void sema_check_unary(AstNode* node) {
+    if (node->ast_token.kind == TOK_TILDE) {
+        Type t = node->ast_children[0]->ast_resolved_type;
+        if (!type_is_integer(&t)) {
+            sema_report_error(node, "operator '~' requires an integer operand");
+        }
+    }
+}
+
 /* Resolves every node of an expression tree (post-order) and runs the
    migrated checks.  Call argument lists are linked through 'next', so those
    are walked too. */
@@ -477,6 +655,10 @@ static void sema_walk_expr(AstNode* node) {
     sema_resolve_type(node);
     if (node->ast_kind == AST_ASSIGN) {
         sema_check_assign(node);
+    } else if (node->ast_kind == AST_BINARY) {
+        sema_check_binary(node);
+    } else if (node->ast_kind == AST_UNARY) {
+        sema_check_unary(node);
     }
 }
 
@@ -501,6 +683,7 @@ static void sema_walk_stmt(AstNode* node) {
                 sema_walk_expr(node->ast_children[0]);
             }
             sema_resolve_type(node);
+            sema_check_var_decl(node);
             symtab_insert(node->ast_token.text, node->ast_resolved_type);
             break;
 

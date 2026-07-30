@@ -190,24 +190,7 @@ static const char* class_c_prefix(ClassInfo* ci) {
     return ci->mangled_name[0] ? ci->mangled_name : ci->name;
 }
 
-/* Structs that (transitively) own reference-counted shares get compiler-
-   generated _mylang_retain_S / _mylang_release_S hooks: copies retain each
-   reference field and scope exit releases them. */
-static int struct_has_ref_fields(const Type* t) {
-    if (t->type_kind != TYPE_STRUCT) return 0;
-    StructInfo* si = symtab_find_struct(t->class_name);
-    return si && si->has_ref_fields;
-}
-
-/* Arrays of such structs are rejected: MyArray is type-erased and cannot run
-   per-element retain/release hooks yet. */
-static int type_is_ref_struct_array(const Type* t) {
-    if (!t->is_array) return 0;
-    Type et = *t;
-    et.is_array = 0;
-    et.array_size = 0;
-    return struct_has_ref_fields(&et);
-}
+/* (struct_has_ref_fields and type_is_ref_struct_array moved to sema.c.) */
 
 /* (expr_is_unowned_lock moved to sema.c.) */
 /* Emit a codegen error with a VS Code-compatible location prefix.

@@ -42,4 +42,13 @@ PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci);
 /* True when the expression is a lock() call on an unowned reference. */
 int expr_is_unowned_lock(AstNode* node);
 
+/* Structs that (transitively) own reference-counted shares get compiler-
+   generated _mylang_retain_S / _mylang_release_S hooks: copies retain each
+   reference field and scope exit releases them. */
+int struct_has_ref_fields(const Type* t);
+
+/* Arrays of such structs are rejected: MyArray is type-erased and cannot run
+   per-element retain/release hooks yet. */
+int type_is_ref_struct_array(const Type* t);
+
 #endif
