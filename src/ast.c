@@ -114,6 +114,10 @@ int type_is_numeric(const Type* t) {
     return type_is_integer(t) || t->type_kind == TYPE_F32 || t->type_kind == TYPE_F64;
 }
 
+int type_is_string(const Type* t) {
+    return t->type_kind == TYPE_CLASS && strcmp(t->class_name, "String") == 0;
+}
+
 Type type_make_primitive(TypeKind kind) {
     Type t = {0};
     t.type_kind = kind;

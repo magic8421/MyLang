@@ -46,6 +46,11 @@ ClassInfo* class_info_for_type(Type* t);
 /* Pass-by-reference predicate (shared with codegen). */
 int type_is_ref(const Type* t);
 
+/* Finds the class whose toString serves an f-string interpolation (shared
+   with codegen): NULL unless the class has a zero-parameter
+   'string toString()'. */
+ClassInfo* fstring_find_tostring_class(Type* t);
+
 /* Element type of a MyArray value type (shared with codegen). */
 Type array_elem_type(const Type* arr_type);
 

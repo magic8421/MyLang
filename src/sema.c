@@ -1342,6 +1342,91 @@ static void sema_check_inc_dec(AstNode* node) {
     }
 }
 
+/* Mirrors the diagnostics of codegen_new.  'new T[N]' is rejected by the
+   parser, so only the generic-class diagnostic can fire here; codegen keeps
+   both as the backstop for generic instantiation bodies. */
+static void sema_check_new(AstNode* node) {
+    Type* base = &node->ast_resolved_type;
+    if (base->type_kind != TYPE_CLASS || base->type_arg_count > 0) return;
+    ClassInfo* ci = symtab_find_class(base->class_name);
+    if (!ci) ci = symtab_find_class_by_mangled(base->class_name);
+    if (ci && ci->is_generic) {
+        sema_report_error(node, "generic class '%s' requires %d type argument(s)",
+                          base->class_name, ci->generic_param_count);
+    }
+}
+
+/* Mirrors the diagnostics of the AST_AS_CAST dispatch in codegen_expr:
+   legal casts (object->class, interface/class->class, integer<->enum) are
+   silent; the branch chain mirrors codegen exactly. */
+static void sema_check_as_cast(AstNode* node) {
+    AstNode* obj = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    if (!obj) return;
+    Type* ot = &obj->ast_resolved_type;
+    Type* target = &node->ast_resolved_type;
+    if (type_is_null(ot)) {
+        sema_report_error(node, "cannot cast null");
+        return;
+    }
+    if (target->type_kind == TYPE_CLASS) return;
+    if (target->type_kind == TYPE_ENUM && type_is_integer(ot)) return;
+    if (type_is_integer(target) && ot->type_kind == TYPE_ENUM) return;
+    if (target->type_kind == TYPE_ENUM || ot->type_kind == TYPE_ENUM) {
+        sema_report_error(node, "cannot cast '%s' to '%s'",
+                          type_name(ot), type_name(target));
+        return;
+    }
+    sema_report_error(node, "'as' target must be a class type");
+}
+
+/* Finds the class whose toString serves an f-string interpolation (moved
+   from codegen.c, behavior unchanged): the class must exist and have a
+   zero-parameter 'string toString()'. */
+ClassInfo* fstring_find_tostring_class(Type* t) {
+    ClassInfo* ci = class_info_for_type(t);
+    if (!ci) return NULL;
+    MethodInfo* mi = symtab_find_method_in_class(ci, "toString");
+    if (!mi || mi->param_count != 0 || !type_is_string(&mi->return_type)) {
+        return NULL;
+    }
+    return ci;
+}
+
+/* Mirrors the interpolation-type diagnostics of codegen_fstring_preamble.
+   String, numeric, and bool parts append directly (fstring_append_method);
+   class parts need a visible toString; interface parts need a matching
+   toString signature; everything else is rejected. */
+static void sema_check_fstring(AstNode* node) {
+    AstNode* part = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    while (part) {
+        if (part->ast_kind != AST_STRING_LIT) {
+            Type* t = &part->ast_resolved_type;
+            if (type_is_string(t) || type_is_numeric(t) || t->type_kind == TYPE_BOOL) {
+                /* appended directly */
+            } else if (t->type_kind == TYPE_CLASS) {
+                ClassInfo* ci = fstring_find_tostring_class(t);
+                if (!ci) {
+                    sema_report_error(part, "cannot interpolate type '%s'; implement IToString ('string toString()')",
+                                      t->class_name);
+                } else if (!sema_member_visible(ci->name,
+                                                symtab_find_method_in_class(ci, "toString")->is_private)) {
+                    sema_report_error(part, "cannot interpolate type '%s'; toString() is private", t->class_name);
+                }
+            } else if (t->type_kind == TYPE_INTERFACE) {
+                InterfaceInfo* ii = symtab_find_interface(t->class_name);
+                InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, "toString") : NULL;
+                if (!im || im->param_count != 0 || !type_is_string(&im->return_type)) {
+                    sema_report_error(part, "cannot interpolate interface '%s'; it has no 'string toString()'",
+                                      t->class_name);
+                }
+            } else {
+                sema_report_error(part, "cannot interpolate value of type '%s' in f-string", type_name(t));
+            }
+        }
+        part = part->next;
+    }
+}
+
 /* -------------------------------------------------------------------------
    Match checks (mirrors codegen_match_stmt)
    ------------------------------------------------------------------------- */
@@ -1417,6 +1502,11 @@ static void sema_check_match(AstNode* node) {
         sema_report_error(expr, "cannot match on null");
     }
 }
+
+/* Mirror of codegen's ctx->loop_depth for the loop-nesting and break/
+   continue diagnostics.  Balanced increment/decrement keeps it 0 at function
+   boundaries, same as codegen. */
+static int s_loop_depth = 0;
 
 /* Walks an assignment/inc-dec target.  A property member access in a write
    position is NOT read-checked: its dedicated diagnostics come from the
@@ -1532,6 +1622,12 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_array_access(node);
     } else if (node->ast_kind == AST_IDENT) {
         sema_check_ident(node);
+    } else if (node->ast_kind == AST_NEW) {
+        sema_check_new(node);
+    } else if (node->ast_kind == AST_AS_CAST) {
+        sema_check_as_cast(node);
+    } else if (node->ast_kind == AST_FSTRING) {
+        sema_check_fstring(node);
     }
 }
 
@@ -1569,15 +1665,28 @@ static void sema_walk_stmt(AstNode* node) {
             break;
 
         case AST_WHILE_STMT:
+            /* codegen checks the nesting limit first and skips the whole
+               loop when it trips, so the body is not walked either. */
+            if (s_loop_depth >= MAX_LOOP) {
+                sema_report_error(node, "too many nested loops (max %d)", MAX_LOOP);
+                break;
+            }
+            s_loop_depth++;
             sema_walk_expr(node->ast_children[0]);
             if (node->ast_child_count > 1) {
                 sema_walk_stmt(node->ast_children[1]);
             }
+            s_loop_depth--;
             break;
 
         case AST_FOR_STMT:
             /* init / cond / step / body; the init variable stays in the
                enclosing scope (mirrors codegen_for_stmt). */
+            if (s_loop_depth >= MAX_LOOP) {
+                sema_report_error(node, "too many nested loops (max %d)", MAX_LOOP);
+                break;
+            }
+            s_loop_depth++;
             if (node->ast_child_count > 0 && node->ast_children[0]) {
                 if (node->ast_children[0]->ast_kind == AST_VAR_DECL) {
                     sema_walk_stmt(node->ast_children[0]);
@@ -1588,6 +1697,7 @@ static void sema_walk_stmt(AstNode* node) {
             if (node->ast_child_count > 1) sema_walk_expr(node->ast_children[1]);
             if (node->ast_child_count > 2) sema_walk_expr(node->ast_children[2]);
             if (node->ast_child_count > 3) sema_walk_stmt(node->ast_children[3]);
+            s_loop_depth--;
             break;
 
         case AST_FOREACH_STMT: {
@@ -1596,14 +1706,24 @@ static void sema_walk_stmt(AstNode* node) {
             AstNode* decl = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
             AstNode* arr  = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
             AstNode* body = (node->ast_child_count > 2) ? node->ast_children[2] : NULL;
-            if (arr) sema_walk_expr(arr);
-            symtab_enter_scope();
-            if (decl) {
-                sema_resolve_type(decl);
-                symtab_insert(decl->ast_token.text, decl->ast_resolved_type);
+            if (!decl || !arr) break;  /* mirrors codegen's early return */
+            sema_walk_expr(arr);
+            if (!arr->ast_resolved_type.is_array) {
+                sema_report_error(node, "foreach requires an array, got '%s'",
+                                  type_name(&arr->ast_resolved_type));
+                break;  /* codegen skips the body */
             }
+            if (s_loop_depth >= MAX_LOOP) {
+                sema_report_error(node, "too many nested loops (max %d)", MAX_LOOP);
+                break;
+            }
+            s_loop_depth++;
+            symtab_enter_scope();
+            sema_resolve_type(decl);
+            symtab_insert(decl->ast_token.text, decl->ast_resolved_type);
             sema_walk_stmt(body);
             symtab_exit_scope();
+            s_loop_depth--;
             break;
         }
 
@@ -1643,7 +1763,18 @@ static void sema_walk_stmt(AstNode* node) {
             break;
 
         case AST_BREAK:
+            /* The "beyond max nesting depth" variants are unreachable in
+               codegen (oversized loops are rejected without entering, so the
+               depth never exceeds MAX_LOOP); sema mirrors the reachable one. */
+            if (s_loop_depth == 0) {
+                sema_report_error(node, "'break' outside of loop");
+            }
+            break;
+
         case AST_CONTINUE:
+            if (s_loop_depth == 0) {
+                sema_report_error(node, "'continue' outside of loop");
+            }
             break;
 
         default:

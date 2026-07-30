@@ -36,7 +36,7 @@ typedef struct {
     char        struct_dtor_name[64];
 } CleanupEntry;
 
-#define MAX_LOOP 64
+/* (MAX_LOOP moved to ast.h.) */
 
 struct CodegenContext {
     FILE* out;
@@ -3167,9 +3167,7 @@ static void emit_subexpr_temps(CodegenContext* ctx, AstNode* node, int indent) {
     emit_subexpr_temps_impl(ctx, node, indent, 1);
 }
 
-static int type_is_string(const Type* t) {
-    return t->type_kind == TYPE_CLASS && strcmp(t->class_name, "String") == 0;
-}
+/* (type_is_string moved to ast.c.) */
 
 static const char* fstring_append_method(const Type* t) {
     if (type_is_string(t)) return "append_string";
@@ -3199,20 +3197,7 @@ static const char* fstring_temp_name(const char* prefix, int id) {
 /* Look up a toString method suitable for f-string interpolation on a class
    type.  Returns the class (instantiating generics if needed) through ci_out
    when a matching 'string toString()' method exists. */
-static ClassInfo* fstring_find_tostring_class(Type* t) {
-    ClassInfo* ci = NULL;
-    if (t->type_arg_count > 0) {
-        ci = symtab_instantiate_class_from_type(t);
-    } else {
-        ci = symtab_find_class(t->class_name);
-    }
-    if (!ci) return NULL;
-    MethodInfo* mi = symtab_find_method_in_class(ci, "toString");
-    if (!mi || mi->param_count != 0 || !type_is_string(&mi->return_type)) {
-        return NULL;
-    }
-    return ci;
-}
+/* (fstring_find_tostring_class moved to sema.c.) */
 
 /* Emit the String accumulator setup for an f-string before the statement that
    uses it.  Each interpolated expression is evaluated once and in source

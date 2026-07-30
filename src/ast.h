@@ -3,6 +3,10 @@
 
 #include "token.h"
 
+/* Maximum loop nesting depth (codegen cleanup arrays are sized by it; sema
+   mirrors the same limit for the nesting diagnostics). */
+#define MAX_LOOP 64
+
 typedef enum {
     TYPE_VOID = 0,
     TYPE_CLASS,
@@ -157,6 +161,8 @@ int type_is_reference(const Type* t);
 int type_is_integer(const Type* t);
 /* Primitive numeric types (arithmetic compound assignment). */
 int type_is_numeric(const Type* t);
+/* The built-in String class. */
+int type_is_string(const Type* t);
 
 /* Type construction helpers */
 Type        type_make_primitive(TypeKind kind);
