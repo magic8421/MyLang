@@ -58,6 +58,17 @@ PropertyInfo* member_access_property(AstNode* node, ClassInfo** out_ci) {
     return pi;
 }
 
+/* Interface-implementation predicate (moved from codegen.c, behavior
+   unchanged). */
+int class_implements(ClassInfo* ci, const char* iname) {
+    if (!ci) return 0;
+    int i;
+    for (i = 0; i < ci->impl_count && i < MAX_IMPL; i++) {
+        if (strcmp(ci->impl_names[i], iname) == 0) return 1;
+    }
+    return 0;
+}
+
 /* True when the expression is a lock() call on an unowned reference, which
    yields a strong value that may be assigned to a strong class variable.
    The codegen_call path emits a dedicated error message for this; we must not
@@ -976,6 +987,82 @@ static void sema_check_call(AstNode* node) {
     /* other callee shapes: no call-boundary checks (mirrors codegen). */
 }
 
+/* -------------------------------------------------------------------------
+   Match checks (mirrors codegen_match_stmt)
+   ------------------------------------------------------------------------- */
+
+/* Mirrors the per-arm diagnostics of codegen_match_stmt.  The pattern type
+   is read from arm->ast_resolved_type (set at parse time). */
+static void sema_check_match_arm(AstNode* arm, const Type* expr_type) {
+    Type pat_type = arm->ast_resolved_type;
+
+    if (pat_type.type_kind == TYPE_VOID) return;  /* else arm */
+
+    if (pat_type.type_kind == TYPE_I32) {
+        if (!type_is_integer(expr_type)) {
+            sema_report_error(arm, "integer match pattern cannot match expression of type '%s'",
+                              type_name(expr_type));
+        }
+        return;
+    }
+    if (pat_type.type_kind == TYPE_ENUM) {
+        /* Enum variant constant arm.  No exhaustiveness check. */
+        if (expr_type->type_kind != TYPE_ENUM ||
+            strcmp(expr_type->class_name, pat_type.class_name) != 0) {
+            sema_report_error(arm, "match pattern type '%s' does not match expression type '%s'",
+                              type_name(&pat_type), type_name(expr_type));
+        }
+        EnumInfo* ei = symtab_find_enum(pat_type.class_name);
+        int found = 0;
+        int vi;
+        for (vi = 0; ei && vi < ei->variant_count; vi++) {
+            if (strcmp(ei->variant_names[vi], arm->ast_token.text) == 0) { found = 1; break; }
+        }
+        if (!found) {
+            sema_report_error(arm, "enum '%s' has no variant '%s'",
+                              pat_type.class_name, arm->ast_token.text);
+        }
+        return;
+    }
+    if (pat_type.type_kind == TYPE_CLASS) {
+        if (expr_type->type_kind == TYPE_INTERFACE) {
+            ClassInfo* cls = symtab_find_class(pat_type.class_name);
+            InterfaceInfo* iface = symtab_find_interface(expr_type->class_name);
+            if (!(cls && iface && class_implements(cls, expr_type->class_name))) {
+                sema_report_error(arm, "class '%s' does not implement interface '%s'",
+                                  pat_type.class_name, expr_type->class_name);
+            }
+        } else if (expr_type->type_kind == TYPE_CLASS ||
+                   expr_type->type_kind == TYPE_OBJECT) {
+            /* object matches any class pattern; a plain class expression
+               keeps the exact-name requirement. */
+            if (expr_type->type_kind == TYPE_CLASS &&
+                strcmp(expr_type->class_name, pat_type.class_name) != 0) {
+                sema_report_error(arm, "match pattern type '%s' does not match expression type '%s'",
+                                  pat_type.class_name, expr_type->class_name);
+            }
+        } else {
+            sema_report_error(arm, "class match pattern cannot match expression of type '%s'",
+                              type_name(expr_type));
+        }
+        return;
+    }
+    sema_report_error(arm, "unsupported match pattern type");
+}
+
+/* Mirrors the match-expression diagnostics of codegen_match_stmt. */
+static void sema_check_match(AstNode* node) {
+    AstNode* expr = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+    if (!expr) return;
+    Type* expr_type = &expr->ast_resolved_type;
+    if (expr_type->is_unowned) {
+        sema_report_error(expr, "cannot match on an unowned reference; convert it to a strong reference first");
+    }
+    if (type_is_null(expr_type)) {
+        sema_report_error(expr, "cannot match on null");
+    }
+}
+
 /* Resolves every node of an expression tree (post-order) and runs the
    migrated checks.  Call argument lists are linked through 'next', so those
    are walked too. */
@@ -1074,9 +1161,15 @@ static void sema_walk_stmt(AstNode* node) {
             /* [expr, arms]; each arm body gets its own scope, and a class
                type pattern binds its variable there (mirrors
                codegen_match_stmt / codegen_match_arm_body). */
-            if (node->ast_child_count > 0) sema_walk_expr(node->ast_children[0]);
+            AstNode* expr = (node->ast_child_count > 0) ? node->ast_children[0] : NULL;
+            if (expr) sema_walk_expr(expr);
+            sema_check_match(node);
+            Type expr_type;
+            memset(&expr_type, 0, sizeof(expr_type));
+            if (expr) expr_type = expr->ast_resolved_type;
             AstNode* arm = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
             while (arm) {
+                sema_check_match_arm(arm, &expr_type);
                 symtab_enter_scope();
                 if (arm->ast_resolved_type.type_kind == TYPE_CLASS) {
                     symtab_insert(arm->ast_token.text, arm->ast_resolved_type);

@@ -175,14 +175,7 @@ static ClassInfo* class_info_for_type(Type* t) {
     return symtab_find_class(t->class_name);
 }
 
-static int class_implements(ClassInfo* ci, const char* iname) {
-    if (!ci) return 0;
-    int i;
-    for (i = 0; i < ci->impl_count && i < MAX_IMPL; i++) {
-        if (strcmp(ci->impl_names[i], iname) == 0) return 1;
-    }
-    return 0;
-}
+/* (class_implements moved to sema.c.) */
 
 /* C identifier prefix for methods of the class: mangled for generic
    instantiations, plain name otherwise. */
