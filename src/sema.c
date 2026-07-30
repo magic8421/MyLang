@@ -69,6 +69,15 @@ int class_implements(ClassInfo* ci, const char* iname) {
     return 0;
 }
 
+/* Element type of a MyArray value type (moved from codegen.c, behavior
+   unchanged). */
+Type array_elem_type(const Type* arr_type) {
+    Type et = *arr_type;
+    et.is_array = 0;
+    et.array_size = 0;
+    return et;
+}
+
 /* True when the expression is a lock() call on an unowned reference, which
    yields a strong value that may be assigned to a strong class variable.
    The codegen_call path emits a dedicated error message for this; we must not
@@ -853,11 +862,16 @@ static int sema_member_visible(const char* owner, int is_private) {
     return s_current_class_name && strcmp(s_current_class_name, owner) == 0;
 }
 
+/* Mirrors the diagnostics of codegen_array_method_call (defined below,
+   after sema_check_call). */
+static void sema_check_array_method_call(AstNode* node, AstNode* callee,
+                                         AstNode* arr, const char* mname);
+
 /* Mirrors the call-boundary diagnostics of codegen_call: callee existence,
    arity, per-argument checks, and method-call visibility.  Diagnostics
-   belonging to later clusters (weak lock(), array builtins,
-   assert/hash/equals) stay in codegen, but the control flow around them is
-   mirrored so the remaining checks run in the same cases. */
+   belonging to later clusters (weak lock(), assert/hash/equals) stay in
+   codegen, but the control flow around them is mirrored so the remaining
+   checks run in the same cases. */
 static void sema_check_call(AstNode* node) {
     AstNode* callee = node->ast_children[0];
     if (!callee) return;
@@ -894,9 +908,12 @@ static void sema_check_call(AstNode* node) {
 
         if (!obj) return;
         Type* ot = &obj->ast_resolved_type;
-        /* Array builtins and weak/unowned lock(): later clusters. */
-        if (ot->is_array && is_array_method_name(mname)) return;
-        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;
+        /* Array builtins have their own fixed-signature checks. */
+        if (ot->is_array && is_array_method_name(mname)) {
+            sema_check_array_method_call(node, callee, obj, mname);
+            return;
+        }
+        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;  /* weak cluster */
 
         if (ot->type_kind == TYPE_CLASS) {
             ClassInfo* ci = ot->type_arg_count > 0
@@ -985,6 +1002,67 @@ static void sema_check_call(AstNode* node) {
         sema_check_call_args(node, fi->param_count, fi->param_types);
     }
     /* other callee shapes: no call-boundary checks (mirrors codegen). */
+}
+
+/* Mirrors the diagnostics of codegen_array_method_call (array builtins).
+   The "unknown array method" fallback is unreachable there (the caller gates
+   on is_array_method_name), so it has no sema counterpart. */
+static void sema_check_array_method_call(AstNode* node, AstNode* callee,
+                                         AstNode* arr, const char* mname) {
+    AstNode* args = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+
+    if (strcmp(mname, "length") == 0 || strcmp(mname, "capacity") == 0) {
+        /* Fixed zero-parameter signatures (checked at the call dispatch). */
+        sema_check_call_arity(callee, mname, sema_count_call_args(node), 0, NULL);
+        return;
+    }
+    if (strcmp(mname, "push") == 0) {
+        if (!args) {
+            sema_report_error(arr, "push() requires a value argument");
+            return;
+        }
+        /* object arrays take interface/class/object/null values only. */
+        Type et = array_elem_type(&arr->ast_resolved_type);
+        if (et.type_kind == TYPE_OBJECT) {
+            Type* at = &args->ast_resolved_type;
+            if (!(at->type_kind == TYPE_INTERFACE && !at->is_weak) &&
+                at->type_kind != TYPE_CLASS && at->type_kind != TYPE_OBJECT &&
+                !type_is_null(at)) {
+                sema_report_error(args, "cannot push '%s' to an 'object' array", type_name(at));
+            }
+        }
+        return;
+    }
+    if (strcmp(mname, "reserve") == 0) {
+        if (!args) sema_report_error(arr, "reserve() requires a capacity argument");
+        return;
+    }
+    if (strcmp(mname, "resize") == 0) {
+        if (!args) sema_report_error(arr, "resize() requires a length argument");
+        return;
+    }
+    if (strcmp(mname, "move_to") == 0 || strcmp(mname, "copy_to") == 0) {
+        if (!args || args->ast_kind != AST_REF_ARG) {
+            sema_report_error(arr, "%s() requires a ref destination argument", mname);
+            return;
+        }
+        /* Mirrors emit_array_ref_arg: the destination must be a local. */
+        AstNode* dest = args->ast_children[0];
+        if (!dest || dest->ast_kind != AST_IDENT ||
+            !symtab_lookup(dest->ast_token.text)) {
+            sema_report_error(dest, "array move/copy destination must be a local variable");
+        }
+        return;
+    }
+    /* pop/clear/compact: no diagnostics. */
+}
+
+/* Mirrors the diagnostic of codegen_array_access. */
+static void sema_check_array_access(AstNode* node) {
+    AstNode* arr = node->ast_children[0];
+    if (arr && type_is_null(&arr->ast_resolved_type)) {
+        sema_report_error(node, "cannot index null");
+    }
 }
 
 /* -------------------------------------------------------------------------
@@ -1082,6 +1160,8 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_unary(node);
     } else if (node->ast_kind == AST_CALL) {
         sema_check_call(node);
+    } else if (node->ast_kind == AST_ARRAY_ACCESS) {
+        sema_check_array_access(node);
     }
 }
 

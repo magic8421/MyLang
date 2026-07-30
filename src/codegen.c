@@ -242,12 +242,7 @@ static void c_weak_interface_name(const Type* t, char* buf, size_t bufsz) {
 
 /* Helpers for the value-type MyArray representation. */
 
-static Type array_elem_type(const Type* arr_type) {
-    Type et = *arr_type;
-    et.is_array = 0;
-    et.array_size = 0;
-    return et;
-}
+/* (array_elem_type moved to sema.c.) */
 
 static void c_array_elem_type_name(const Type* arr_type, char* buf, int bufsz) {
     Type et = array_elem_type(arr_type);

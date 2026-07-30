@@ -39,6 +39,9 @@ int is_array_method_name(const char* s);
 /* Interface-implementation predicate (shared with codegen). */
 int class_implements(ClassInfo* ci, const char* iname);
 
+/* Element type of a MyArray value type (shared with codegen). */
+Type array_elem_type(const Type* arr_type);
+
 /* If node is a member access that resolves to a class property, returns the
    PropertyInfo and optionally the owning class.  Used by the sema assignment
    checks and by codegen's prepare-time property lowering, the expr_is_owned
