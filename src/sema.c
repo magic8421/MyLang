@@ -686,6 +686,276 @@ static void sema_check_return(AstNode* node) {
     }
 }
 
+/* -------------------------------------------------------------------------
+   Call boundary checks (mirrors codegen_call / codegen_call_arg)
+   ------------------------------------------------------------------------- */
+
+/* Array builtin method names (moved from codegen.c): these have fixed
+   signatures and skip the user-call boundary checks. */
+int is_array_method_name(const char* s) {
+    return strcmp(s, "push") == 0 || strcmp(s, "pop") == 0 ||
+           strcmp(s, "reserve") == 0 || strcmp(s, "resize") == 0 ||
+           strcmp(s, "clear") == 0 || strcmp(s, "compact") == 0 ||
+           strcmp(s, "length") == 0 || strcmp(s, "capacity") == 0 ||
+           strcmp(s, "move_to") == 0 || strcmp(s, "copy_to") == 0;
+}
+
+/* Counts the arguments of a call node (the children[1] next-chain). */
+static int sema_count_call_args(AstNode* node) {
+    int count = 0;
+    AstNode* a = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    while (a) {
+        count++;
+        a = a->next;
+    }
+    return count;
+}
+
+/* Mirrors codegen_check_call_arity.  Default values make trailing parameters
+   optional, so 'required' counts the leading parameters without one.  Runs on
+   the raw (pre-default-filling) argument list, which yields the same verdict
+   and numbers as codegen's post-filling count: filled defaults only ever
+   extend the list up to param_count, and only when every filled parameter
+   has a default. */
+static void sema_check_call_arity(AstNode* at, const char* display_name,
+                                  int actual, int param_count,
+                                  AstNode* const* param_defaults) {
+    int required = 0;
+    while (required < param_count && !param_defaults[required]) required++;
+    if (actual < required) {
+        sema_report_error(at, "too few arguments for '%s' (expected at least %d, got %d)",
+                          display_name, required, actual);
+    } else if (actual > param_count) {
+        sema_report_error(at, "too many arguments for '%s' (expected %d, got %d)",
+                          display_name, param_count, actual);
+    }
+}
+
+/* Mirrors the diagnostics of codegen_call_arg for a single argument.  A
+   zeroed param_type (unknown signature) only rejects REF_ARG arguments,
+   exactly like codegen. */
+static void sema_check_call_arg(AstNode* arg, const Type* param_type) {
+    if (param_type->is_array && !param_type->is_ref) {
+        sema_report_error(arg, "array arguments must be passed by ref");
+        return;
+    }
+    if (param_type->is_ref) {
+        if (arg->ast_kind != AST_REF_ARG) {
+            sema_report_error(arg, "missing 'ref' keyword for ref parameter");
+            return;
+        }
+        AstNode* var = arg->ast_children[0];
+        if (!var || var->ast_kind != AST_IDENT) {
+            sema_report_error(arg, "ref argument must be a local variable");
+            return;
+        }
+        SymEntry* e = symtab_lookup(var->ast_token.text);
+        if (!e) {
+            sema_report_error(arg, "ref argument must be a local variable");
+            return;
+        }
+        if (e->type.is_const) {
+            sema_report_error(arg, "cannot pass const variable '%s' to ref parameter",
+                              var->ast_token.text);
+        }
+        return;
+    }
+    if (arg->ast_kind == AST_REF_ARG) {
+        /* codegen still falls through to the weak-interface emission after
+           this diagnostic; that extra cascade is not reproduced here. */
+        sema_report_error(arg, "'ref' argument requires a ref parameter");
+        return;
+    }
+    Type* at = &arg->ast_resolved_type;
+
+    if (type_is_null(at)) {
+        /* null argument: only reference-like parameters accept it. */
+        if (param_type->is_unowned) {
+            sema_report_error(arg, "cannot pass null to unowned parameter");
+        } else if (!(param_type->is_weak && param_type->type_kind == TYPE_INTERFACE) &&
+                   param_type->type_kind != TYPE_INTERFACE &&
+                   param_type->type_kind != TYPE_CLASS &&
+                   param_type->type_kind != TYPE_OBJECT &&
+                   param_type->type_kind != TYPE_VOID) {
+            sema_report_error(arg, "cannot pass null to '%s' parameter", type_name(param_type));
+        }
+        return;
+    }
+
+    /* Strict bool/enum rules at the call boundary. */
+    if (param_type->type_kind != TYPE_VOID &&
+        (bool_mismatch(param_type, at) || enum_mismatch(param_type, at))) {
+        sema_report_error(arg, "cannot pass '%s' to '%s' parameter",
+                          type_name(at), type_name(param_type));
+        return;
+    }
+
+    /* A class parameter does not accept object; cast with 'as' first. */
+    if (param_type->type_kind == TYPE_CLASS && at->type_kind == TYPE_OBJECT) {
+        sema_report_error(arg, "cannot pass 'object' to '%s' parameter; cast with 'as' first",
+                          type_name(param_type));
+        return;
+    }
+
+    /* object parameter: interface (strong), class, and object pass through. */
+    if (param_type->type_kind == TYPE_OBJECT) {
+        if (!((at->type_kind == TYPE_INTERFACE && !at->is_weak) ||
+              at->type_kind == TYPE_CLASS || at->type_kind == TYPE_OBJECT)) {
+            sema_report_error(arg, "cannot pass '%s' to 'object' parameter", type_name(at));
+        }
+        return;
+    }
+
+    /* weak interface parameter: weak/strong interface and class accepted. */
+    if (param_type->is_weak && param_type->type_kind == TYPE_INTERFACE) {
+        if (!((at->is_weak && at->type_kind == TYPE_INTERFACE) ||
+              at->type_kind == TYPE_INTERFACE || at->type_kind == TYPE_CLASS)) {
+            sema_report_error(arg, "cannot pass this argument to weak interface parameter");
+        }
+    }
+}
+
+/* Runs sema_check_call_arg over the argument list; positions beyond the
+   signature (or without one) get a zeroed type, mirroring codegen. */
+static void sema_check_call_args(AstNode* node, int param_count, const Type* param_types) {
+    AstNode* arg = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+    int idx = 0;
+    while (arg) {
+        Type expected;
+        memset(&expected, 0, sizeof(expected));
+        if (param_types && idx < param_count) expected = param_types[idx];
+        sema_check_call_arg(arg, &expected);
+        idx++;
+        arg = arg->next;
+    }
+}
+
+/* Mirrors the call-boundary diagnostics of codegen_call: callee existence,
+   arity, and per-argument checks.  Diagnostics belonging to later clusters
+   (visibility, weak lock(), array builtins, assert/hash/equals) stay in
+   codegen, but the control flow around them is mirrored so the remaining
+   checks run in the same cases. */
+static void sema_check_call(AstNode* node) {
+    AstNode* callee = node->ast_children[0];
+    if (!callee) return;
+    char dbuf[160];
+    int dn;
+
+    if (callee->ast_kind == AST_MEMBER_ACCESS) {
+        AstNode* obj = callee->ast_children[0];
+        const char* mname = callee->ast_token.text;
+
+        /* Static method call via the class name: ClassName.m(args). */
+        ClassInfo* sci = NULL;
+        MethodInfo* smi = sema_static_call_method(callee, &sci);
+        if (sci) {
+            if (!smi) {
+                sema_report_error(callee, "method '%s.%s' does not exist", sci->name, mname);
+                return;
+            }
+            /* "instance method via the class name" stays in codegen
+               (visibility cluster); codegen returns before the arity check. */
+            if (!smi->method_is_static) return;
+            /* The private-method diagnostic stays in codegen; the arity and
+               argument checks still run after it there. */
+            dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", sci->name, mname);
+            CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+            sema_check_call_arity(callee, dbuf, sema_count_call_args(node),
+                                  smi->param_count, smi->param_defaults);
+            sema_check_call_args(node, smi->param_count, smi->param_types);
+            return;
+        }
+
+        if (!obj) return;
+        Type* ot = &obj->ast_resolved_type;
+        /* Array builtins and weak/unowned lock(): later clusters. */
+        if (ot->is_array && is_array_method_name(mname)) return;
+        if (strcmp(mname, "lock") == 0 && (ot->is_weak || ot->is_unowned)) return;
+
+        if (ot->type_kind == TYPE_CLASS) {
+            ClassInfo* ci = ot->type_arg_count > 0
+                ? symtab_instantiate_class_from_type(ot)
+                : symtab_find_class(ot->class_name);
+            MethodInfo* mi = ci ? symtab_find_method_in_class(ci, mname) : NULL;
+            if (ci && !mi) {
+                sema_report_error(callee, "method '%s.%s' does not exist", ci->name, mname);
+            }
+            /* static-via-instance and private diagnostics stay in codegen
+               (visibility cluster); codegen continues to the arity check. */
+            if (mi && ci) {
+                dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", ci->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                sema_check_call_arity(callee, dbuf, sema_count_call_args(node),
+                                      mi->param_count, mi->param_defaults);
+            }
+            sema_check_call_args(node, mi ? mi->param_count : 0,
+                                 mi ? mi->param_types : NULL);
+            return;
+        }
+        if (ot->type_kind == TYPE_STRUCT) {
+            StructInfo* si = symtab_find_struct(ot->class_name);
+            MethodInfo* mi = si ? symtab_find_struct_method(si, mname) : NULL;
+            if (si && !mi) {
+                sema_report_error(callee, "method '%s.%s' does not exist", si->name, mname);
+            }
+            if (mi && si) {
+                dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", si->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                sema_check_call_arity(callee, dbuf, sema_count_call_args(node),
+                                      mi->param_count, mi->param_defaults);
+            }
+            if (obj->ast_kind != AST_IDENT && obj->ast_kind != AST_MEMBER_ACCESS &&
+                obj->ast_kind != AST_ARRAY_ACCESS) {
+                sema_report_error(obj, "struct method receiver must be a variable, field, or array element");
+            }
+            sema_check_call_args(node, mi ? mi->param_count : 0,
+                                 mi ? mi->param_types : NULL);
+            return;
+        }
+        if (ot->type_kind == TYPE_INTERFACE) {
+            InterfaceInfo* ii = symtab_find_interface(ot->class_name);
+            InterfaceMethodInfo* im = ii ? symtab_find_interface_method(ii, mname) : NULL;
+            if (ii && !im) {
+                sema_report_error(callee, "method '%s.%s' does not exist", ii->name, mname);
+            }
+            if (im && ii) {
+                dn = snprintf(dbuf, sizeof(dbuf), "%s.%s", ii->name, mname);
+                CHECK_SNPRINTF(dn, sizeof(dbuf), "method display name too long");
+                sema_check_call_arity(callee, dbuf, sema_count_call_args(node),
+                                      im->param_count, im->param_defaults);
+            }
+            sema_check_call_args(node, im ? im->param_count : 0,
+                                 im ? im->param_types : NULL);
+            return;
+        }
+        return;  /* other receiver kinds: no call-boundary checks */
+    }
+
+    if (callee->ast_kind == AST_IDENT) {
+        FuncInfo* fi = symtab_find_func(callee->ast_token.text);
+        if (!fi) {
+            /* assert/hash/equals builtins stay in codegen (builtin cluster). */
+            if (strcmp(callee->ast_token.text, "assert") == 0 ||
+                strcmp(callee->ast_token.text, "hash") == 0 ||
+                strcmp(callee->ast_token.text, "equals") == 0) return;
+            sema_report_error(callee, "unknown function '%s'", callee->ast_token.text);
+            return;
+        }
+        if (fi->is_builtin) {
+            /* print: codegen checks only the first argument, never arity. */
+            AstNode* arg = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
+            if (arg && fi->param_count > 0) {
+                sema_check_call_arg(arg, &fi->param_types[0]);
+            }
+            return;
+        }
+        sema_check_call_arity(callee, callee->ast_token.text, sema_count_call_args(node),
+                              fi->param_count, fi->param_defaults);
+        sema_check_call_args(node, fi->param_count, fi->param_types);
+    }
+    /* other callee shapes: no call-boundary checks (mirrors codegen). */
+}
+
 /* Resolves every node of an expression tree (post-order) and runs the
    migrated checks.  Call argument lists are linked through 'next', so those
    are walked too. */
@@ -703,6 +973,8 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_binary(node);
     } else if (node->ast_kind == AST_UNARY) {
         sema_check_unary(node);
+    } else if (node->ast_kind == AST_CALL) {
+        sema_check_call(node);
     }
 }
 

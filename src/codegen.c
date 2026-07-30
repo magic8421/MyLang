@@ -948,13 +948,7 @@ static void codegen_call_arg(CodegenContext* ctx, AstNode* arg, const Type* para
     }
 }
 
-static int is_array_method_name(const char* s) {
-    return strcmp(s, "push") == 0 || strcmp(s, "pop") == 0 ||
-           strcmp(s, "reserve") == 0 || strcmp(s, "resize") == 0 ||
-           strcmp(s, "clear") == 0 || strcmp(s, "compact") == 0 ||
-           strcmp(s, "length") == 0 || strcmp(s, "capacity") == 0 ||
-           strcmp(s, "move_to") == 0 || strcmp(s, "copy_to") == 0;
-}
+/* (is_array_method_name moved to sema.c.) */
 
 /* Counts the arguments of a call node (the children[1] next-chain). */
 static int count_call_args(AstNode* node) {
