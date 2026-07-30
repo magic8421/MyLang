@@ -408,6 +408,7 @@ Type sema_resolve_type(AstNode* node) {
    ------------------------------------------------------------------------- */
 
 static int sema_member_visible(const char* owner, int is_private);
+static void sema_check_call_arg(AstNode* arg, const Type* param_type);
 
 /* Assignment type checks, migrated from the codegen AST_ASSIGN dispatch.
    The branch chain mirrors the dispatch exactly (array/null/const guards,
@@ -439,9 +440,11 @@ static void sema_check_assign(AstNode* node) {
            The codegen block's fourth check ("cannot assign '%s' to property
            '%s'") is NOT a language rule: it bluntly rejects reference-typed
            RHS values because the inline fallback emission cannot handle their
-           ownership.  Valid writes go through lowering (here: the transform
-           pass below) and the normal call-argument checks, so sema does not
-           mirror it. */
+           ownership, so sema does not mirror it.  Instead the value is
+           validated with the same checks the lowered setter call's argument
+           would get (a write obj.X = v is exactly obj.set_X(v)).
+           Array-typed properties are exempt: their writes keep facing the
+           array call-boundary rules in codegen, unchanged. */
         ClassInfo* pci = NULL;
         PropertyInfo* pi = member_access_property(lhs, &pci);
         if (pi) {
@@ -451,6 +454,8 @@ static void sema_check_assign(AstNode* node) {
                 sema_report_error(node, "property '%s.%s' has no setter", pci->name, pi->name);
             } else if (!sema_member_visible(pci->name, pi->is_private)) {
                 sema_report_error(node, "cannot access private property '%s.%s'", pci->name, pi->name);
+            } else if (!pi->prop_type.is_array) {
+                sema_check_call_arg(rhs, &pi->prop_type);
             }
             return;
         }
@@ -881,6 +886,54 @@ static void sema_check_call_arg(AstNode* arg, const Type* param_type) {
               at->type_kind == TYPE_INTERFACE || at->type_kind == TYPE_CLASS)) {
             sema_report_error(arg, "cannot pass this argument to weak interface parameter");
         }
+    }
+
+    /* General class/interface compatibility (new; not mirrored from codegen,
+       which has no such check): the call boundary previously verified only
+       bool/enum mismatches, so mismatched reference types and reference-to-
+       primitive mismatches slipped through and produced invalid C.  Zeroed
+       types (unknown signatures, earlier errors) and type parameters skip
+       these checks. */
+    if (param_type->type_kind == TYPE_VOID || at->type_kind == TYPE_VOID ||
+        param_type->type_kind == TYPE_TYPE_PARAM || at->type_kind == TYPE_TYPE_PARAM) {
+        return;
+    }
+    if (param_type->type_kind == TYPE_CLASS) {
+        /* Generic instantiations compare by their full display name so that
+           Box<i32> is not accepted for a Box<String> parameter. */
+        int same = at->type_kind == TYPE_CLASS &&
+                   strcmp(at->class_name, param_type->class_name) == 0 &&
+                   at->type_arg_count == param_type->type_arg_count;
+        if (same && at->type_arg_count > 0) {
+            same = strcmp(type_name(at), type_name(param_type)) == 0;
+        }
+        if (!same) {
+            sema_report_error(arg, "cannot pass '%s' to '%s' parameter",
+                              type_name(at), type_name(param_type));
+        }
+        return;
+    }
+    if (param_type->type_kind == TYPE_INTERFACE) {
+        int ok = 0;
+        if (at->type_kind == TYPE_INTERFACE &&
+            strcmp(at->class_name, param_type->class_name) == 0 &&
+            at->type_arg_count == param_type->type_arg_count) {
+            ok = 1;
+        } else if (at->type_kind == TYPE_CLASS) {
+            ClassInfo* aci = class_info_for_type(at);
+            ok = aci && class_implements(aci, param_type->class_name);
+        }
+        if (!ok) {
+            sema_report_error(arg, "cannot pass '%s' to '%s' parameter",
+                              type_name(at), type_name(param_type));
+        }
+        return;
+    }
+    /* Primitive/struct/enum parameter: reference arguments are invalid. */
+    if (at->type_kind == TYPE_CLASS || at->type_kind == TYPE_INTERFACE ||
+        at->type_kind == TYPE_OBJECT) {
+        sema_report_error(arg, "cannot pass '%s' to '%s' parameter",
+                          type_name(at), type_name(param_type));
     }
 }
 
