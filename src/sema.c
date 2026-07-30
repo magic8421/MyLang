@@ -866,6 +866,8 @@ static int sema_member_visible(const char* owner, int is_private) {
    after sema_check_call). */
 static void sema_check_array_method_call(AstNode* node, AstNode* callee,
                                          AstNode* arr, const char* mname);
+/* Defined below, after sema_check_call. */
+static void sema_check_member_access(AstNode* node);
 
 /* Mirrors the call-boundary diagnostics of codegen_call: callee existence,
    arity, per-argument checks, and method-call visibility.  Diagnostics
@@ -976,7 +978,12 @@ static void sema_check_call(AstNode* node) {
                                  im ? im->param_types : NULL);
             return;
         }
-        return;  /* other receiver kinds: no call-boundary checks */
+        /* Other receiver kinds: codegen falls through to emitting the callee
+           as an expression, so the member-access read diagnostics and the
+           (signature-less) argument checks apply there. */
+        sema_check_member_access(callee);
+        sema_check_call_args(node, 0, NULL);
+        return;
     }
 
     if (callee->ast_kind == AST_IDENT) {
@@ -1062,6 +1069,112 @@ static void sema_check_array_access(AstNode* node) {
     AstNode* arr = node->ast_children[0];
     if (arr && type_is_null(&arr->ast_resolved_type)) {
         sema_report_error(node, "cannot index null");
+    }
+}
+
+/* -------------------------------------------------------------------------
+   Member access checks (mirrors codegen_member_access)
+   ------------------------------------------------------------------------- */
+
+/* Mirrors the diagnostics of codegen_member_access.  Runs on read positions
+   (see sema_walk_target for write positions and sema_check_call for call
+   callees). */
+static void sema_check_member_access(AstNode* node) {
+    AstNode* obj = node->ast_children[0];
+    if (!obj) return;
+
+    /* Enum variant access 'Key.Up'.  A local variable of the same name
+       shadows the enum (same rule as class static calls). */
+    if (obj->ast_kind == AST_IDENT && !symtab_lookup(obj->ast_token.text)) {
+        EnumInfo* ei = symtab_find_enum(obj->ast_token.text);
+        if (ei) {
+            int found = 0;
+            int i;
+            for (i = 0; i < ei->variant_count; i++) {
+                if (strcmp(ei->variant_names[i], node->ast_token.text) == 0) { found = 1; break; }
+            }
+            if (!found) {
+                sema_report_error(node, "enum '%s' has no variant '%s'", ei->name, node->ast_token.text);
+            }
+            return;
+        }
+    }
+    /* Static class const access 'Config.MAX' (same shadowing rule). */
+    if (obj->ast_kind == AST_IDENT && !symtab_lookup(obj->ast_token.text)) {
+        ClassInfo* ci = symtab_find_class(obj->ast_token.text);
+        if (ci && !ci->is_generic) {
+            ConstInfo* cc = symtab_find_class_const(ci->name, node->ast_token.text);
+            if (cc) {
+                if (!sema_member_visible(ci->name, cc->is_private)) {
+                    sema_report_error(node, "static const '%s.%s' is private", ci->name, cc->name);
+                }
+                return;
+            }
+        }
+    }
+
+    Type* ot = &obj->ast_resolved_type;
+    if (type_is_null(ot)) {
+        sema_report_error(node, "cannot access member '%s' on null", node->ast_token.text);
+        return;
+    }
+    if (ot->type_kind == TYPE_OBJECT && !ot->is_array) {
+        sema_report_error(node, "cannot access member '%s' on object; cast it with 'as' first",
+                          node->ast_token.text);
+        return;
+    }
+    if (ot->is_array) {
+        /* Arrays have no member fields; all operations are builtin methods
+           dispatched as calls. */
+        sema_report_error(node, "array has no member '%s'", node->ast_token.text);
+        return;
+    }
+    if (ot->type_kind == TYPE_CLASS) {
+        ClassInfo* ci = ot->type_arg_count > 0
+            ? symtab_instantiate_class_from_type(ot)
+            : symtab_find_class(ot->class_name);
+        if (ci) {
+            int found = 0;
+            int i;
+            for (i = 0; i < ci->field_count; i++) {
+                if (strcmp(ci->field_names[i], node->ast_token.text) == 0) {
+                    found = 1;
+                    if (!sema_member_visible(ci->name, ci->field_private[i])) {
+                        sema_report_error(node, "cannot access private field '%s.%s'",
+                                          ci->name, node->ast_token.text);
+                    }
+                    break;
+                }
+            }
+            if (!found) {
+                PropertyInfo* pi = symtab_find_property(ci, node->ast_token.text);
+                if (pi) {
+                    /* A valid read lowers to the getter call in codegen;
+                       only the invalid cases reach the diagnostics. */
+                    if (!pi->has_get) {
+                        sema_report_error(node, "property '%s.%s' has no getter", ci->name, pi->name);
+                    } else if (!sema_member_visible(ci->name, pi->is_private)) {
+                        sema_report_error(node, "cannot access private property '%s.%s'", ci->name, pi->name);
+                    }
+                    return;
+                }
+                sema_report_error(node, "class '%s' has no field '%s'", ci->name, node->ast_token.text);
+            }
+        }
+        return;
+    }
+    if (ot->type_kind == TYPE_STRUCT) {
+        StructInfo* si = symtab_find_struct(ot->class_name);
+        if (si) {
+            int found = 0;
+            int i;
+            for (i = 0; i < si->field_count; i++) {
+                if (strcmp(si->field_names[i], node->ast_token.text) == 0) { found = 1; break; }
+            }
+            if (!found) {
+                sema_report_error(node, "struct '%s' has no field '%s'", si->name, node->ast_token.text);
+            }
+        }
     }
 }
 
@@ -1162,20 +1275,70 @@ static void sema_check_match(AstNode* node) {
     }
 }
 
+/* Walks an assignment/inc-dec target.  A property member access in a write
+   position is NOT read-checked: its dedicated diagnostics come from the
+   assign/inc-dec dispatches (or the access is lowered away in codegen), so
+   only the object expression is walked as a read.  All other targets behave
+   as ordinary read positions (mirroring the emission-time checks codegen
+   runs on them). */
+static void sema_walk_expr(AstNode* node);
+
+static void sema_walk_target(AstNode* node) {
+    if (!node) return;
+    if (node->ast_kind == AST_MEMBER_ACCESS && member_access_property(node, NULL)) {
+        sema_walk_expr(node->ast_children[0]);
+        sema_walk_expr(node->next);
+        sema_resolve_type(node);
+        return;
+    }
+    sema_walk_expr(node);
+}
+
 /* Resolves every node of an expression tree (post-order) and runs the
    migrated checks.  Call argument lists are linked through 'next', so those
    are walked too. */
 static void sema_walk_expr(AstNode* node) {
     if (!node) return;
     int i;
+    if (node->ast_kind == AST_ASSIGN) {
+        /* The LHS is a write position (see sema_walk_target). */
+        sema_walk_target(node->ast_children[0]);
+        for (i = 1; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+            sema_walk_expr(node->ast_children[i]);
+        }
+        sema_walk_expr(node->next);
+        sema_resolve_type(node);
+        sema_check_assign(node);
+        return;
+    }
+    if (node->ast_kind == AST_INC_DEC) {
+        sema_walk_target(node->ast_children[0]);
+        sema_walk_expr(node->next);
+        sema_resolve_type(node);
+        sema_check_inc_dec(node);
+        return;
+    }
+    if (node->ast_kind == AST_CALL && node->ast_child_count > 0 &&
+        node->ast_children[0] && node->ast_children[0]->ast_kind == AST_MEMBER_ACCESS) {
+        /* The callee member access is dispatched by sema_check_call (method
+           paths never read-check it); its object is a read position. */
+        AstNode* callee = node->ast_children[0];
+        sema_walk_expr(callee->ast_children[0]);
+        for (i = 1; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+            sema_walk_expr(node->ast_children[i]);
+        }
+        sema_walk_expr(node->next);
+        sema_resolve_type(callee);
+        sema_resolve_type(node);
+        sema_check_call(node);
+        return;
+    }
     for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
         sema_walk_expr(node->ast_children[i]);
     }
     sema_walk_expr(node->next);
     sema_resolve_type(node);
-    if (node->ast_kind == AST_ASSIGN) {
-        sema_check_assign(node);
-    } else if (node->ast_kind == AST_BINARY) {
+    if (node->ast_kind == AST_BINARY) {
         sema_check_binary(node);
     } else if (node->ast_kind == AST_UNARY) {
         sema_check_unary(node);
@@ -1183,8 +1346,8 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_call(node);
     } else if (node->ast_kind == AST_ARRAY_ACCESS) {
         sema_check_array_access(node);
-    } else if (node->ast_kind == AST_INC_DEC) {
-        sema_check_inc_dec(node);
+    } else if (node->ast_kind == AST_MEMBER_ACCESS) {
+        sema_check_member_access(node);
     }
 }
 
