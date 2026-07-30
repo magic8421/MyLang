@@ -868,6 +868,40 @@ static void sema_check_call_args(AstNode* node, int param_count, const Type* par
    NULL everywhere else (free functions, struct methods, interface default
    methods). */
 static const char* s_current_class_name = NULL;
+/* Mirrors codegen's ctx->current_method_is_static / is_interface_default_method
+   for the 'this' identifier diagnostics. */
+static int s_current_method_is_static = 0;
+static int s_in_interface_default = 0;
+
+/* Mirrors the AST_IDENT dispatch in codegen_expr: 'this' misuse and unknown
+   identifiers.  ('this' outside any method emits no diagnostic in codegen
+   either; the parser rejects it.) */
+static void sema_check_ident(AstNode* node) {
+    if (strcmp(node->ast_token.text, "this") == 0) {
+        if (s_current_method_is_static) {
+            sema_report_error(node, "'this' cannot be used in a static method");
+            return;
+        }
+        if (s_in_interface_default) {
+            sema_report_error(node, "'this' is not allowed in interface default method");
+        }
+        return;
+    }
+    if (!symtab_lookup(node->ast_token.text)) {
+        sema_report_error(node, "unknown identifier '%s'", node->ast_token.text);
+    }
+}
+
+/* True for a bare identifier that names a type rather than a variable: enum
+   names ('Key.Up') and class names ('Config.MAX', 'ClassName.m()') appear as
+   member-access objects, where codegen emits them directly and never runs the
+   identifier diagnostics. */
+static int sema_ident_is_type_name(AstNode* node) {
+    if (!node || node->ast_kind != AST_IDENT) return 0;
+    if (symtab_lookup(node->ast_token.text)) return 0;
+    return symtab_find_enum(node->ast_token.text) != NULL ||
+           symtab_find_class(node->ast_token.text) != NULL;
+}
 
 static int sema_member_visible(const char* owner, int is_private) {
     if (!is_private) return 1;
@@ -1392,10 +1426,26 @@ static void sema_check_match(AstNode* node) {
    runs on them). */
 static void sema_walk_expr(AstNode* node);
 
+/* Walks the object of a member access.  A bare identifier is a read position
+   unless it names a type (enum/class), which codegen emits directly without
+   the identifier diagnostics. */
+static void sema_walk_member_obj(AstNode* obj) {
+    if (!obj) return;
+    if (obj->ast_kind == AST_IDENT) {
+        sema_resolve_type(obj);
+        if (!sema_ident_is_type_name(obj)) {
+            sema_check_ident(obj);
+        }
+        sema_walk_expr(obj->next);
+        return;
+    }
+    sema_walk_expr(obj);
+}
+
 static void sema_walk_target(AstNode* node) {
     if (!node) return;
     if (node->ast_kind == AST_MEMBER_ACCESS && member_access_property(node, NULL)) {
-        sema_walk_expr(node->ast_children[0]);
+        sema_walk_member_obj(node->ast_children[0]);
         sema_walk_expr(node->next);
         sema_resolve_type(node);
         return;
@@ -1432,7 +1482,7 @@ static void sema_walk_expr(AstNode* node) {
         /* The callee member access is dispatched by sema_check_call (method
            paths never read-check it); its object is a read position. */
         AstNode* callee = node->ast_children[0];
-        sema_walk_expr(callee->ast_children[0]);
+        sema_walk_member_obj(callee->ast_children[0]);
         for (i = 1; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
             sema_walk_expr(node->ast_children[i]);
         }
@@ -1440,6 +1490,31 @@ static void sema_walk_expr(AstNode* node) {
         sema_resolve_type(callee);
         sema_resolve_type(node);
         sema_check_call(node);
+        return;
+    }
+    if (node->ast_kind == AST_CALL && node->ast_child_count > 0 &&
+        node->ast_children[0] && node->ast_children[0]->ast_kind == AST_IDENT) {
+        /* The callee is a function name: sema_check_call resolves it via the
+           func table (and the builtin names); it is not a variable read. */
+        AstNode* callee = node->ast_children[0];
+        for (i = 1; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+            sema_walk_expr(node->ast_children[i]);
+        }
+        sema_walk_expr(node->next);
+        sema_resolve_type(callee);
+        sema_resolve_type(node);
+        sema_check_call(node);
+        return;
+    }
+    if (node->ast_kind == AST_MEMBER_ACCESS) {
+        /* The object is a read position, except for bare type names. */
+        sema_walk_member_obj(node->ast_child_count > 0 ? node->ast_children[0] : NULL);
+        for (i = 1; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+            sema_walk_expr(node->ast_children[i]);
+        }
+        sema_walk_expr(node->next);
+        sema_resolve_type(node);
+        sema_check_member_access(node);
         return;
     }
     for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
@@ -1455,8 +1530,8 @@ static void sema_walk_expr(AstNode* node) {
         sema_check_call(node);
     } else if (node->ast_kind == AST_ARRAY_ACCESS) {
         sema_check_array_access(node);
-    } else if (node->ast_kind == AST_MEMBER_ACCESS) {
-        sema_check_member_access(node);
+    } else if (node->ast_kind == AST_IDENT) {
+        sema_check_ident(node);
     }
 }
 
@@ -1648,9 +1723,12 @@ static void sema_walk_method(AstNode* m, const char* owner_name, int is_struct) 
     }
     const char* prev_class_name = s_current_class_name;
     s_current_class_name = is_struct ? NULL : owner_name;
+    int prev_static = s_current_method_is_static;
+    s_current_method_is_static = m->ast_is_static;
     /* codegen returns before the parameter loop for native class methods. */
     sema_check_signature(m, is_struct || !m->ast_is_native);
     sema_walk_body(params, body, insert_this, &thiz_type, &m->ast_resolved_type);
+    s_current_method_is_static = prev_static;
     s_current_class_name = prev_class_name;
 }
 
@@ -1716,6 +1794,8 @@ void sema_check(AstNode* program) {
                 if (!body) continue;
                 Type prev_ret_type = s_current_ret_type;
                 s_current_ret_type = im->return_type;
+                int prev_iface_default = s_in_interface_default;
+                s_in_interface_default = 1;
                 symtab_enter_scope();
                 int k;
                 for (k = 0; k < im->param_count; k++) {
@@ -1731,6 +1811,7 @@ void sema_check(AstNode* program) {
                     sema_walk_stmt(body);
                 }
                 symtab_exit_scope();
+                s_in_interface_default = prev_iface_default;
                 s_current_ret_type = prev_ret_type;
             }
             ii = ii->next;
