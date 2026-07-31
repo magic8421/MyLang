@@ -81,6 +81,47 @@ static void parser_qualify_decl_name(Parser* p, Token* name) {
     CHECK_STRSCPY(strscpy(name->text, q, sizeof(name->text)), "qualified name too long");
 }
 
+/* Deferred callee patches for calls inside namespace bodies.  A call f(...)
+   whose callee does not resolve at parse time may be a forward reference to
+   a sibling function N_f declared later in the block; the callee identifier
+   node is recorded here and rewritten to "N_f" once the whole program has
+   been parsed (all functions registered) -- see parser_parse_program. */
+#define MAX_NS_CALL_PATCHES 512
+static AstNode* ns_call_patch_nodes[MAX_NS_CALL_PATCHES];
+static char     ns_call_patch_ns[MAX_NS_CALL_PATCHES][NAME_BUF_SIZE];
+static int      ns_call_patch_count = 0;
+
+static void parser_ns_defer_call_patch(Parser* p, AstNode* callee) {
+    if (ns_call_patch_count >= MAX_NS_CALL_PATCHES) {
+        fprintf(stderr, "%s(%d,%d): error: too many deferred namespace calls (max %d)\n",
+                parser_filename(p), callee->ast_token.line, callee->ast_token.col,
+                MAX_NS_CALL_PATCHES);
+        p->had_error = 1;
+        return;
+    }
+    ns_call_patch_nodes[ns_call_patch_count] = callee;
+    CHECK_STRSCPY(strscpy(ns_call_patch_ns[ns_call_patch_count], p->ns_prefix,
+                          sizeof(ns_call_patch_ns[0])), "namespace prefix too long");
+    ns_call_patch_count++;
+}
+
+static void parser_ns_apply_call_patches(void) {
+    int i;
+    for (i = 0; i < ns_call_patch_count; i++) {
+        AstNode* callee = ns_call_patch_nodes[i];
+        char qname[NAME_BUF_SIZE];
+        int qn = snprintf(qname, sizeof(qname), "%s_%s", ns_call_patch_ns[i],
+                          callee->ast_token.text);
+        CHECK_SNPRINTF(qn, sizeof(qname), "qualified name too long");
+        if (symtab_find_func(qname)) {
+            CHECK_STRSCPY(strscpy(callee->ast_token.text, qname,
+                                  sizeof(callee->ast_token.text)),
+                          "qualified name too long");
+        }
+    }
+    ns_call_patch_count = 0;
+}
+
 /* ================================================================
    FORWARD DECLARATIONS
    ================================================================ */
@@ -558,6 +599,19 @@ static AstNode* parse_primary(Parser* p) {
     }
     if (check(p, TOK_IDENT)) {
         Token t = p->current; advance(p);
+        /* Same-namespace-first for bare const names inside a namespace body:
+           MAX -> "N_MAX" unless a local variable shadows it.  Consts enter
+           the scope at their declaration, so (as with global consts) only
+           backward references resolve. */
+        if (p->ns_prefix[0] && !symtab_lookup_local(t.text)) {
+            char qname[NAME_BUF_SIZE];
+            int qn = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix, t.text);
+            CHECK_SNPRINTF(qn, sizeof(qname), "qualified name too long");
+            if (symtab_find_const(qname)) {
+                CHECK_STRSCPY(strscpy(t.text, qname, sizeof(t.text)),
+                              "qualified name too long");
+            }
+        }
         return ast_new_node(AST_IDENT, t);
     }
     if (check(p, TOK_KW_THIS)) {
@@ -717,6 +771,25 @@ static AstNode* parse_postfix(Parser* p) {
             node = mem;
         } else if (check(p, TOK_LPAREN)) {
             Token pt = p->current; advance(p);
+            /* Same-namespace-first for calls inside a namespace body: if the
+               sibling function N_f is already registered, rewrite the callee
+               now; otherwise defer to the post-parse patch list so forward
+               references resolve too.  A variable named f shadows the
+               function namespace lookup. */
+            if (node->ast_kind == AST_IDENT && p->ns_prefix[0] &&
+                !symtab_lookup(node->ast_token.text)) {
+                char qname[NAME_BUF_SIZE];
+                int qn = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix,
+                                  node->ast_token.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified name too long");
+                if (symtab_find_func(qname)) {
+                    CHECK_STRSCPY(strscpy(node->ast_token.text, qname,
+                                          sizeof(node->ast_token.text)),
+                                  "qualified name too long");
+                } else {
+                    parser_ns_defer_call_patch(p, node);
+                }
+            }
             AstNode* call = ast_new_node(AST_CALL, pt);
             ast_add_child(call, node);
             if (!check(p, TOK_RPAREN)) {
@@ -3115,6 +3188,11 @@ AstNode* parser_parse_program(Parser* p) {
     }
 
     AstNode* decls = parser_parse_file_decls(p, 0);
+
+    /* All functions are registered now: rewrite deferred callees inside
+       namespace bodies that turned out to be same-namespace forward
+       references. */
+    parser_ns_apply_call_patches();
 
     ast_add_child(program, decls);
     return program;

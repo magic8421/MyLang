@@ -274,6 +274,22 @@ SymEntry* symtab_lookup_current(const char* name) {
     return NULL;
 }
 
+SymEntry* symtab_lookup_local(const char* name) {
+    Scope* s = current_scope;
+    while (s && s->level > 0) {
+        unsigned idx = hash_string(name);
+        SymEntry* e = s->table[idx];
+        while (e) {
+            if (strcmp(e->name, name) == 0) {
+                return e;
+            }
+            e = e->next;
+        }
+        s = s->parent;
+    }
+    return NULL;
+}
+
 void symtab_add_class(const char* name, ClassInfo* info) {
     info->next = class_list;
     class_list = info;

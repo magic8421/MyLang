@@ -5379,6 +5379,49 @@ i32 main() {
 }
 """, 186),
 
+    ("ns_body_same_namespace_first", """
+i32 global_helper(i32 x) {
+    return x + 1;
+}
+namespace Calc {
+    const i32 BASE = 30;
+    i32 forward_user(i32 x) {
+        return later(x) + BASE;
+    }
+    i32 later(i32 x) {
+        return x * 2;
+    }
+    i32 use_global(i32 x) {
+        return global_helper(x);
+    }
+    i32 shadow_test(i32 BASE) {
+        return BASE + 1;
+    }
+}
+i32 main() {
+    return Calc.forward_user(5) + Calc.use_global(10) + Calc.shadow_test(100);
+}
+""", 152),
+
+    ("ns_func_shadows_global", """
+i32 dup(i32 x) {
+    return x + 100;
+}
+namespace N {
+    i32 caller(i32 x) {
+        return dup(x);
+    }
+    i32 dup(i32 x) {
+        return x + 1;
+    }
+}
+i32 main() {
+    if (N.caller(10) != 11) { return 1; }
+    if (dup(10) != 110) { return 2; }
+    return 42;
+}
+""", 42),
+
 
 ]
 

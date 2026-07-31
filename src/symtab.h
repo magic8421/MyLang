@@ -172,6 +172,9 @@ Scope*      symtab_current_scope(void);
 void        symtab_insert(const char* name, Type type);
 SymEntry*   symtab_lookup(const char* name);
 SymEntry*   symtab_lookup_current(const char* name);
+/* Lookup restricted to function-local scopes (level > 0); global-scope
+   entries such as top-level consts do not match. */
+SymEntry*   symtab_lookup_local(const char* name);
 
 void        symtab_add_class(const char* name, ClassInfo* info);
 ClassInfo*  symtab_find_class(const char* name);
