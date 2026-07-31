@@ -2937,13 +2937,18 @@ static void parser_register_forward_decls(Parser* p) {
                                 symtab_mark_class_generic(info, NULL, param_count, param_ptrs);
                             }
                         }
+                        /* The generic probe swallowed one token; keep the
+                           namespace brace accounting in sync when it was the
+                           class body opener. */
+                        if (fwd_depth > 0 && t.kind == TOK_LBRACE) {
+                            fwd_depth++;
+                        }
                         if (!info->is_generic) {
                             info->type_id = symtab_next_type_id();
                         }
                         symtab_add_class(regname, info);
                     }
-                } else if (decl_kind == TOK_KW_STRUCT) {
-                    if (!symtab_find_struct(regname)) {
+                } else if (decl_kind == TOK_KW_STRUCT) {                    if (!symtab_find_struct(regname)) {
                         StructInfo* info = (StructInfo*)calloc(1, sizeof(StructInfo));
                         CHECK_STRSCPY(strscpy(info->name, regname, sizeof(info->name)), "struct name too long");
                         info->name[63] = '\0';

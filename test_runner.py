@@ -7034,6 +7034,21 @@ i32 main() {
 }
 """, "namespace 'Geo' has no member 'Nope'"),
 
+    ("bad_ns_no_unqualified_leak", """
+namespace N {
+    class A {
+        i32 x;
+    }
+    class B {
+        i32 y;
+    }
+}
+i32 main() {
+    B b = new B;
+    return 0;
+}
+""", "unknown type 'B'"),
+
 ]
 
 # ============================================================
