@@ -184,10 +184,28 @@ static Type parse_base_type(Parser* p) {
     } else if (check(p, TOK_IDENT)) {
         const char* name = p->current.text;
         char qname[NAME_BUF_SIZE];
-        /* Same-namespace-first: inside `namespace N { ... }`, an unqualified
-           type name that matches a type declared in N resolves to "N_name".
-           Forward decls are pre-registered, so later declarations match too. */
-        if (p->ns_prefix[0] && !parser_is_type_param(name)) {
+        /* Qualified reference N.C: rewrite to the underscored registered
+           name "N_C"; resolution below is then the ordinary path. */
+        if (p->peek.kind == TOK_DOT && symtab_find_namespace(name) &&
+            !parser_is_type_param(name)) {
+            Token ns_tok = p->current;
+            advance(p); /* namespace name */
+            advance(p); /* . */
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "%s(%d,%d): error: expected type name after '%s.'\n",
+                        parser_filename(p), p->current.line, p->current.col, ns_tok.text);
+                p->had_error = 1;
+                t.type_kind = TYPE_VOID;
+                return t;
+            }
+            int n = snprintf(qname, sizeof(qname), "%s_%s", ns_tok.text, p->current.text);
+            CHECK_SNPRINTF(n, sizeof(qname), "qualified type name too long");
+            name = qname;
+        } else if (p->ns_prefix[0] && !parser_is_type_param(name)) {
+            /* Same-namespace-first: inside `namespace N { ... }`, an
+               unqualified type name that matches a type declared in N
+               resolves to "N_name".  Forward decls are pre-registered, so
+               later declarations match too. */
             int n = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix, name);
             CHECK_SNPRINTF(n, sizeof(qname), "qualified type name too long");
             if (symtab_find_class(qname) || symtab_find_struct(qname) ||
@@ -844,11 +862,24 @@ static int is_type_token(Parser* p) {
            check(p, TOK_KW_STRING);
 }
 
+/* True when the parser sits at a qualified namespace type reference N.C
+   (IDENT DOT IDENT) whose underscored form "N_C" is a registered type. */
+static int at_qualified_type_name(Parser* p) {
+    if (!check(p, TOK_IDENT) || p->peek.kind != TOK_DOT ||
+        p->peek2.kind != TOK_IDENT) return 0;
+    if (!symtab_find_namespace(p->current.text)) return 0;
+    char qname[NAME_BUF_SIZE];
+    int n = snprintf(qname, sizeof(qname), "%s_%s", p->current.text, p->peek2.text);
+    CHECK_SNPRINTF(n, sizeof(qname), "qualified type name too long");
+    return is_type_name(qname);
+}
+
 static int stmt_looks_like_var_decl(Parser* p) {
     if (check(p, TOK_KW_WEAK)) return 1;
     if (check(p, TOK_KW_UNOWNED)) return 1;
     if (check(p, TOK_KW_CONST)) return 1;
     if (is_type_token(p)) return 1;
+    if (at_qualified_type_name(p)) return 1;
     if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
         TokenKind next = p->peek.kind;
         if (next == TOK_IDENT) return 1;
@@ -2569,6 +2600,7 @@ static AstNode* parse_top_level(Parser* p) {
     }
 
     if (is_type_token(p) ||
+        at_qualified_type_name(p) ||
         (check(p, TOK_IDENT) && is_type_name(p->current.text)) ||
         check(p, TOK_KW_UNOWNED) ||
         (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {

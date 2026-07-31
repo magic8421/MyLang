@@ -5286,6 +5286,57 @@ i32 main() {
 }
 """, 42),
 
+    ("ns_decl_and_qualified_types", """
+namespace Geo {
+    struct Point {
+        i32 x;
+        i32 y;
+    }
+    class C {
+        i32 v;
+    }
+    enum Color { Red, Green }
+    const i32 MAX = 10;
+    i32 helper(Geo.Point p) {
+        return p.x + p.y;
+    }
+}
+Geo.Point make_point(i32 x, i32 y) {
+    Geo.Point p;
+    p.x = x;
+    p.y = y;
+    return p;
+}
+i32 main() {
+    Geo.Point p = make_point(3, 4);
+    Geo.C c = new Geo.C;
+    c.v = 5;
+    return p.x + p.y + c.v;
+}
+""", 12),
+
+    ("ns_same_namespace_first", """
+class Thing {
+    i32 g;
+}
+namespace N {
+    struct Wrap {
+        Thing t;
+    }
+    class Thing {
+        i32 n;
+    }
+}
+i32 main() {
+    N.Wrap w;
+    w.t = new N.Thing;
+    w.t.n = 20;
+    Thing g = new Thing;
+    g.g = 1;
+    return w.t.n + g.g;
+}
+""", 21),
+
 
 ]
 
@@ -6842,6 +6893,30 @@ i32 main() { return 0; }
 class C { i32 X { get { return 1; } get { return 2; } } }
 i32 main() { return 0; }
 """, "duplicate 'get' accessor in property 'X'"),
+
+    ("bad_ns_nested", """
+namespace N {
+    namespace M {
+        i32 f() { return 1; }
+    }
+}
+i32 main() { return 0; }
+""", "nested namespaces are not supported"),
+
+    ("bad_ns_main", """
+namespace N {
+    i32 main() { return 0; }
+}
+""", "'main' must be declared at top level, outside any namespace"),
+
+    ("bad_ns_generic", """
+namespace N {
+    class Box<T> {
+        T v;
+    }
+}
+i32 main() { return 0; }
+""", "generic classes are not supported inside namespaces"),
 
 ]
 
