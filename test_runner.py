@@ -5337,6 +5337,48 @@ i32 main() {
 }
 """, 21),
 
+    ("ns_qualified_refs", """
+namespace Geo {
+    const i32 MAX = 100;
+    enum Color { Red, Green, Blue }
+    class Config {
+        static const i32 DEPTH = 7;
+    }
+    interface IShape {
+        i32 area();
+    }
+    class Square : Geo.IShape {
+        i32 side;
+        i32 area() {
+            return this.side * this.side;
+        }
+    }
+    i32 twice(i32 x) {
+        return x * 2;
+    }
+    Color favorite() {
+        return Color.Blue;
+    }
+}
+i32 main() {
+    i32 a = Geo.MAX;
+    i32 b = Geo.twice(21);
+    i32 d = Geo.Config.DEPTH;
+    Geo.Color c = Geo.Color.Green;
+    match (c) {
+        Geo.Color.Red => { return 1; }
+        Geo.Color.Green => { a = a + 1; }
+        else => { return 2; }
+    }
+    Geo.Color f = Geo.favorite();
+    if (f != Geo.Color.Blue) { return 3; }
+    Geo.Square s = new Geo.Square;
+    s.side = 6;
+    Geo.IShape sh = s;
+    return a + b + d + sh.area();
+}
+""", 186),
+
 
 ]
 
@@ -6917,6 +6959,15 @@ namespace N {
 }
 i32 main() { return 0; }
 """, "generic classes are not supported inside namespaces"),
+
+    ("bad_ns_unknown_member", """
+namespace Geo {
+    const i32 MAX = 1;
+}
+i32 main() {
+    return Geo.Nope;
+}
+""", "namespace 'Geo' has no member 'Nope'"),
 
 ]
 

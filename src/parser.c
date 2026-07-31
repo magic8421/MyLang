@@ -666,6 +666,52 @@ static AstNode* parse_postfix(Parser* p) {
                 return node;
             }
             Token field = p->current; advance(p);
+            /* Same-namespace-first for bare enum/class names inside a
+               namespace body: Color.Red / Config.DEPTH rewrite the object
+               identifier to "N_Color" / "N_Config" and keep the member
+               access, matching the global form.  Type names are
+               pre-registered, so later declarations resolve too. */
+            if (node->ast_kind == AST_IDENT && p->ns_prefix[0] &&
+                !symtab_lookup(node->ast_token.text) &&
+                !symtab_find_namespace(node->ast_token.text)) {
+                char sqname[NAME_BUF_SIZE];
+                int sqn = snprintf(sqname, sizeof(sqname), "%s_%s", p->ns_prefix,
+                                   node->ast_token.text);
+                CHECK_SNPRINTF(sqn, sizeof(sqname), "qualified name too long");
+                if (symtab_find_enum(sqname) || symtab_find_class(sqname)) {
+                    CHECK_STRSCPY(strscpy(node->ast_token.text, sqname,
+                                          sizeof(node->ast_token.text)),
+                                  "qualified name too long");
+                }
+            }
+            /* Qualified namespace member N.X: rewrite the object identifier
+               to the registered underscored name and drop the member access,
+               so downstream sees the ordinary global form:
+                 N.MAX        -> IDENT "N_MAX"        (top-level const)
+                 N.f(...)     -> call on IDENT "N_f"  (free function)
+                 N.Color.Red  -> MEMBER_ACCESS(IDENT "N_Color", Red)
+                 N.C.STATIC   -> MEMBER_ACCESS(IDENT "N_C", STATIC)
+               A variable named N shadows the namespace (same rule as
+               enum/static-const access in codegen_member_access). */
+            if (node->ast_kind == AST_IDENT &&
+                symtab_find_namespace(node->ast_token.text) &&
+                !symtab_lookup(node->ast_token.text)) {
+                char qname[NAME_BUF_SIZE];
+                int qn = snprintf(qname, sizeof(qname), "%s_%s",
+                                  node->ast_token.text, field.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified name too long");
+                if (symtab_find_const(qname) || symtab_find_func(qname) ||
+                    is_type_name(qname)) {
+                    CHECK_STRSCPY(strscpy(node->ast_token.text, qname,
+                                          sizeof(node->ast_token.text)),
+                                  "qualified name too long");
+                    continue;
+                }
+                fprintf(stderr, "%s(%d,%d): error: namespace '%s' has no member '%s'\n",
+                        parser_filename(p), field.line, field.col,
+                        node->ast_token.text, field.text);
+                p->had_error = 1;
+            }
             AstNode* mem = ast_new_node(AST_MEMBER_ACCESS, field);
             ast_add_child(mem, node);
             node = mem;
@@ -874,13 +920,55 @@ static int at_qualified_type_name(Parser* p) {
     return is_type_name(qname);
 }
 
+/* When the parser sits at N.Color (IDENT DOT IDENT) with N a namespace and
+   "N_Color" a registered enum, writes "N_Color" into out and returns 1. */
+static int at_qualified_enum_ref(Parser* p, char* out, size_t outsz) {
+    if (!check(p, TOK_IDENT) || p->peek.kind != TOK_DOT ||
+        p->peek2.kind != TOK_IDENT) return 0;
+    if (!symtab_find_namespace(p->current.text)) return 0;
+    int n = snprintf(out, outsz, "%s_%s", p->current.text, p->peek2.text);
+    CHECK_SNPRINTF(n, outsz, "qualified enum name too long");
+    return symtab_find_enum(out) != NULL;
+}
+
+/* True when the current identifier names a type, honoring the enclosing
+   namespace: inside `namespace N`, an unqualified name also matches the
+   same-namespace type registered as "N_name". */
+static int at_unqualified_type_name(Parser* p) {
+    if (!check(p, TOK_IDENT)) return 0;
+    if (is_type_name(p->current.text)) return 1;
+    if (p->ns_prefix[0] && !parser_is_type_param(p->current.text)) {
+        char qname[NAME_BUF_SIZE];
+        int n = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix, p->current.text);
+        CHECK_SNPRINTF(n, sizeof(qname), "qualified type name too long");
+        return is_type_name(qname);
+    }
+    return 0;
+}
+
+/* Enum name at the current identifier, honoring the enclosing namespace;
+   writes the registered (possibly qualified) name into out. */
+static int at_unqualified_enum_name(Parser* p, char* out, size_t outsz) {
+    if (!check(p, TOK_IDENT)) return 0;
+    if (symtab_find_enum(p->current.text)) {
+        CHECK_STRSCPY(strscpy(out, p->current.text, outsz), "enum name too long");
+        return 1;
+    }
+    if (p->ns_prefix[0]) {
+        int n = snprintf(out, outsz, "%s_%s", p->ns_prefix, p->current.text);
+        CHECK_SNPRINTF(n, outsz, "qualified enum name too long");
+        return symtab_find_enum(out) != NULL;
+    }
+    return 0;
+}
+
 static int stmt_looks_like_var_decl(Parser* p) {
     if (check(p, TOK_KW_WEAK)) return 1;
     if (check(p, TOK_KW_UNOWNED)) return 1;
     if (check(p, TOK_KW_CONST)) return 1;
     if (is_type_token(p)) return 1;
     if (at_qualified_type_name(p)) return 1;
-    if (check(p, TOK_IDENT) && is_type_name(p->current.text)) {
+    if (at_unqualified_type_name(p)) {
         TokenKind next = p->peek.kind;
         if (next == TOK_IDENT) return 1;
         if (next == TOK_LBRACKET) return 1;
@@ -1038,6 +1126,7 @@ static AstNode* parse_match_stmt(Parser* p) {
     while (!check(p, TOK_RBRACE) && !check(p, TOK_EOF)) {
         AstNode* arm = NULL;
         int arm_scope_entered = 0;
+        char qenum_name[NAME_BUF_SIZE];
         if (saw_else) {
             fprintf(stderr, "%s(%d,%d): error: arm after 'else' is not allowed\n",
                     parser_filename(p), p->current.line, p->current.col);
@@ -1055,11 +1144,15 @@ static AstNode* parse_match_stmt(Parser* p) {
             arm = ast_new_node(AST_MATCH_ARM, lit);
             arm->ast_resolved_type = type_make_primitive(TYPE_I32);
         } else if (check(p, TOK_IDENT) && p->peek.kind == TOK_DOT &&
-                   symtab_find_enum(p->current.text)) {
+                   at_unqualified_enum_name(p, qenum_name, sizeof(qenum_name))) {
             /* Enum variant constant arm: EnumName.Variant.  Variant existence
                is validated in codegen: the enum body may be parsed after the
-               function that contains this match (names are pre-registered). */
+               function that contains this match (names are pre-registered).
+               Inside a namespace the unqualified name resolves to the
+               same-namespace enum. */
             Token enum_tok = p->current;
+            CHECK_STRSCPY(strscpy(enum_tok.text, qenum_name, sizeof(enum_tok.text)),
+                          "enum name too long");
             advance(p); /* enum name */
             advance(p); /* . */
             if (!check(p, TOK_IDENT)) {
@@ -1070,6 +1163,26 @@ static AstNode* parse_match_stmt(Parser* p) {
             Token variant = p->current;
             if (check(p, TOK_IDENT)) advance(p);
             arm = ast_new_node(AST_MATCH_ARM, variant);
+            arm->ast_resolved_type = type_make_user(TYPE_ENUM, enum_tok.text);
+        } else if (at_qualified_enum_ref(p, qenum_name, sizeof(qenum_name))) {
+            /* Qualified enum variant constant arm: N.Color.Red.  Rewritten
+               to the underscored form "N_Color" so codegen sees the ordinary
+               enum path. */
+            Token enum_tok = p->current;
+            CHECK_STRSCPY(strscpy(enum_tok.text, qenum_name, sizeof(enum_tok.text)),
+                          "qualified enum name too long");
+            advance(p); /* namespace name */
+            advance(p); /* . */
+            advance(p); /* enum name */
+            expect(p, TOK_DOT);
+            if (!check(p, TOK_IDENT)) {
+                fprintf(stderr, "%s(%d,%d): error: expected variant name after '%s.'\n",
+                        parser_filename(p), p->current.line, p->current.col, enum_tok.text);
+                p->had_error = 1;
+            }
+            Token qvariant = p->current;
+            if (check(p, TOK_IDENT)) advance(p);
+            arm = ast_new_node(AST_MATCH_ARM, qvariant);
             arm->ast_resolved_type = type_make_user(TYPE_ENUM, enum_tok.text);
         } else if (check(p, TOK_IDENT)) {
             /* Type pattern: ClassName var */
@@ -1611,6 +1724,32 @@ static AstNode* parse_class_decl(Parser* p) {
                 break;
             }
             Token iface_tok = p->current; advance(p);
+            /* Qualified interface name N.IFoo rewrites to "N_IFoo"; inside a
+               namespace body an unqualified name prefers the same-namespace
+               interface. */
+            if (check(p, TOK_DOT) && symtab_find_namespace(iface_tok.text)) {
+                advance(p); /* . */
+                if (!check(p, TOK_IDENT)) {
+                    fprintf(stderr, "%s(%d,%d): error: expected interface name after '%s.'\n",
+                            parser_filename(p), p->current.line, p->current.col, iface_tok.text);
+                    p->had_error = 1;
+                    break;
+                }
+                char qname[NAME_BUF_SIZE];
+                int qn = snprintf(qname, sizeof(qname), "%s_%s", iface_tok.text, p->current.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified interface name too long");
+                CHECK_STRSCPY(strscpy(iface_tok.text, qname, sizeof(iface_tok.text)),
+                              "qualified interface name too long");
+                advance(p);
+            } else if (p->ns_prefix[0]) {
+                char qname[NAME_BUF_SIZE];
+                int qn = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix, iface_tok.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified interface name too long");
+                if (symtab_find_interface(qname)) {
+                    CHECK_STRSCPY(strscpy(iface_tok.text, qname, sizeof(iface_tok.text)),
+                                  "qualified interface name too long");
+                }
+            }
             symtab_add_class_impl(info, iface_tok.text);
         } while (check(p, TOK_COMMA) && (advance(p), 1));
     }
@@ -2601,7 +2740,7 @@ static AstNode* parse_top_level(Parser* p) {
 
     if (is_type_token(p) ||
         at_qualified_type_name(p) ||
-        (check(p, TOK_IDENT) && is_type_name(p->current.text)) ||
+        at_unqualified_type_name(p) ||
         check(p, TOK_KW_UNOWNED) ||
         (check(p, TOK_IDENT) && strcmp(p->current.text, "void") == 0)) {
         Type ret_type = parse_type(p);
@@ -2644,6 +2783,13 @@ void parser_init(Parser* p, Lexer* lexer) {
    underscored name "N_name", matching parser_qualify_decl_name. */
 static void parser_register_forward_decls(Parser* p) {
     Lexer scan = *p->lexer;
+    /* Rewind to the file start: parser_init already consumed the first few
+       tokens to fill current/peek/peek2, and a leading 'namespace N {'
+       header must be seen or the first declaration inside the block would
+       be registered without its prefix. */
+    scan.pos  = 0;
+    scan.line = 1;
+    scan.col  = 1;
     char fwd_prefix[NAME_BUF_SIZE] = "";
     int  fwd_depth = 0;
     Token cur = lexer_next(&scan);
