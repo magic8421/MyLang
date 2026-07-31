@@ -1047,6 +1047,14 @@ static int stmt_looks_like_var_decl(Parser* p) {
         if (next == TOK_LBRACKET) return 1;
         if (next == TOK_LT) {
             ClassInfo* ci = symtab_find_class(p->current.text);
+            if (!ci && p->ns_prefix[0]) {
+                /* Same-namespace generic: Box<T> inside namespace N. */
+                char qname[NAME_BUF_SIZE];
+                int qn = snprintf(qname, sizeof(qname), "%s_%s", p->ns_prefix,
+                                  p->current.text);
+                CHECK_SNPRINTF(qn, sizeof(qname), "qualified type name too long");
+                ci = symtab_find_class(qname);
+            }
             if (ci && ci->is_generic) return 1;
         }
     }
@@ -1717,11 +1725,6 @@ static AstNode* parse_class_decl(Parser* p) {
 
     /* parse optional generic parameter list */
     if (check(p, TOK_LT)) {
-        if (p->ns_prefix[0]) {
-            fprintf(stderr, "%s(%d,%d): error: generic classes are not supported inside namespaces\n",
-                    parser_filename(p), p->current.line, p->current.col);
-            p->had_error = 1;
-        }
         advance(p); /* < */
         char params[MAX_GENERIC_PARAMS][64];
         int param_count = 0;

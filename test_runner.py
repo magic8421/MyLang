@@ -5422,6 +5422,37 @@ i32 main() {
 }
 """, 42),
 
+    ("ns_generic_class", """
+namespace N {
+    class Box<T> {
+        T v;
+        void set(T x) {
+            this.v = x;
+        }
+        T get() {
+            return this.v;
+        }
+    }
+    class Pair<A, B> {
+        A first;
+        B second;
+    }
+    i32 use_box() {
+        Box<i32> b = new Box<i32>;
+        b.set(41);
+        return b.get();
+    }
+}
+i32 main() {
+    N.Box<i32> b = new N.Box<i32>;
+    b.set(10);
+    N.Pair<i32, string> p = new N.Pair<i32, string>;
+    p.first = 2;
+    p.second = "x";
+    return N.use_box() + b.get() + p.first + p.second.length();
+}
+""", 54),
+
 
 ]
 
@@ -6993,15 +7024,6 @@ namespace N {
     i32 main() { return 0; }
 }
 """, "'main' must be declared at top level, outside any namespace"),
-
-    ("bad_ns_generic", """
-namespace N {
-    class Box<T> {
-        T v;
-    }
-}
-i32 main() { return 0; }
-""", "generic classes are not supported inside namespaces"),
 
     ("bad_ns_unknown_member", """
 namespace Geo {

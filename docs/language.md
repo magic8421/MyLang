@@ -87,6 +87,36 @@ Detailed reference; the rules in AGENTS.md still apply.
   would fork `c_type_str` on `EnumInfo.has_payloads` to emit
   `struct { i32 tag; union {...} u; }` while `TYPE_ENUM` stays unchanged.
 
+## Namespaces (one level)
+- Syntax: `namespace N { ... }` groups top-level declarations (class, struct,
+  interface, enum, func, const). Exactly one level: nested namespaces are a
+  parser error. `main` must stay global — declaring it inside a namespace is
+  a parser error.
+- External references always use the qualified dotted form: `N.C` (types,
+  including `new N.C`), `N.f(...)` (functions), `N.MAX` (consts),
+  `N.Color.Red` (enum variants), `N.C.STATIC` (static consts), `N.IFoo`
+  (interface implementation lists).
+- Inside the body, unqualified names prefer the same namespace: `Color.Red`,
+  `Config.DEPTH`, `MAX`, and calls like `helper(x)` resolve to the sibling
+  declaration first, then fall back to globals. Forward references to
+  functions work (a deferred patch list rewrites callees after the whole
+  program is parsed). A local variable or parameter shadows the namespace
+  lookup (same rule as enum/static-const access); a global const does not.
+- Implementation: the parser rewrites declaration names inside the block to
+  the underscored form `N_name` (and rewrites qualified/unqualified
+  references to match), so sema and codegen only ever see `N_C` and need no
+  namespace awareness. Error messages therefore show the underscored name
+  (same precedent as generic mangled names like `Box_i32`). A global
+  declaration whose name collides with a qualified one (e.g. a global class
+  `N_C` next to `namespace N { class C }`) is reported as a duplicate
+  definition.
+- C naming follows the underscore form everywhere: `struct N_Point`,
+  `void N_f(...)`, `_mylang_dtor_N_C`, `MYLANG_TID_N_C`, `N_Color_Red`.
+  Consequently the native method convention for a namespaced class is
+  `N_C_method` (e.g. `N_C_init`).
+- Limitations: no nesting, no `using`/`import` of names, unknown members
+  report `namespace 'N' has no member 'X'`.
+
 ## Access Modifiers (public/private)
 - Per-member modifiers on class fields and methods: `private i32 x;`, `private i32 helper() { ... }`. Parsed in the same modifier loop as `native`/`override`, in any order.
 - Default is `public`; `public` may be written explicitly. `public` + `private` together is a compile error.
