@@ -5646,6 +5646,34 @@ i32 main() {
 }
 """, 99),
 
+    ("lambda_assign_pos", """
+interface Comparator { i32 compare(i32 a, i32 b); }
+i32 main() {
+    Comparator c;
+    c = (a, b) => a - b;
+    i32 first = c.compare(10, 3);
+    i32 base = 100;
+    c = (a, b) => a - b + base;
+    return first + c.compare(10, 3);
+}
+""", 114),
+
+    ("lambda_return_pos", """
+interface Supplier { i32 get(); }
+Supplier make_plain() {
+    return () => 42;
+}
+Supplier make_capture() {
+    i32 v = 7;
+    return () => v + 1;
+}
+i32 main() {
+    Supplier s = make_plain();
+    Supplier t = make_capture();
+    return s.get() + t.get();
+}
+""", 50),
+
 ]
 
 # ============================================================
@@ -7293,6 +7321,24 @@ i32 main() {
     return 0;
 }
 """, "cannot capture array variable 'arr'"),
+
+    ("bad_lambda_return_primitive_target", """
+i32 f() {
+    return (a) => a;
+}
+i32 main() {
+    return 0;
+}
+""", "lambda target type must be an interface type"),
+
+    ("bad_lambda_assign_param_count", """
+interface Comparator { i32 compare(i32 a, i32 b); }
+i32 main() {
+    Comparator c;
+    c = (a) => a;
+    return 0;
+}
+""", "lambda has 1 parameter(s) but 'Comparator.compare' requires 2"),
 
     ("bad_lambda_class_name_prefix", """
 class __lambda_0 {

@@ -409,6 +409,8 @@ Type sema_resolve_type(AstNode* node) {
 
 static int sema_member_visible(const char* owner, int is_private);
 static void sema_check_call_arg(AstNode* arg, const Type* param_type);
+static void sema_lower_lambda(AstNode* lam, const Type* expected);
+static void sema_walk_expr(AstNode* node);   /* defined below */
 
 /* Assignment type checks, migrated from the codegen AST_ASSIGN dispatch.
    The branch chain mirrors the dispatch exactly (array/null/const guards,
@@ -419,6 +421,15 @@ static void sema_check_assign(AstNode* node) {
     AstNode* lhs = node->ast_children[0];
     AstNode* rhs = node->ast_children[1];
     if (!lhs || !rhs) return;
+    if (rhs->ast_kind == AST_LAMBDA) {
+        /* Assignment position ('c = (a,b) => ...;', non-declaration): the
+           LHS type supplies the target interface, as the var-decl and
+           call-arg paths do.  On failure the node is left as AST_LAMBDA and
+           the diagnostic was already reported. */
+        sema_lower_lambda(rhs, &lhs->ast_resolved_type);
+        if (rhs->ast_kind == AST_LAMBDA) return;
+        sema_walk_expr(rhs);   /* resolve the lowered new/factory call */
+    }
     Type lt = lhs->ast_resolved_type;
     Type rt = rhs->ast_resolved_type;
 
@@ -1182,6 +1193,12 @@ static void sema_synth_lambda_factory(ClassInfo* ci, LambdaCapture* caps,
    still alive. */
 static void sema_lower_lambda(AstNode* lam, const Type* expected) {
     if (!s_program || !lam || lam->ast_kind != AST_LAMBDA) return;
+    /* Mark the lambda as processed up front: every failure path below has
+       already reported a specific diagnostic, so the no-target-type fallback
+       (sema_materialize_call_defaults_walk) must not add a generic one.
+       Successful lowering rewrites the node (and the factory-call rewrite
+       explicitly clears this flag for re-resolution). */
+    lam->ast_is_resolved = 1;
     if (expected->type_kind != TYPE_INTERFACE) {
         sema_report_error(lam, "lambda target type must be an interface type");
         return;
@@ -2280,7 +2297,17 @@ static void sema_walk_stmt(AstNode* node) {
         }
 
         case AST_RETURN_STMT:
-            if (node->ast_child_count > 0) sema_walk_expr(node->ast_children[0]);
+            if (node->ast_child_count > 0) {
+                AstNode* rv = node->ast_children[0];
+                if (rv->ast_kind == AST_LAMBDA) {
+                    /* Return position: the enclosing function's return type
+                       supplies the target interface.  On failure the node is
+                       left as AST_LAMBDA and the diagnostic was reported. */
+                    sema_lower_lambda(rv, &s_current_ret_type);
+                    if (rv->ast_kind == AST_LAMBDA) break;
+                }
+                sema_walk_expr(rv);
+            }
             sema_check_return(node);
             break;
 
@@ -2508,9 +2535,11 @@ static void sema_materialize_call_defaults(AstNode* node) {
    from codegen.c, behavior unchanged). */
 static void sema_materialize_call_defaults_walk(AstNode* node) {
     if (!node) return;
-    if (node->ast_kind == AST_LAMBDA) {
+    if (node->ast_kind == AST_LAMBDA && !node->ast_is_resolved) {
         /* Survived the check walk unlowered: no enclosing var-decl or
-           parameter supplied a target interface type. */
+           parameter supplied a target interface type.  (A lambda whose
+           lowering was attempted carries ast_is_resolved=1; its specific
+           diagnostic was already reported.) */
         sema_report_error(node, "lambda expression has no target type here (assign it to an interface variable or pass it to an interface parameter)");
     }
     if (node->ast_kind == AST_CALL) sema_materialize_call_defaults(node);
