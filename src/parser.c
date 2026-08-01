@@ -402,6 +402,11 @@ static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, 
     Lexer sub_lexer;
     lexer_init(&sub_lexer, text);
     lexer_set_filename(&sub_lexer, lexer_filename(outer->lexer));
+    /* Start the sub-lexer at the interpolation's position in the original
+       source so tokens parsed from the snippet carry real line/col and
+       errors point at the f-string, not at (1,1). */
+    sub_lexer.line = line;
+    sub_lexer.col = col;
     Parser sub;
     parser_init(&sub, &sub_lexer);
     /* Keep the enclosing namespace context so f-string interpolations inside
@@ -412,8 +417,6 @@ static AstNode* parse_expr_from_text(Parser* outer, const char* text, int line, 
     if (parser_had_error(&sub)) {
         outer->had_error = 1;
     }
-    (void)line;
-    (void)col;
     return e;
 }
 
@@ -503,7 +506,7 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
                     memcpy(expr_text, s + expr_start, expr_len);
                     expr_text[expr_len] = '\0';
                     AstNode* expr = parse_expr_from_text(p, expr_text, str_tok.line,
-                                                         str_tok.col + expr_start);
+                                                         str_tok.col + 1 + expr_start);
                     free(expr_text);
                     if (expr) {
                         if (expr_contains_assign(expr) || expr_contains_inc_dec(expr)) {
