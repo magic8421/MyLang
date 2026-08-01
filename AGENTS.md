@@ -18,6 +18,17 @@ keep it in sync when language features change.
 ## Communication
 - During long-running tasks, occasionally give a brief progress update on what you are currently doing and any issues encountered.
 
+## Workflow
+- For large features, write a `TODO_*.md` design/plan file first, then start
+  implementation. (`TODO_*.md` files are working notes and are not committed
+  to git.)
+- Pace: only push work forward when the user says "开工" / "继续" (start /
+  continue); do not rush ahead on your own.
+- Run the full test suite before every commit.
+- The user keeps their own backups, but never perform destructive git
+  operations (hard reset, force push, deleting branches, etc.) without being
+  explicitly told to.
+
 ## Subagents
 - Do not spawn subagents to write code by default; implement changes directly
   in the main session. Context compaction is the user's call — do not delegate
