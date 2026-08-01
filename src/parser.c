@@ -33,6 +33,9 @@ static int expect(Parser* p, TokenKind k) {
 
 static int expr_contains_assign(AstNode* node) {
     if (!node) return 0;
+    /* Lambda bodies are a separate statement context: assignments inside
+       them are not assignments in the enclosing expression. */
+    if (node->ast_kind == AST_LAMBDA) return 0;
     if (node->ast_kind == AST_ASSIGN) return 1;
     int i;
     for (i = 0; i < node->ast_child_count; i++) {
@@ -51,6 +54,7 @@ static int expr_is_inc_dec(AstNode* node) {
 
 static int expr_contains_inc_dec(AstNode* node) {
     if (!node) return 0;
+    if (node->ast_kind == AST_LAMBDA) return 0;   /* see expr_contains_assign */
     if (node->ast_kind == AST_INC_DEC) return 1;
     int i;
     for (i = 0; i < node->ast_child_count; i++) {

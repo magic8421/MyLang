@@ -5538,6 +5538,114 @@ i32 main() {
 }
 """, 77),
 
+    ("lambda_capture_byvalue", """
+interface Supplier { i32 get(); }
+i32 main() {
+    i32 x = 40;
+    string s = "abc";
+    Supplier sup = () => x + s.length();
+    x = 99;
+    s = "zzzzzz";
+    return sup.get();
+}
+""", 43),
+
+    ("lambda_capture_class_ref", """
+interface Handler { void handle(i32 ev); }
+class Counter {
+    i32 n;
+    void bump() { this.n = this.n + 1; }
+}
+i32 main() {
+    Counter c = new Counter;
+    Handler h = (ev) => {
+        c.bump();
+        c.bump();
+    };
+    h.handle(7);
+    c.bump();
+    return c.n;
+}
+""", 3),
+
+    ("lambda_capture_keeps_alive", """
+interface Getter { i32 get(); }
+class Resource {
+    i32 v;
+}
+Getter make() {
+    Resource r = new Resource;
+    r.v = 55;
+    Getter g = () => r.v;
+    return g;
+}
+i32 main() {
+    Getter g = make();
+    return g.get();
+}
+""", 55),
+
+    ("lambda_capture_weak", """
+interface Runner { void run(); }
+class Resource {
+    i32 v;
+}
+Runner make_runner() {
+    Resource r = new Resource;
+    r.v = 55;
+    weak Resource wr = r;
+    Runner rn = () => {
+        Resource strong = wr.lock();
+        if (strong != null) {
+            print("alive");
+        } else {
+            print("dead");
+        }
+    };
+    return rn;
+}
+i32 main() {
+    Runner rn = make_runner();
+    rn.run();
+    return 0;
+}
+""", (0, "dead\n")),
+
+    ("lambda_capture_this_weak_alias", """
+interface Handler { void handle(); }
+class App {
+    i32 count;
+    void start() {
+        weak App self = this;
+        Handler h = () => {
+            App a = self.lock();
+            if (a != null) {
+                a.count = a.count + 1;
+            }
+        };
+        h.handle();
+        h.handle();
+    }
+}
+i32 main() {
+    App app = new App;
+    app.start();
+    return app.count;
+}
+""", 2),
+
+    ("lambda_capture_shadow_local", """
+interface Supplier { i32 get(); }
+i32 main() {
+    i32 x = 10;
+    Supplier s = () => {
+        i32 x = 99;
+        return x;
+    };
+    return s.get();
+}
+""", 99),
+
 ]
 
 # ============================================================
@@ -7163,14 +7271,28 @@ i32 main() {
 }
 """, "lambda expression has no target type here"),
 
-    ("bad_lambda_capture_local", """
-interface Supplier { i32 get(); }
-i32 main() {
-    i32 x = 5;
-    Supplier s = () => x;
-    return s.get();
+    ("bad_lambda_capture_this", """
+interface Handler { void handle(); }
+class App {
+    void start() {
+        Handler h = () => this.shutdown();
+    }
+    void shutdown() { }
 }
-""", "unknown identifier 'x'"),
+i32 main() {
+    return 0;
+}
+""", "cannot capture 'this' strongly"),
+
+    ("bad_lambda_capture_array", """
+interface Supplier { i64 get(); }
+i32 main() {
+    i32[] arr;
+    arr.push(1);
+    Supplier s = () => arr.length();
+    return 0;
+}
+""", "cannot capture array variable 'arr'"),
 
     ("bad_lambda_class_name_prefix", """
 class __lambda_0 {

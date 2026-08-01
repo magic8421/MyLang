@@ -941,17 +941,245 @@ static void sema_check_call_arg(AstNode* arg, const Type* param_type) {
    Lambda lowering (anonymous SAM-implementation class)
    ------------------------------------------------------------------------- */
 
+static void sema_walk_expr(AstNode* node);   /* defined below */
+
 /* Set by sema_check; synthesized anonymous classes are appended to its
    declaration list so the main sema loop checks their method bodies and the
    codegen declaration walk emits them like ordinary classes. */
 static AstNode* s_program = NULL;
 static int s_lambda_counter = 0;
 
-/* Lowers a lambda expression into 'new __lambda_N': synthesizes an anonymous
-   class implementing the single-abstract-method interface given by expected
-   and rewrites the node in place.  The class decl is appended to the program
-   and checked by the sema_check main loop later (by which point the enclosing
-   scope is gone, so lambdas cannot capture anything yet). */
+/* ------------------------------------------------------------------
+   Lambda captures (by value): captured variables become fields of the
+   anonymous class and are initialized through a synthesized factory
+   function, so ownership (retain strong refs, copy weak shares) rides
+   the ordinary parameter/assignment machinery.
+   ------------------------------------------------------------------ */
+
+#define MAX_LAMBDA_CAPTURES 16   /* factory-function parameter limit */
+#define MAX_LAMBDA_BODY_LOCALS 128
+
+typedef struct {
+    char name[NAME_BUF_SIZE];
+    Type type;   /* source variable type, minus is_const/is_ref */
+} LambdaCapture;
+
+static int lambda_name_in(const char* name, const char names[][NAME_BUF_SIZE],
+                          int count) {
+    int i;
+    for (i = 0; i < count; i++) {
+        if (strcmp(names[i], name) == 0) return 1;
+    }
+    return 0;
+}
+
+/* Collect names declared inside the lambda body.  They shadow same-named
+   enclosing variables for the whole body (blocks open no scopes in this
+   compiler, so a flat list matches the actual scoping rules).  Nested
+   lambdas are skipped: their captures are their own. */
+static void lambda_collect_body_locals(AstNode* node,
+                                       char names[][NAME_BUF_SIZE],
+                                       int* count) {
+    if (!node || *count >= MAX_LAMBDA_BODY_LOCALS) return;
+    if (node->ast_kind == AST_LAMBDA) return;
+    if (node->ast_kind == AST_VAR_DECL || node->ast_kind == AST_MATCH_ARM) {
+        CHECK_STRSCPY(strscpy(names[*count], node->ast_token.text, NAME_BUF_SIZE),
+                      "local name too long");
+        (*count)++;
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+        lambda_collect_body_locals(node->ast_children[i], names, count);
+    }
+    lambda_collect_body_locals(node->next, names, count);
+}
+
+/* Rewrite identifiers that resolve to enclosing-function locals into
+   'this.<name>' member accesses and record them as captures.  Runs at
+   lowering time, while the enclosing scope is still alive. */
+static void lambda_capture_walk(AstNode* node, LambdaCapture* caps, int* cap_count,
+                                char locals[][NAME_BUF_SIZE], int local_count,
+                                char params[][NAME_BUF_SIZE], int param_count,
+                                int* err) {
+    if (!node) return;
+    if (node->ast_kind == AST_LAMBDA) return;  /* nested: separate captures */
+    if (node->ast_kind == AST_IDENT) {
+        const char* name = node->ast_token.text;
+        SymEntry* e = NULL;
+        if (!lambda_name_in(name, params, param_count) &&
+            !lambda_name_in(name, locals, local_count)) {
+            e = symtab_lookup_local(name);
+        }
+        if (e) {
+            if (strcmp(name, "this") == 0) {
+                sema_report_error(node, "cannot capture 'this' strongly; use 'weak %s self = this;' and capture 'self' instead",
+                                  e->type.class_name);
+                *err = 1;
+            } else if (e->type.is_array) {
+                sema_report_error(node, "cannot capture array variable '%s' (arrays cannot be passed by value)",
+                                  name);
+                *err = 1;
+            } else {
+                int i;
+                for (i = 0; i < *cap_count; i++) {
+                    if (strcmp(caps[i].name, name) == 0) break;
+                }
+                if (i == *cap_count) {
+                    if (*cap_count >= MAX_LAMBDA_CAPTURES) {
+                        sema_report_error(node, "too many captured variables (max %d)",
+                                          MAX_LAMBDA_CAPTURES);
+                        *err = 1;
+                    } else {
+                        CHECK_STRSCPY(strscpy(caps[*cap_count].name, name, NAME_BUF_SIZE),
+                                      "capture name too long");
+                        caps[*cap_count].type = e->type;
+                        caps[*cap_count].type.is_const = 0;
+                        caps[*cap_count].type.is_ref = 0;
+                        (*cap_count)++;
+                    }
+                }
+                if (!*err) {
+                    /* rewrite x -> this.x (a member access on the synthetic
+                       class's capture field) */
+                    Token this_tok = node->ast_token;
+                    this_tok.kind = TOK_IDENT;
+                    CHECK_STRSCPY(strscpy(this_tok.text, "this", sizeof(this_tok.text)),
+                                  "token text too long");
+                    AstNode* obj = ast_new_node(AST_IDENT, this_tok);
+                    memset(node->ast_children, 0, sizeof(node->ast_children));
+                    node->ast_child_count = 0;
+                    ast_add_child(node, obj);
+                    node->ast_kind = AST_MEMBER_ACCESS;
+                    memset(&node->ast_resolved_type, 0, sizeof(node->ast_resolved_type));
+                    node->ast_is_resolved = 0;
+                    /* the fresh child must not be walked ('this' would be
+                       mistaken for a capture), but list links still apply */
+                    lambda_capture_walk(node->next, caps, cap_count, locals,
+                                        local_count, params, param_count, err);
+                    return;
+                }
+            }
+        }
+    }
+    int i;
+    for (i = 0; i < node->ast_child_count && i < MAX_AST_CHILDREN; i++) {
+        lambda_capture_walk(node->ast_children[i], caps, cap_count, locals,
+                            local_count, params, param_count, err);
+    }
+    lambda_capture_walk(node->next, caps, cap_count, locals, local_count,
+                        params, param_count, err);
+}
+
+/* Synthesize
+       __lambda_N __lambda_N_create(<capture params>) {
+           __lambda_N _lt = new __lambda_N;
+           _lt.<cap> = <cap>; ...
+           return _lt;
+       }
+   and register it in the function table; appended to the program so the
+   sema main loop checks it and codegen emits it like an ordinary function. */
+static void sema_synth_lambda_factory(ClassInfo* ci, LambdaCapture* caps,
+                                      int cap_count, Token tok, char* fname_out,
+                                      size_t fname_size) {
+    int n = snprintf(fname_out, fname_size, "%s_create", ci->name);
+    CHECK_SNPRINTF(n, (size_t)fname_size, "lambda factory name too long");
+
+    /* Local name for the allocated object; dodge capture-name collisions. */
+    char self[NAME_BUF_SIZE];
+    CHECK_STRSCPY(strscpy(self, "_lt", sizeof(self)), "name too long");
+    {
+        int clash = 1, suffix = 0, i;
+        while (clash) {
+            clash = 0;
+            for (i = 0; i < cap_count; i++) {
+                if (strcmp(caps[i].name, self) == 0) {
+                    n = snprintf(self, sizeof(self), "_lt%d", ++suffix);
+                    CHECK_SNPRINTF(n, sizeof(self), "name too long");
+                    clash = 1;
+                    break;
+                }
+            }
+        }
+    }
+
+    Type self_type;
+    memset(&self_type, 0, sizeof(self_type));
+    self_type.type_kind = TYPE_CLASS;
+    CHECK_STRSCPY(strscpy(self_type.class_name, ci->name, sizeof(self_type.class_name)),
+                  "class name too long");
+    self_type.is_pointer = 1;
+    self_type.type_id = ci->type_id;
+
+    char pn[MAX_PARAMS][NAME_BUF_SIZE];
+    Type pt[MAX_PARAMS];
+    int i;
+    for (i = 0; i < cap_count && i < MAX_PARAMS; i++) {
+        CHECK_STRSCPY(strscpy(pn[i], caps[i].name, sizeof(pn[i])), "param name too long");
+        pt[i] = caps[i].type;
+    }
+    symtab_add_func(fname_out, self_type, cap_count, pn, pt, NULL, 0);
+
+    Token self_tok = tok;
+    CHECK_STRSCPY(strscpy(self_tok.text, self, sizeof(self_tok.text)), "token text too long");
+
+    /* __lambda_N _lt = new __lambda_N; */
+    AstNode* new_node = ast_new_node(AST_NEW, tok);
+    new_node->ast_resolved_type = self_type;
+    AstNode* decl = ast_new_node(AST_VAR_DECL, self_tok);
+    decl->ast_resolved_type = self_type;
+    ast_add_child(decl, new_node);
+    AstNode* stmts = ast_append_list(NULL, decl);
+
+    /* _lt.<cap> = <cap>; (field assignment retains/copies as usual) */
+    for (i = 0; i < cap_count; i++) {
+        Token mtok = tok;
+        CHECK_STRSCPY(strscpy(mtok.text, caps[i].name, sizeof(mtok.text)), "token text too long");
+        AstNode* lhs = ast_new_node(AST_MEMBER_ACCESS, mtok);
+        ast_add_child(lhs, ast_new_node(AST_IDENT, self_tok));
+        AstNode* rhs = ast_new_node(AST_IDENT, mtok);
+        Token atok = tok;
+        atok.kind = TOK_ASSIGN;
+        AstNode* asg = ast_new_node(AST_ASSIGN, atok);
+        ast_add_child(asg, lhs);
+        ast_add_child(asg, rhs);
+        AstNode* stmt = ast_new_node(AST_EXPR_STMT, tok);
+        ast_add_child(stmt, asg);
+        stmts = ast_append_list(stmts, stmt);
+    }
+
+    /* return _lt; */
+    AstNode* ret = ast_new_node(AST_RETURN_STMT, tok);
+    ast_add_child(ret, ast_new_node(AST_IDENT, self_tok));
+    stmts = ast_append_list(stmts, ret);
+
+    AstNode* block = ast_new_node(AST_BLOCK, tok);
+    ast_add_child(block, stmts);
+
+    AstNode* params = NULL;
+    for (i = 0; i < cap_count; i++) {
+        Token ptok = tok;
+        CHECK_STRSCPY(strscpy(ptok.text, caps[i].name, sizeof(ptok.text)), "token text too long");
+        AstNode* pd = ast_new_node(AST_VAR_DECL, ptok);
+        pd->ast_resolved_type = caps[i].type;
+        params = ast_append_list(params, pd);
+    }
+
+    Token ftok = tok;
+    CHECK_STRSCPY(strscpy(ftok.text, fname_out, sizeof(ftok.text)), "token text too long");
+    AstNode* fn = ast_new_node(AST_FUNC_DECL, ftok);
+    fn->ast_resolved_type = self_type;
+    if (params) ast_add_child(fn, params);
+    ast_add_child(fn, block);
+    s_program->ast_children[0] = ast_append_list(s_program->ast_children[0], fn);
+}
+
+/* Lowers a lambda expression: synthesizes an anonymous class implementing
+   the single-abstract-method interface given by expected and rewrites the
+   node in place -- into 'new __lambda_N' when nothing is captured, or into a
+   '__lambda_N_create(<captures>)' call when it is.  The class (and factory)
+   decls are appended to the program and checked by the sema_check main loop
+   later; capture analysis itself runs here, while the enclosing scope is
+   still alive. */
 static void sema_lower_lambda(AstNode* lam, const Type* expected) {
     if (!s_program || !lam || lam->ast_kind != AST_LAMBDA) return;
     if (expected->type_kind != TYPE_INTERFACE) {
@@ -1002,6 +1230,28 @@ static void sema_lower_lambda(AstNode* lam, const Type* expected) {
         body->ast_children[0]->ast_kind = AST_EXPR_STMT;
     }
 
+    /* Captures (by value): rewrite references to enclosing-function locals
+       into 'this.<name>' field accesses and collect them.  This must run now,
+       while the enclosing scope is alive; the synthetic method body is only
+       checked later, after that scope is gone. */
+    LambdaCapture caps[MAX_LAMBDA_CAPTURES];
+    int cap_count = 0;
+    {
+        char lam_param_names[MAX_PARAMS][NAME_BUF_SIZE];
+        int lam_pcount = 0;
+        for (q = params; q && lam_pcount < MAX_PARAMS; q = q->next) {
+            CHECK_STRSCPY(strscpy(lam_param_names[lam_pcount++], q->ast_token.text,
+                                  NAME_BUF_SIZE), "parameter name too long");
+        }
+        char body_locals[MAX_LAMBDA_BODY_LOCALS][NAME_BUF_SIZE];
+        int body_local_count = 0;
+        lambda_collect_body_locals(body, body_locals, &body_local_count);
+        int cap_err = 0;
+        lambda_capture_walk(body, caps, &cap_count, body_locals, body_local_count,
+                            lam_param_names, lam_pcount, &cap_err);
+        if (cap_err) return;   /* diagnostics already reported */
+    }
+
     char cname[NAME_BUF_SIZE];
     do {
         int n = snprintf(cname, sizeof(cname), "__lambda_%d", s_lambda_counter++);
@@ -1013,6 +1263,18 @@ static void sema_lower_lambda(AstNode* lam, const Type* expected) {
     ci->type_id = symtab_next_type_id();
     symtab_add_class(cname, ci);
     symtab_add_class_impl(ci, ii->name);
+
+    /* Capture fields.  Public: user code cannot name the class anyway (the
+       '__lambda_' prefix is reserved), and the factory function needs
+       access.  The qualifier rides along: capturing a weak/unowned variable
+       makes a weak/unowned field, so no retain cycle is created. */
+    int cap_i;
+    for (cap_i = 0; cap_i < cap_count; cap_i++) {
+        if (symtab_add_field(ci, caps[cap_i].name, caps[cap_i].type, 0) != 0) {
+            sema_report_error(lam, "too many captured variables (max %d)", MAX_FIELDS);
+            return;
+        }
+    }
 
     /* Method signature: parameter types from the SAM method, names from the
        lambda.  The parameter AST nodes move under the synthetic method and
@@ -1047,7 +1309,33 @@ static void sema_lower_lambda(AstNode* lam, const Type* expected) {
     ast_add_child(cnode, mnode);
     s_program->ast_children[0] = ast_append_list(s_program->ast_children[0], cnode);
 
-    /* Rewrite the lambda node in place into 'new __lambda_N'. */
+    if (cap_count > 0) {
+        /* Synthesize the factory and rewrite the lambda node into a
+           '__lambda_N_create(<captures>)' call.  Left unresolved here; the
+           enclosing walk resolves and checks it like any other call. */
+        char fname[NAME_BUF_SIZE];
+        sema_synth_lambda_factory(ci, caps, cap_count, lam->ast_token,
+                                  fname, sizeof(fname));
+        memset(lam->ast_children, 0, sizeof(lam->ast_children));
+        lam->ast_child_count = 0;
+        lam->ast_kind = AST_CALL;
+        Token ftok = lam->ast_token;
+        CHECK_STRSCPY(strscpy(ftok.text, fname, sizeof(ftok.text)), "token text too long");
+        ast_add_child(lam, ast_new_node(AST_IDENT, ftok));
+        AstNode* args = NULL;
+        for (cap_i = 0; cap_i < cap_count; cap_i++) {
+            Token atok = lam->ast_token;
+            CHECK_STRSCPY(strscpy(atok.text, caps[cap_i].name, sizeof(atok.text)),
+                          "token text too long");
+            args = ast_append_list(args, ast_new_node(AST_IDENT, atok));
+        }
+        if (args) ast_add_child(lam, args);
+        memset(&lam->ast_resolved_type, 0, sizeof(lam->ast_resolved_type));
+        lam->ast_is_resolved = 0;
+        return;
+    }
+
+    /* No captures: rewrite the lambda node in place into 'new __lambda_N'. */
     memset(lam->ast_children, 0, sizeof(lam->ast_children));
     lam->ast_child_count = 0;
     lam->ast_kind = AST_NEW;
@@ -1072,7 +1360,14 @@ static void sema_check_call_args(AstNode* node, int param_count, const Type* par
         Type expected;
         memset(&expected, 0, sizeof(expected));
         if (param_types && idx < param_count) expected = param_types[idx];
-        if (arg->ast_kind == AST_LAMBDA) sema_lower_lambda(arg, &expected);
+        if (arg->ast_kind == AST_LAMBDA) {
+            sema_lower_lambda(arg, &expected);
+            if (arg->ast_kind != AST_LAMBDA) {
+                /* Lowered into a factory call (captures) or a plain 'new':
+                   walk it so the new expression is resolved and checked. */
+                sema_walk_expr(arg);
+            }
+        }
         sema_check_call_arg(arg, &expected);
         idx++;
         arg = arg->next;
