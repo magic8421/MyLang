@@ -311,6 +311,40 @@ Detailed reference; the rules in AGENTS.md still apply.
 - Dynamic arrays of weak interfaces (`weak IFoo[] arr = new weak IFoo[N];`) are supported; cleanup releases each element's `.wr`.
 - Weak interface parameters pass by value and are released via cleanup on function exit.
 
+## Lambda Expressions
+- Syntax: `(a, b) => expr` or `(a, b) => { stmts }` — the `=>` arrow is required
+  for both forms. Parameter names only; types are inferred from the target
+  interface method signature.
+- Target type: a lambda is only allowed where the target type is known and is
+  an interface with exactly one abstract method (SAM; methods with default
+  bodies don't count): variable initializers and call arguments. Everywhere
+  else is a compile error ("lambda expression has no target type here").
+- Lowering: sema synthesizes an anonymous class `__lambda_N` implementing the
+  interface (the `__lambda_` class-name prefix is reserved), appends it to the
+  program, and rewrites the lambda into `new __lambda_N` (no captures) or a
+  `__lambda_N_create(<captures>)` factory call. Everything downstream —
+  refcounting, vtable dispatch, destructors — is the ordinary class machinery.
+- A void-target expression body is emitted as a plain statement (no `return`).
+- Captures are by value: enclosing-function locals used in the body become
+  fields of the anonymous class, snapshotted at creation. Qualifiers follow
+  the source variable: capturing a `weak`/`unowned` variable makes a
+  weak/unowned field, so no retain cycle is created. `is_const`/`is_ref` are
+  dropped (copy semantics).
+- Strong `this` capture is a compile error; capture a weak alias instead:
+  `weak App self = this;` then use `self` (with `self.lock()`) in the body.
+- Limits: array variables cannot be captured (arrays can't be passed by
+  value); at most 16 captures; nested lambdas do not inherit the outer
+  lambda's captures (capture the value again in the inner body if needed);
+  a name declared inside the body shadows the same-named outer variable for
+  the whole body. Assignment-position and `return`-position lambdas are not
+  supported yet.
+- Implementation: capture analysis runs in `sema_lower_lambda` while the
+  enclosing scope is alive; body identifiers are rewritten to `this.<name>`
+  member accesses, then the synthetic method body is checked by the normal
+  sema walk. Interface thunks/vtables for all classes are emitted in a
+  pre-pass before any method body (`codegen_all_class_vtables`), because
+  synthesized classes are appended after the code that references them.
+
 ## Reference Parameters
 - Only the `ref` keyword is supported.
 - `ref T p` means the parameter aliases a caller variable.

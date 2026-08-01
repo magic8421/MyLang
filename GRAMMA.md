@@ -285,6 +285,26 @@ this        // current class instance
 (expr)      // parenthesized expression
 ```
 
+### Lambda Expressions
+```my
+(a, b) => expr          // expression body
+(a, b) => { stmts }     // block body (arrow required for both)
+```
+The target type must be a single-abstract-method (SAM) interface, known from
+context: a variable initializer or a call argument. Parameter types come from
+the interface method signature. Enclosing locals used in the body are
+captured by value (snapshot at creation); `weak`/`unowned` variables stay
+weak/unowned. Strong `this` capture is an error — capture a `weak` alias of
+`this` instead.
+
+Example:
+```my
+interface Comparator { i32 compare(i32 a, i32 b); }
+
+Comparator c = (a, b) => a - b;
+sort(arr, (a, b) => b - a);
+```
+
 ### New Expression
 ```my
 new ClassName          // class instance
