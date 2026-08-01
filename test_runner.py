@@ -5453,6 +5453,90 @@ i32 main() {
 }
 """, 54),
 
+    ("lambda_var_decl", """
+interface Comparator { i32 compare(i32 a, i32 b); }
+i32 main() {
+    Comparator c = (a, b) => a - b;
+    return c.compare(10, 3);
+}
+""", 7),
+
+    ("lambda_call_arg", """
+interface Comparator { i32 compare(i32 a, i32 b); }
+i32 apply(Comparator c, i32 x, i32 y) {
+    return c.compare(x, y);
+}
+i32 main() {
+    return apply((a, b) => b - a, 3, 10);
+}
+""", 7),
+
+    ("lambda_block_void", """
+interface Handler { void handle(i32 ev); }
+i32 main() {
+    Handler h = (ev) => {
+        print(f"got {ev}");
+        if (ev > 1) {
+            print(f"big");
+        }
+    };
+    h.handle(2);
+    return 0;
+}
+""", (0, "got 2\nbig\n")),
+
+    ("lambda_void_expr_body", """
+interface Handler { void handle(i32 ev); }
+i32 main() {
+    Handler h = (ev) => print(f"ev {ev}");
+    h.handle(9);
+    return 0;
+}
+""", (0, "ev 9\n")),
+
+    ("lambda_iface_with_default", """
+interface Named { i32 value(); string name() { return "default"; } }
+i32 main() {
+    Named n = () => 42;
+    return n.value() + n.name().length();
+}
+""", 49),
+
+    ("lambda_namespace", """
+namespace ltk {
+interface Handler { void handle(i32 ev); }
+void dispatch(Handler h, i32 v) {
+    h.handle(v);
+}
+}
+i32 main() {
+    ltk.Handler h = (ev) => print(f"ns {ev}");
+    ltk.dispatch(h, 1);
+    ltk.dispatch((ev) => print(f"direct {ev}"), 2);
+    return 0;
+}
+""", (0, "ns 1\ndirect 2\n")),
+
+    ("lambda_nested", """
+interface Handler { void handle(i32 ev); }
+i32 main() {
+    Handler outer = (a) => {
+        Handler inner = (b) => print(f"nested {b}");
+        inner.handle(a + 1);
+    };
+    outer.handle(5);
+    return 0;
+}
+""", (0, "nested 6\n")),
+
+    ("lambda_stored_and_called_later", """
+interface Supplier { i32 get(); }
+i32 main() {
+    Supplier s = () => 77;
+    Supplier t = s;
+    return t.get();
+}
+""", 77),
 
 ]
 
@@ -7048,6 +7132,54 @@ i32 main() {
     return 0;
 }
 """, "unknown type 'B'"),
+
+    ("bad_lambda_target_not_interface", """
+i32 main() {
+    i32 x = (a) => a + 1;
+    return 0;
+}
+""", "lambda target type must be an interface type"),
+
+    ("bad_lambda_sam_two_methods", """
+interface Two { i32 a(i32 x); i32 b(i32 x); }
+i32 main() {
+    Two t = (x) => x;
+    return 0;
+}
+""", "a lambda target must have exactly one"),
+
+    ("bad_lambda_param_count", """
+interface Cmp { i32 compare(i32 a, i32 b); }
+i32 main() {
+    Cmp c = (a) => a;
+    return 0;
+}
+""", "lambda has 1 parameter(s) but 'Cmp.compare' requires 2"),
+
+    ("bad_lambda_no_target", """
+i32 main() {
+    (a) => a + 1;
+    return 0;
+}
+""", "lambda expression has no target type here"),
+
+    ("bad_lambda_capture_local", """
+interface Supplier { i32 get(); }
+i32 main() {
+    i32 x = 5;
+    Supplier s = () => x;
+    return s.get();
+}
+""", "unknown identifier 'x'"),
+
+    ("bad_lambda_class_name_prefix", """
+class __lambda_0 {
+    i32 x;
+}
+i32 main() {
+    return 0;
+}
+""", "reserved '__lambda_' prefix"),
 
 ]
 

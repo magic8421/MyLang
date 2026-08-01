@@ -539,6 +539,75 @@ static AstNode* parse_fstring(Parser* p, Token str_tok) {
     return node;
 }
 
+/* Parse a lambda after the '(' has been consumed by the speculative scan in
+   parser_try_parse_lambda: the caller has already verified the shape, so this
+   only collects parameter names and the body.  Both body forms require '=>':
+   '(a, b) => expr' and '(a, b) => { ... }' (the arrow keeps the block form
+   unambiguous against a parenthesized expression followed by a block). */
+static AstNode* parse_lambda(Parser* p) {
+    Token lparen = p->current; advance(p); /* ( */
+    AstNode* params = NULL;
+    if (!check(p, TOK_RPAREN)) {
+        do {
+            Token pn = p->current; advance(p); /* IDENT */
+            AstNode* pd = ast_new_node(AST_VAR_DECL, pn);
+            params = ast_append_list(params, pd);
+        } while (check(p, TOK_COMMA) && (advance(p), 1));
+    }
+    expect(p, TOK_RPAREN);
+    expect(p, TOK_FATARROW);
+    AstNode* body = NULL;
+    if (check(p, TOK_LBRACE)) {
+        body = parse_stmt(p); /* { ... } block */
+    } else {
+        /* Expression body: wrap in a return so the synthetic method body is a
+           plain block; a void SAM target unwraps it again in sema. */
+        AstNode* e = parse_expr(p);
+        AstNode* ret = ast_new_node(AST_RETURN_STMT, lparen);
+        if (e) ast_add_child(ret, e);
+        body = ast_new_node(AST_BLOCK, lparen);
+        ast_add_child(body, ret);
+    }
+    AstNode* lam = ast_new_node(AST_LAMBDA, lparen);
+    if (params) ast_add_child(lam, params);
+    if (body) ast_add_child(lam, body);
+    return lam;
+}
+
+/* Speculative lambda detection at a '(' in expression position.  The shape
+   '( IDENT (, IDENT)* ) =>' unambiguously starts a lambda: a parenthesized
+   expression cannot be followed by '=>'.  On mismatch the parser state is
+   fully restored and NULL is returned. */
+static AstNode* parser_try_parse_lambda(Parser* p) {
+    Lexer saved_lexer = *(p->lexer);
+    Token saved_current = p->current;
+    Token saved_peek = p->peek;
+    Token saved_peek2 = p->peek2;
+    int saved_had_error = p->had_error;
+
+    advance(p); /* ( */
+    int ok = 1;
+    if (!check(p, TOK_RPAREN)) {
+        for (;;) {
+            if (!check(p, TOK_IDENT)) { ok = 0; break; }
+            advance(p);
+            if (check(p, TOK_COMMA)) { advance(p); continue; }
+            break;
+        }
+        if (!check(p, TOK_RPAREN)) ok = 0;
+    }
+    if (ok) advance(p); /* ) */
+    if (ok && !check(p, TOK_FATARROW)) ok = 0;
+
+    *(p->lexer) = saved_lexer;
+    p->current = saved_current;
+    p->peek = saved_peek;
+    p->peek2 = saved_peek2;
+    p->had_error = saved_had_error;
+    if (!ok) return NULL;
+    return parse_lambda(p);
+}
+
 static AstNode* parse_primary(Parser* p) {
     if (check(p, TOK_INT_LIT)) {
         Token t = p->current; advance(p);
@@ -624,6 +693,8 @@ static AstNode* parse_primary(Parser* p) {
         return ast_new_node(AST_IDENT, t);
     }
     if (check(p, TOK_LPAREN)) {
+        AstNode* lam = parser_try_parse_lambda(p);
+        if (lam) return lam;
         advance(p);
         AstNode* e = parse_expr(p);
         expect(p, TOK_RPAREN);
@@ -1706,6 +1777,13 @@ static AstNode* parse_class_decl(Parser* p) {
 
     if (strcmp(name.text, "String") == 0) {
         fprintf(stderr, "%s(%d,%d): error: class name '%s' is reserved for a builtin type\n",
+                parser_filename(p), name.line, name.col, name.text);
+        p->had_error = 1;
+    }
+
+    /* Anonymous classes synthesized for lambdas use the __lambda_ prefix. */
+    if (strncmp(name.text, "__lambda_", 9) == 0) {
+        fprintf(stderr, "%s(%d,%d): error: class name '%s' uses the reserved '__lambda_' prefix\n",
                 parser_filename(p), name.line, name.col, name.text);
         p->had_error = 1;
     }

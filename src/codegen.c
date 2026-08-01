@@ -5529,9 +5529,32 @@ static void codegen_class_decl(CodegenContext* ctx, AstNode* node) {
         codegen_method_decl(ctx, m, class_c);
         m = m->next;
     }
+}
 
-    /* emit interface thunks and vtables */
-    codegen_class_interface_vtables(ctx, ci);
+/* Emit interface thunks and vtables for every concrete class up front.  A
+   class method body can reference another class's vtable (class-to-interface
+   conversion), and sema-synthesized lambda classes are appended to the
+   program after the class whose method creates them, so emitting vtables
+   interleaved with method bodies leaves forward references undefined. */
+static void codegen_all_class_vtables(CodegenContext* ctx, AstNode* program) {
+    AstNode* decl = program->ast_children[0];
+    while (decl) {
+        if (decl->ast_kind == AST_CLASS_DECL) {
+            ClassInfo* ci = symtab_find_class_by_mangled(decl->ast_token.text);
+            if (!ci) ci = symtab_find_class(decl->ast_token.text);
+            if (ci && !ci->is_generic) {
+                codegen_class_interface_vtables(ctx, ci);
+            }
+        }
+        decl = decl->next;
+    }
+    ClassInfo* ci = class_list;
+    while (ci) {
+        if (ci->is_instantiation && ci->generic_ast) {
+            codegen_class_interface_vtables(ctx, ci);
+        }
+        ci = ci->next;
+    }
 }
 
 /* Per-struct retain/release hooks for structs that own reference fields
@@ -6055,6 +6078,10 @@ void codegen_program(AstNode* program, FILE* out, FILE* header,
 
     emit_interface_c_helpers(&ctx);
     emit_interface_default_methods(&ctx);
+
+    /* Vtables and thunks before any method body: method bodies reference
+       other classes' vtables (interface conversions, lambda classes). */
+    codegen_all_class_vtables(&ctx, program);
 
     AstNode* decl = program->ast_children[0];
     while (decl) {

@@ -937,8 +937,134 @@ static void sema_check_call_arg(AstNode* arg, const Type* param_type) {
     }
 }
 
+/* -------------------------------------------------------------------------
+   Lambda lowering (anonymous SAM-implementation class)
+   ------------------------------------------------------------------------- */
+
+/* Set by sema_check; synthesized anonymous classes are appended to its
+   declaration list so the main sema loop checks their method bodies and the
+   codegen declaration walk emits them like ordinary classes. */
+static AstNode* s_program = NULL;
+static int s_lambda_counter = 0;
+
+/* Lowers a lambda expression into 'new __lambda_N': synthesizes an anonymous
+   class implementing the single-abstract-method interface given by expected
+   and rewrites the node in place.  The class decl is appended to the program
+   and checked by the sema_check main loop later (by which point the enclosing
+   scope is gone, so lambdas cannot capture anything yet). */
+static void sema_lower_lambda(AstNode* lam, const Type* expected) {
+    if (!s_program || !lam || lam->ast_kind != AST_LAMBDA) return;
+    if (expected->type_kind != TYPE_INTERFACE) {
+        sema_report_error(lam, "lambda target type must be an interface type");
+        return;
+    }
+    InterfaceInfo* ii = symtab_find_interface(expected->class_name);
+    if (!ii) {
+        sema_report_error(lam, "lambda target interface '%s' is not defined",
+                          expected->class_name);
+        return;
+    }
+    /* SAM: exactly one abstract method (a method without a default body). */
+    InterfaceMethodInfo* sam = NULL;
+    int abstract_count = 0;
+    int j;
+    for (j = 0; j < ii->method_count; j++) {
+        if (!ii->methods[j].interface_method_default_body) {
+            abstract_count++;
+            sam = &ii->methods[j];
+        }
+    }
+    if (abstract_count != 1) {
+        sema_report_error(lam, "interface '%s' has %d abstract method(s); a lambda target must have exactly one",
+                          ii->name, abstract_count);
+        return;
+    }
+    /* Child layout mirrors method decls: two children are [params, body],
+       a single child is the body alone (zero-parameter lambda). */
+    AstNode* params = (lam->ast_child_count == 2) ? lam->ast_children[0] : NULL;
+    AstNode* body = (lam->ast_child_count == 2) ? lam->ast_children[1]
+                                                : (lam->ast_child_count == 1 ? lam->ast_children[0] : NULL);
+    int pc = 0;
+    AstNode* q;
+    for (q = params; q; q = q->next) pc++;
+    if (pc != sam->param_count) {
+        sema_report_error(lam, "lambda has %d parameter(s) but '%s.%s' requires %d",
+                          pc, ii->name, sam->name, sam->param_count);
+        return;
+    }
+
+    /* A void SAM target unwraps the expression body's synthetic return:
+       'return expr;' in a void method is not valid C. */
+    if (sam->return_type.type_kind == TYPE_VOID && body &&
+        body->ast_kind == AST_BLOCK && body->ast_children[0] &&
+        body->ast_children[0]->ast_kind == AST_RETURN_STMT &&
+        !body->ast_children[0]->next) {
+        body->ast_children[0]->ast_kind = AST_EXPR_STMT;
+    }
+
+    char cname[NAME_BUF_SIZE];
+    do {
+        int n = snprintf(cname, sizeof(cname), "__lambda_%d", s_lambda_counter++);
+        CHECK_SNPRINTF(n, sizeof(cname), "lambda class name too long");
+    } while (symtab_find_class(cname));
+
+    ClassInfo* ci = (ClassInfo*)calloc(1, sizeof(ClassInfo));
+    CHECK_STRSCPY(strscpy(ci->name, cname, sizeof(ci->name)), "class name too long");
+    ci->type_id = symtab_next_type_id();
+    symtab_add_class(cname, ci);
+    symtab_add_class_impl(ci, ii->name);
+
+    /* Method signature: parameter types from the SAM method, names from the
+       lambda.  The parameter AST nodes move under the synthetic method and
+       carry their resolved types for sema_walk_body and codegen. */
+    char mpn[MAX_PARAMS][NAME_BUF_SIZE];
+    Type mpt[MAX_PARAMS];
+    int i = 0;
+    for (q = params; q && i < MAX_PARAMS; q = q->next, i++) {
+        CHECK_STRSCPY(strscpy(mpn[i], q->ast_token.text, sizeof(mpn[i])),
+                      "parameter name too long");
+        mpt[i] = sam->param_types[i];
+        q->ast_resolved_type = mpt[i];
+    }
+    symtab_add_method(ci, sam->name, sam->return_type, pc, mpn, mpt, NULL,
+                      0, 0, 0, 0, lam->ast_token);
+
+    Token mtok = lam->ast_token;
+    CHECK_STRSCPY(strscpy(mtok.text, sam->name, sizeof(mtok.text)),
+                  "method name too long");
+    AstNode* mnode = ast_new_node(AST_FUNC_DECL, mtok);
+    mnode->ast_resolved_type = sam->return_type;
+    if (params) ast_add_child(mnode, params);
+    if (body) ast_add_child(mnode, body);
+
+    Token ctok = lam->ast_token;
+    CHECK_STRSCPY(strscpy(ctok.text, cname, sizeof(ctok.text)), "class name too long");
+    AstNode* cnode = ast_new_node(AST_CLASS_DECL, ctok);
+    cnode->ast_resolved_type.type_kind = TYPE_CLASS;
+    CHECK_STRSCPY(strscpy(cnode->ast_resolved_type.class_name, cname,
+                          sizeof(cnode->ast_resolved_type.class_name)), "class name too long");
+    cnode->ast_resolved_type.type_id = ci->type_id;
+    ast_add_child(cnode, mnode);
+    s_program->ast_children[0] = ast_append_list(s_program->ast_children[0], cnode);
+
+    /* Rewrite the lambda node in place into 'new __lambda_N'. */
+    memset(lam->ast_children, 0, sizeof(lam->ast_children));
+    lam->ast_child_count = 0;
+    lam->ast_kind = AST_NEW;
+    Type nt;
+    memset(&nt, 0, sizeof(nt));
+    nt.type_kind = TYPE_CLASS;
+    CHECK_STRSCPY(strscpy(nt.class_name, cname, sizeof(nt.class_name)), "class name too long");
+    nt.is_pointer = 1;
+    nt.type_id = ci->type_id;
+    lam->ast_resolved_type = nt;
+    lam->ast_is_resolved = 1;
+}
+
 /* Runs sema_check_call_arg over the argument list; positions beyond the
-   signature (or without one) get a zeroed type, mirroring codegen. */
+   signature (or without one) get a zeroed type, mirroring codegen.  Lambda
+   arguments are lowered here, where the parameter type supplies the target
+   interface. */
 static void sema_check_call_args(AstNode* node, int param_count, const Type* param_types) {
     AstNode* arg = (node->ast_child_count > 1) ? node->ast_children[1] : NULL;
     int idx = 0;
@@ -946,6 +1072,7 @@ static void sema_check_call_args(AstNode* node, int param_count, const Type* par
         Type expected;
         memset(&expected, 0, sizeof(expected));
         if (param_types && idx < param_count) expected = param_types[idx];
+        if (arg->ast_kind == AST_LAMBDA) sema_lower_lambda(arg, &expected);
         sema_check_call_arg(arg, &expected);
         idx++;
         arg = arg->next;
@@ -1639,6 +1766,15 @@ static void sema_walk_target(AstNode* node) {
 static void sema_walk_expr(AstNode* node) {
     if (!node) return;
     int i;
+    if (node->ast_kind == AST_LAMBDA) {
+        /* Not walked and not resolved here: a lambda is lowered by the
+           enclosing var-decl / call-arg check where the target interface
+           type is known, and its body is checked later as the synthetic
+           class's method.  Lambdas left unlowered (no target type) are
+           diagnosed in sema_materialize_call_defaults_walk. */
+        sema_walk_expr(node->next);
+        return;
+    }
     if (node->ast_kind == AST_ASSIGN) {
         /* The LHS is a write position (see sema_walk_target). */
         sema_walk_target(node->ast_children[0]);
@@ -1737,9 +1873,14 @@ static void sema_walk_stmt(AstNode* node) {
 
         case AST_VAR_DECL:
             /* The initializer is resolved before the variable enters scope
-               (mirrors codegen_var_decl). */
+               (mirrors codegen_var_decl).  A lambda initializer is lowered
+               first: the declared type supplies its target interface. */
             if (node->ast_child_count > 0) {
-                sema_walk_expr(node->ast_children[0]);
+                AstNode* init = node->ast_children[0];
+                if (init && init->ast_kind == AST_LAMBDA) {
+                    sema_lower_lambda(init, &node->ast_resolved_type);
+                }
+                sema_walk_expr(init);
             }
             sema_resolve_type(node);
             sema_check_var_decl(node);
@@ -2072,6 +2213,11 @@ static void sema_materialize_call_defaults(AstNode* node) {
    from codegen.c, behavior unchanged). */
 static void sema_materialize_call_defaults_walk(AstNode* node) {
     if (!node) return;
+    if (node->ast_kind == AST_LAMBDA) {
+        /* Survived the check walk unlowered: no enclosing var-decl or
+           parameter supplied a target interface type. */
+        sema_report_error(node, "lambda expression has no target type here (assign it to an interface variable or pass it to an interface parameter)");
+    }
     if (node->ast_kind == AST_CALL) sema_materialize_call_defaults(node);
     int i;
     for (i = 0; i < node->ast_child_count; i++) {
@@ -2222,6 +2368,7 @@ static void sema_walk_instantiations_fixpoint(void) {
 
 void sema_check(AstNode* program) {
     if (!program || program->ast_kind != AST_PROGRAM) return;
+    s_program = program;
 
     AstNode* decl = (program->ast_child_count > 0) ? program->ast_children[0] : NULL;
     while (decl) {

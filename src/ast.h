@@ -109,6 +109,7 @@ typedef enum {
     AST_FSTRING,
     AST_BOOL_LIT,
     AST_NULL,
+    AST_LAMBDA,
 } AstKind;
 
 struct AstNode {
