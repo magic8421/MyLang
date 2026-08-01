@@ -7,13 +7,16 @@
 */
 #include "sdl3_events.h"
 #include <SDL3/SDL.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #define MAX_LISTENERS 16
 
 static int g_quit = 0;
 
 static struct {
-    SdlEventListener listener;
+    ltk_EventListener listener;
     int active;
 } g_listeners[MAX_LISTENERS];
 
@@ -21,7 +24,7 @@ static SRWLOCK g_lock = SRWLOCK_INIT;
 static int g_watch_registered = 0;
 
 #define EVENT_ENTRY(x) case x: pstr = #x; break
-String* SdlApp_eventTypeToString(SdlApp* thiz, uint32_t type){
+String* ltk_Application_eventTypeToString(ltk_Application* thiz, uint32_t type){
     const char* pstr = NULL;
     switch (type)
     {
@@ -146,7 +149,7 @@ String* SdlApp_eventTypeToString(SdlApp* thiz, uint32_t type){
         EVENT_ENTRY(SDL_EVENT_ENUM_PADDING);
 
     default:
-        pstr = "Unkown type";
+        pstr = "Unknown type";
     }
 
     String* str = mylang_string_new(MYLANG_TID_String, pstr);
@@ -154,20 +157,30 @@ String* SdlApp_eventTypeToString(SdlApp* thiz, uint32_t type){
 }
 #undef EVENT_ENTRY
 
-int32_t SdlApp_init(SdlApp* thiz) {
+int32_t ltk_Application_init(ltk_Application* thiz) {
     (void)thiz;
+#ifdef _WIN32
+    /* MyLang strings are UTF-8 bytes end to end (source literals and SDL's
+       event.text.text alike); switch the console code page once here instead
+       of transcoding at every boundary. */
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
     return SDL_Init(SDL_INIT_VIDEO) ? 0 : 1;
 }
 
-SdlWindow* SdlApp_createWindow(SdlApp* thiz, int32_t w, int32_t h) {
+ltk_Window* ltk_Application_createWindow(ltk_Application* thiz, int32_t w, int32_t h) {
     (void)thiz;
     SDL_Window* handle = SDL_CreateWindow("MyLang SDL3 events", w, h, 0);
-    SdlWindow *win = mylang_new_object(sizeof(SdlWindow), MYLANG_TID_SdlWindow, _mylang_dtor_SdlWindow);
+    ltk_Window *win = mylang_new_object(sizeof(ltk_Window), MYLANG_TID_ltk_Window, _mylang_dtor_ltk_Window);
     win->handle = (int64_t)handle;
+    win->window_id = SDL_GetWindowID(handle);
+    SDL_StartTextInput(handle);
+    mylang_array_push(&thiz->windows, sizeof(void*), 2, &win);
     return win;
 }
 
-void SdlApp_pump(SdlApp* thiz) {
+void ltk_Application_pump(ltk_Application* thiz) {
     (void)thiz;
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
@@ -177,28 +190,39 @@ void SdlApp_pump(SdlApp* thiz) {
                 break;
             case SDL_EVENT_MOUSE_BUTTON_DOWN:
                 {
-                    ltkMouseEvent ev = { 0 };
+                    ltk_MouseEvent ev = { 0 };
+                    ev.window_id = event.button.windowID;
                     ev.button = event.button.button;
                     ev.x = event.button.x;
                     ev.y = event.button.y;
-                    SdlApp_onMouseEvent(thiz, &ev);
+                    ltk_Application_onMouseEvent(thiz, &ev);
                 }
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
                 {
-                    ltkMouseEvent ev = { 0 };
+                    ltk_MouseEvent ev = { 0 };
+                    ev.window_id = event.wheel.windowID;
                     ev.wheel_x = event.wheel.integer_x;
                     ev.wheel_y = event.wheel.integer_y;
-                    ev.x = event.button.x;
-                    ev.y = event.button.y;
-                    SdlApp_onMouseEvent(thiz, &ev);
+                    ev.x = event.wheel.x;
+                    ev.y = event.wheel.y;
+                    ltk_Application_onMouseEvent(thiz, &ev);
                 }
                 break;
             case SDL_EVENT_KEY_DOWN:
                 {
-                    ltkKeyEvent ev = {0};
+                    ltk_KeyEvent ev = {0};
+                    ev.window_id = event.key.windowID;
                     ev.key = event.key.key;
-                    SdlApp_onKeyEvent(thiz, &ev);
+                    ltk_Application_onKeyEvent(thiz, &ev);
+                }
+                break;
+            case SDL_EVENT_TEXT_INPUT:
+                {
+                    ltk_TextInputEvent ev = {0};
+                    ev.window_id = event.text.windowID;
+                    ev.text = mylang_string_new(MYLANG_TID_String, event.text.text);
+                    ltk_Application_onTextInput(thiz, &ev);
                 }
                 break;
             default:
@@ -207,22 +231,22 @@ void SdlApp_pump(SdlApp* thiz) {
     }
 }
 
-int32_t SdlApp_shouldQuit(SdlApp* thiz) {
+int32_t ltk_Application_shouldQuit(ltk_Application* thiz) {
     (void)thiz;
     return g_quit;
 }
 
-void SdlApp_delay(SdlApp* thiz, int32_t ms) {
+void ltk_Application_delay(ltk_Application* thiz, int32_t ms) {
     (void)thiz;
     SDL_Delay((Uint32)ms);
 }
 
-void SdlApp_destroyWindow(SdlApp* thiz, SdlWindow* win) {
+void ltk_Application_destroyWindow(ltk_Application* thiz, ltk_Window* win) {
     (void)thiz;
     SDL_DestroyWindow((SDL_Window *)win->handle);
 }
 
-void SdlApp_quit(SdlApp* thiz) {
+void ltk_Application_quit(ltk_Application* thiz) {
     (void)thiz;
     SDL_Quit();
 }

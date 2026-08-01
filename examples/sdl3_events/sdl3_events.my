@@ -1,20 +1,16 @@
-struct SdlEvent {
+namespace ltk {
+
+struct Event {
     u32 type;
     u32 code;
 }
 
-const u32 LTK_LBUTTON_DOWN = 1;
-const u32 LTK_LBUTTON_UP = 2;
-const u32 LTK_RBUTTON_DOWN = 3;
-const u32 LTK_RBUTTON_UP = 4;
-const u32 LTK_WHEEL_UP = 5;
-const u32 LTK_WHEEL_DOWN = 6;
-
-enum ltkMouseAction {
+enum MouseAction {
     LButtonUp, LButtonDown, RButtonUp, RButtonDown, WheelUp, WheelDown
 }
 
-struct ltkMouseEvent {
+struct MouseEvent {
+    u32 window_id;
     u32 action;
     u32 button;
     i32 wheel_x;
@@ -23,24 +19,28 @@ struct ltkMouseEvent {
     f32 y;
 }
 
-struct ltkKeyEvent {
+struct KeyEvent {
+    u32 window_id;
     u32 scancode;    // SDL physical key code
     u32 key;         // SDL virtual key code
     u32 mod;         // current key modifiers
 }
 
-interface SdlEventListener {
-    void onEvent(SdlEvent e);
-    void onMouseEvent(ref ltkMouseEvent ev) {}
-    void onKeyEvent(ref ltkKeyEvent ev) {}
+struct TextInputEvent {
+    u32 window_id;
+    string text;
 }
 
+interface EventListener {
+    void onEvent(Event e);
+    void onMouseEvent(ref MouseEvent ev) {}
+    void onKeyEvent(ref KeyEvent ev) {}
+}
 
-
-class SdlWindow {
+class Window {
     private u64 handle;
     private u32 window_id;
-    public unowned SdlApp app;
+    private unowned Application app;
 
     u32 getId() {
         return this.window_id;
@@ -48,40 +48,75 @@ class SdlWindow {
     bool isValid() {
         return this.handle != 0;
     }
+    void onMouseEvent(ref MouseEvent e) {
+        print(f"Window {this.window_id}: MouseEvent {e.button} {e.x} {e.y}");
+    }
+    void onKeyEvent(ref KeyEvent e) {
+        print(f"Window: KeyEvent {e.key}");
+    }
+    void onTextInput(ref TextInputEvent e) {
+        print(f"Window: TextInputEvent {e.text}");
+    }
 }
 
-class SdlApp {
-    private SdlWindow[] windows;
+class Application {
+    private Window[] windows;
 
-    SdlWindow windowFromId(u32 id) {
-        for (u32 i = 0; i < this.windows.length(); i++) {
-            if (this.windows[i].getId() == id) {
-                return this.windows[i];
+    Window windowFromId(u32 id) {
+        //print(f"windowFromId {this.windows.length()} >>>");
+        foreach (Window win in this.windows) {
+            //print(f"windowFromId: {win.getId()} == {id}");
+            if (win.getId() == id) {
+                return win;
             }
         }
+         //print("windowFromId <<<");
         return null;
     }
 
-    void onMouseEvent(ref ltkMouseEvent e) {
-
+    void example() {
+        this.windows.push(new Window);
+        string s = "Hello";
     }
-    void onKeyEvent(ref ltkKeyEvent ev) {
 
+    void onMouseEvent(ref MouseEvent e) {
+        Window wnd = this.windowFromId(e.window_id);
+        if (wnd) {
+            wnd.onMouseEvent(ref e);
+        } else {
+            print(f"Cannot find window_id:{e.window_id}");
+        }
+    }
+    void onKeyEvent(ref KeyEvent e) {
+        Window wnd = this.windowFromId(e.window_id);
+        if (wnd) {
+            wnd.onKeyEvent(ref e);
+        } else {
+            print(f"Cannot find window_id:{e.window_id}");
+        }
+    }
+    void onTextInput(ref TextInputEvent e) {
+        Window wnd = this.windowFromId(e.window_id);
+        if (wnd) {
+            wnd.onTextInput(ref e);
+        } else {
+            print(f"Cannot find window_id:{e.window_id}");
+        }
     }
 
     native i32 init();
-    native SdlWindow createWindow(i32 w, i32 h);
+    native Window createWindow(i32 w, i32 h);
     native void pump();
     native i32 shouldQuit();
     native void delay(i32 ms);
-    native void destroyWindow(SdlWindow win);
+    native void destroyWindow(Window win);
     native void quit();
     native string eventTypeToString(u32 type);
 }
 
 class Logger {
-    public unowned SdlApp app;
-    void onEvent(SdlEvent e) {
+    public unowned Application app;
+    void onEvent(Event e) {
         match(e.type) {
             1024 => { return; } // SDL_EVENT_MOUSE_MOTION
             516 => { return; } // SDL_EVENT_WINDOW_EXPOSED
@@ -90,21 +125,23 @@ class Logger {
         string type_str = this.app.eventTypeToString(e.type);
         print(f"SDL Event: [{e.type}]{type_str} {e.code}");
     }
-    void onMouseEvent(ref ltkMouseEvent e) {
-        print(f"SDL Event: ltkMouseEvent {e.button} {e.x} {e.y}");
+    void onMouseEvent(ref MouseEvent e) {
+        print(f"SDL Event: MouseEvent {e.button} {e.x} {e.y}");
     }
-    void onKeyDown(ref ltkKeyEvent e) {
-        print(f"SDL Event: ltkKeyEvent {e.key}");
+    void onKeyDown(ref KeyEvent e) {
+        print(f"SDL Event: KeyEvent {e.key}");
     }
 }
 
+} // namespace ltk
+
 i32 main() {
-    SdlApp app = new SdlApp;
+    ltk.Application app = new ltk.Application;
     if (app.init() != 0) {
         return 1;
     }
 
-    SdlWindow win = app.createWindow(640, 480);
+    ltk.Window win = app.createWindow(640, 480);
     if (!win.isValid()) {
         app.quit();
         return 2;
