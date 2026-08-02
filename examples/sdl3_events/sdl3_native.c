@@ -256,14 +256,9 @@ void ltk_Application_quit(ltk_Application* thiz) {
     SDL_Quit();
 }
 
-/* MyLang strings are length-delimited byte arrays, not NUL-terminated. */
-static char* string_to_cstr(String* s) {
-    size_t len = (s && s->bytes.data) ? (size_t)s->bytes.length : 0;
-    char* buf = (char*)SDL_malloc(len + 1);
-    if (len) SDL_memcpy(buf, s->bytes.data, len);
-    buf[len] = '\0';
-    return buf;
-}
+/* MyLang strings are NUL-terminated under the hood (see the invariant in
+   src/runtime.c), so mylang_string_cstr() hands the raw buffer to C APIs
+   with zero copying. */
 
 static SDL_Texture* load_sdl_texture(SDL_Renderer* renderer, const char* path) {
     if (!renderer) { fprintf(stderr, "load_sdl_texture: window has no renderer\n"); return NULL; }
@@ -286,9 +281,7 @@ static SDL_Texture* load_sdl_texture(SDL_Renderer* renderer, const char* path) {
 }
 
 ltk_SdlTexture* ltk_Window_createTextureFromFile(ltk_Window* thiz, String* path) {
-    char* cpath = string_to_cstr(path);
-    SDL_Texture* tex = load_sdl_texture((SDL_Renderer*)thiz->renderer, cpath);
-    SDL_free(cpath);
+    SDL_Texture* tex = load_sdl_texture((SDL_Renderer*)thiz->renderer, mylang_string_cstr(path));
     ltk_SdlTexture* t = mylang_new_object(sizeof(ltk_SdlTexture), MYLANG_TID_ltk_SdlTexture, _mylang_dtor_ltk_SdlTexture);
     t->handle = (int64_t)tex;   // 0 on failure: isValid() reports false
     return t;

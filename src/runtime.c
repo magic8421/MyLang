@@ -73,18 +73,62 @@ int mylang_release(void* ptr) {
 
 /* --- Builtin String support --------------------------------------------- */
 
+/* String NUL-termination invariant
+   ================================
+   A String's `bytes` array is length-delimited: `bytes.length` is the exact
+   content length and every consumer in this runtime reads only that many
+   bytes.  On top of that, the buffer obeys one extra rule:
+
+       bytes.data is either NULL (empty string, zero allocation)
+       or a buffer with capacity >= length + 1 and data[length] == '\0'.
+
+   In other words, every non-empty String is also a valid C string at no
+   extra cost.  This exists for the native-call boundary: native methods can
+   hand `s->bytes.data` straight to C APIs (fopen, SDL, stb_image, ...) via
+   mylang_string_cstr(), with no per-call malloc/copy/free.
+
+   Rules for anyone touching String bytes:
+   - The trailing NUL is NOT part of the content.  length, equals, char_at,
+     print, hashing and --xor-strings decryption all keep operating on
+     `length` bytes only; the NUL is invisible to them and must stay so.
+   - A MyLang string may legitimately contain interior '\0' bytes (e.g. via
+     append_char).  The C-string view then truncates at the first NUL --
+     length remains the source of truth, the cstr view is a convenience.
+   - The invariant is maintained by convention at exactly three sites, all in
+     this file: mylang_string_new, mylang_string_new_encrypted and
+     str_append_bytes.  Any future code that writes into `bytes` directly
+     must restore data[length] == '\0' (and the capacity for it) itself.
+   - Empty strings keep data == NULL on purpose: f-strings start from an
+     empty accumulator, and charging every one of them a one-byte allocation
+     is not worth it.  Boundary code must therefore go through
+     mylang_string_cstr(), which maps NULL to a static "". */
+
 void _mylang_dtor_String(String* p) {
     if (p) {
         mylang_array_free(&p->bytes, 1, MYLANG_ELEM_PRIMITIVE);
     }
 }
 
+/* The cstr view of a String: the raw buffer for non-empty strings (valid
+   because of the NUL invariant above), a static "" for empty/null ones.
+   The returned pointer borrows the String's storage -- it dies with the
+   String and is invalidated by any append, so native code must not cache
+   it beyond the call it feeds. */
+const char* mylang_string_cstr(String* s) {
+    return (s && s->bytes.data) ? (const char*)s->bytes.data : "";
+}
+
 String* mylang_string_new(uint32_t type_id, const char* cstr) {
     size_t len = cstr ? strlen(cstr) : 0;
     String* s = (String*)mylang_new_object(sizeof(String), type_id, (void (*)(void*))_mylang_dtor_String);
     if (len > 0) {
-        mylang_array_resize(&s->bytes, len, 1, MYLANG_ELEM_PRIMITIVE);
+        /* len + 1 capacity: content plus the trailing NUL (see the invariant
+           above).  resize() cannot express the +1, so reserve + set length
+           manually. */
+        mylang_array_reserve(&s->bytes, len + 1, 1);
         memcpy(s->bytes.data, cstr, len);
+        s->bytes.length = len;
+        ((char*)s->bytes.data)[len] = '\0';
     }
     return s;
 }
@@ -92,12 +136,16 @@ String* mylang_string_new(uint32_t type_id, const char* cstr) {
 String* mylang_string_new_encrypted(uint32_t type_id, const uint8_t* data, size_t len, uint8_t key) {
     String* s = (String*)mylang_new_object(sizeof(String), type_id, (void (*)(void*))_mylang_dtor_String);
     if (len > 0) {
-        mylang_array_resize(&s->bytes, len, 1, MYLANG_ELEM_PRIMITIVE);
+        /* Same len + 1 layout as mylang_string_new.  The NUL is appended
+           after the decryption loop and is never encrypted itself. */
+        mylang_array_reserve(&s->bytes, len + 1, 1);
         size_t i;
         char* dest = (char*)s->bytes.data;
         for (i = 0; i < len; i++) {
             dest[i] = (char)(data[i] ^ key);
         }
+        s->bytes.length = len;
+        dest[len] = '\0';
     }
     return s;
 }
@@ -119,17 +167,26 @@ void mylang_print_i32(int32_t v) {
 /* --- String append support ---------------------------------------------- */
 
 static void str_ensure_extra(String* s, size_t extra) {
-    size_t needed = s->bytes.length + extra;
+    /* +1 over the raw content size: the buffer must always keep room for the
+       trailing NUL (see the invariant at the top of the String section).
+       Reserving exactly length+extra here and writing data[length] later
+       would be an off-by-one heap overflow. */
+    size_t needed = s->bytes.length + extra + 1;
     if (needed > s->bytes.capacity) {
         mylang_array_reserve(&s->bytes, needed, 1);
     }
 }
 
+/* The single append core every String_* append funnels through -- and
+   therefore the place that re-establishes the trailing NUL after the buffer
+   grows.  Starting from data == NULL (empty string) works: reserve allocates
+   on first use. */
 static void str_append_bytes(String* s, const char* p, size_t n) {
     if (n == 0) return;
     str_ensure_extra(s, n);
     memcpy((char*)s->bytes.data + s->bytes.length, p, n);
     s->bytes.length += n;
+    ((char*)s->bytes.data)[s->bytes.length] = '\0';
 }
 
 void String_append_string(String* thiz, String* s) {

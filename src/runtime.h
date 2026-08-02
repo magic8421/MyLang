@@ -77,6 +77,11 @@ typedef struct String {
 void _mylang_dtor_String(String* p);
 String* mylang_string_new(uint32_t type_id, const char* cstr);
 String* mylang_string_new_encrypted(uint32_t type_id, const uint8_t* data, size_t len, uint8_t key);
+/* Borrowed cstr view of a String (NUL-terminated for non-empty strings;
+   maps empty/null to a static "").  Do not cache: it shares the String's
+   storage and is invalidated by appends.  See the NUL-termination invariant
+   comment in runtime.c. */
+const char* mylang_string_cstr(String* s);
 void    mylang_print_string(String* s);
 void    mylang_print_i32(int32_t v);
 

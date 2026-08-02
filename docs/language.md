@@ -431,6 +431,7 @@ Detailed reference; the rules in AGENTS.md still apply.
 - `string` is a builtin class-like type backed by `String` in `runtime.h`; string literals compile to owned `String*` objects via `mylang_string_new`.
 - `String` is mutable and owns the native append API: `append_string`, `append_i32/i64/u32/u64/f32/f64`, `append_char`, `append_bool`, and `equals`. There is no separate `StringBuilder` type; appending through one alias is visible through all aliases (same as any other class), and there is no copy-on-write.
 - Read access goes through native methods: `length()` (u64) and `char_at(u64)` (i8, bounds-checked, panics on a null receiver). The backing `bytes` field (a `MyArray` of u8) is private, so string content cannot be corrupted through raw array operations.
+- NUL-termination invariant: a non-empty String's `bytes` buffer keeps `capacity >= length + 1` with `data[length] == '\0'`, so every non-empty string doubles as a valid C string; empty strings keep `data == NULL`. `length` remains the source of truth (interior NULs are legal content); the cstr view exists for the native-call boundary, accessed through `mylang_string_cstr()` (maps empty/null to a static `""`). Maintained at exactly three sites in `runtime.c`: the two constructors and `str_append_bytes`.
 - `IToString` is a builtin interface (`string toString()`); classes implementing it can be interpolated in f-strings.
 - `==`/`!=` on strong `string` operands is value comparison via `String_equals`
   (C# style), so two strings with equal contents compare equal even as distinct
