@@ -39,6 +39,7 @@ interface EventListener {
 
 class Window {
     private u64 handle;
+    private u64 renderer;
     private u32 window_id;
     private unowned Application app;
 
@@ -48,6 +49,7 @@ class Window {
     bool isValid() {
         return this.handle != 0;
     }
+    native SdlTexture createTextureFromFile(string path);
     void onMouseEvent(ref MouseEvent e) {
         print(f"Window {this.window_id}: MouseEvent {e.button} {e.x} {e.y}");
     }
@@ -56,6 +58,14 @@ class Window {
     }
     void onTextInput(ref TextInputEvent e) {
         print(f"Window: TextInputEvent {e.text}");
+    }
+}
+
+class SdlTexture {
+    private u64 handle;
+
+    bool isValid() {
+        return this.handle != 0;
     }
 }
 

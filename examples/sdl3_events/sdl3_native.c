@@ -11,17 +11,10 @@
 #include <windows.h>
 #endif
 
-#define MAX_LISTENERS 16
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
 
 static int g_quit = 0;
-
-static struct {
-    ltk_EventListener listener;
-    int active;
-} g_listeners[MAX_LISTENERS];
-
-static SRWLOCK g_lock = SRWLOCK_INIT;
-static int g_watch_registered = 0;
 
 #define EVENT_ENTRY(x) case x: pstr = #x; break
 String* ltk_Application_eventTypeToString(ltk_Application* thiz, uint32_t type){
@@ -172,8 +165,13 @@ int32_t ltk_Application_init(ltk_Application* thiz) {
 ltk_Window* ltk_Application_createWindow(ltk_Application* thiz, int32_t w, int32_t h) {
     (void)thiz;
     SDL_Window* handle = SDL_CreateWindow("MyLang SDL3 events", w, h, 0);
+    /* Each window owns its renderer; textures are per-renderer, so a texture
+       created from a window only renders on that window. */
+    SDL_Renderer* renderer = SDL_CreateRenderer(handle, NULL);
+    if (!renderer) fprintf(stderr, "SDL_CreateRenderer failed: %s\n", SDL_GetError());
     ltk_Window *win = mylang_new_object(sizeof(ltk_Window), MYLANG_TID_ltk_Window, _mylang_dtor_ltk_Window);
     win->handle = (int64_t)handle;
+    win->renderer = (int64_t)renderer;
     win->window_id = SDL_GetWindowID(handle);
     SDL_StartTextInput(handle);
     mylang_array_push(&thiz->windows, sizeof(void*), 2, &win);
@@ -243,6 +241,13 @@ void ltk_Application_delay(ltk_Application* thiz, int32_t ms) {
 
 void ltk_Application_destroyWindow(ltk_Application* thiz, ltk_Window* win) {
     (void)thiz;
+    /* The renderer dies with its window.  Textures created from it become
+       invalid too -- SDL_DestroyRenderer does not destroy them, so a real
+       app should destroy the window's textures first. */
+    if (win->renderer) {
+        SDL_DestroyRenderer((SDL_Renderer*)win->renderer);
+        win->renderer = 0;
+    }
     SDL_DestroyWindow((SDL_Window *)win->handle);
 }
 
@@ -250,3 +255,42 @@ void ltk_Application_quit(ltk_Application* thiz) {
     (void)thiz;
     SDL_Quit();
 }
+
+/* MyLang strings are length-delimited byte arrays, not NUL-terminated. */
+static char* string_to_cstr(String* s) {
+    size_t len = (s && s->bytes.data) ? (size_t)s->bytes.length : 0;
+    char* buf = (char*)SDL_malloc(len + 1);
+    if (len) SDL_memcpy(buf, s->bytes.data, len);
+    buf[len] = '\0';
+    return buf;
+}
+
+static SDL_Texture* load_sdl_texture(SDL_Renderer* renderer, const char* path) {
+    if (!renderer) { fprintf(stderr, "load_sdl_texture: window has no renderer\n"); return NULL; }
+    int w, h, channels;
+    unsigned char* data = stbi_load(path, &w, &h, &channels, 4);   // stb_image decodes to RGBA
+    if (!data) { fprintf(stderr, "Failed to load %s: %s\n", path, stbi_failure_reason()); return NULL; }
+
+    SDL_Surface* surface = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_ABGR8888);
+    if (!surface) { stbi_image_free(data); return NULL; }
+
+    int src_pitch = w * 4;
+    for (int row = 0; row < h; row++)                       // row-by-row copy (pitch may differ)
+        SDL_memcpy((unsigned char*)surface->pixels + row * surface->pitch,
+                   data + row * src_pitch, src_pitch);
+
+    SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    stbi_image_free(data);
+    return tex;
+}
+
+ltk_SdlTexture* ltk_Window_createTextureFromFile(ltk_Window* thiz, String* path) {
+    char* cpath = string_to_cstr(path);
+    SDL_Texture* tex = load_sdl_texture((SDL_Renderer*)thiz->renderer, cpath);
+    SDL_free(cpath);
+    ltk_SdlTexture* t = mylang_new_object(sizeof(ltk_SdlTexture), MYLANG_TID_ltk_SdlTexture, _mylang_dtor_ltk_SdlTexture);
+    t->handle = (int64_t)tex;   // 0 on failure: isValid() reports false
+    return t;
+}
+
